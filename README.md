@@ -2,10 +2,10 @@
 
 `ship-data`(운항 SQLite + CII/MRV)와 `MaritimeRAG`(선급·IMO 문서 RAG)를 하나의 질의 UI로 결합한 프로젝트입니다.
 
-질문에 따라 **운항 DB** 또는 **문서 벡터 인덱스**로 자동 라우팅합니다.
+질문에 따라 **안내 / 운항 DB / 문서 벡터 인덱스**로 자동 라우팅합니다.
 
 ```
-질문 → intent_router → ops (SQLite) 또는 rag (Chroma)
+질문 → intent_router → chat | ops | rag | hybrid
                    ↘ Gradio UI (app.py)
 ```
 
@@ -14,8 +14,9 @@
 ```text
 MaritimeOpsRAG/
 ├── app.py                 # 통합 Gradio UI
-├── router/                # ops vs rag 의도 분류
-├── services/              # ops/rag 브리지 + orchestrator
+├── router/                # chat / ops / rag 의도 분류
+├── prompts/               # 경로별 시스템 프롬프트 (chat/ops/rag/router)
+├── services/              # chat/ops/rag 브리지 + orchestrator
 ├── ops/                   # ship-data 에이전트
 ├── rag/                   # MaritimeRAG 스크립트/설정
 │   └── data/ → ../data    # (junction)
@@ -56,14 +57,20 @@ python app.py
 
 ## 라우팅 규칙
 
-| 경로 | 예시 질문 | 데이터 |
-|------|-----------|--------|
-| ops | 현재 운항 상태, CII 등급, Noon/MRV 보고서 | `data/maritime.db` |
-| rag | MEPC/MSC 동향, DNV·KR Rule, 표 질의 | Chroma `full_corpus_715_v1` / `kr_tables_v2` |
+| 경로 | 예시 질문 | 데이터 / 프롬프트 |
+|------|-----------|-------------------|
+| chat | 너 누구야?, 안녕, 뭐 할 수 있어 | 고정 안내 (`prompts/chat.py`) |
+| ops | 현재 운항 상태, CII 등급, Noon/MRV 보고서 | `data/maritime.db` + `prompts/ops.py` |
+| rag | MEPC/MSC 동향, DNV·KR Rule, 표 질의 | Chroma + `prompts/rag.py` 정체성 |
+| hybrid | 우리 CII랑 MEPC 규제 같이 | ops+rag 결과를 출처별로 합침 |
 
 - 1차: 키워드 점수 (`router/intent_router.py`)
+- 점수 0/0 또는 잡담 → **chat** (문서 RAG로 보내지 않음)
+- 운항+문서 단서가 같이 있으면 **hybrid**
+- 짧은 후속 질문(`그럼 더 자세히`)은 이전 경로 유지
 - 애매하면: Ollama JSON 분류 (UI에서 끄기 가능)
 - UI에서 **운항 DB 강제 / 문서 RAG 강제** 가능
+- 라우터 골든셋: `python tests/run_router_eval.py`
 
 ## 데이터 배치
 

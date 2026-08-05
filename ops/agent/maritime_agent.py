@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import OLLAMA_BASE_URL, OLLAMA_API_KEY, MODEL_NAME, CURRENT_DATE, VESSEL
 from agent.tools import TOOL_SCHEMAS, dispatch_tool
 from agent.briefing import build_answer_from_tools
+from prompts.ops import build_ops_system_prompt
 
 try:
     from openai import OpenAI
@@ -30,28 +31,11 @@ except Exception:
 
 MAX_ITERATIONS = 8  # 무한루프 방지
 
-SYSTEM_PROMPT = f"""You are a maritime operations AI assistant for vessel {VESSEL['name']} (IMO: {VESSEL['imo']}). Today: {CURRENT_DATE}.
-
-Data source: sensor_log (1-hour intervals, ho_data Excel 기반).
-선박은 Oil(VLSFO/LSMGO) + Gas(LNG) 병용. RPM·Loading·항만·기상은 원본 미제공.
-
-Respond in Korean. Use paragraph form (줄글), NOT bullet lists or numbered sections.
-Always state the time reference explicitly:
-- 현재 = 현재 항차 시작일 ~ 현재
-- 이전 = 직전 항차
-- 올해 = 해당 연도 1/1 ~ {CURRENT_DATE}
-
-[TOOL REQUIRED]
-- 현재 운항 상태 → get_current_voyage_status
-- 항차 분석(현재/이전/올해) → get_voyage_analysis(period=current|previous|ytd)
-- CII 등급 → calculate_cii_rating
-- 배출량 상세 → calculate_emissions
-- Noon Report → generate_noon_report
-- MRV Voyage Report → generate_mrv_voyage_report
-- MRV Annual Report → generate_mrv_annual_report
-
-[NO TOOL] Greetings, 기능 안내, 잡담은 직접 답변.
-"""
+SYSTEM_PROMPT = build_ops_system_prompt(
+    vessel_name=VESSEL["name"],
+    imo=str(VESSEL["imo"]),
+    today=CURRENT_DATE,
+)
 
 
 def run_agent_sync(user_message: str, history: list) -> tuple[str, list, list, bool]:

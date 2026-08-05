@@ -1,0 +1,14 @@
+---
+description: 라우터·오케스트레이터·경로 프롬프트 수정 시
+globs: router/**/*.py,prompts/**/*.py,services/**/*.py,app.py
+alwaysApply: false
+---
+
+# Router and prompts
+
+- 분류는 `router/intent_router.py`의 `route_question()`
+- 실행 스위치는 `services/orchestrator.py`의 `handle_question()`
+- 답 문장은 라우터가 쓰지 않는다
+- 새 경로를 추가하면 `prompts/` 프롬프트와 `services/*_service.py`를 함께 추가
+- ops 내부 툴 목록이 바뀌면 `prompts/ops.py`의 TOOL REQUIRED도 맞춘다
+- RAG 모드별 세부 프롬프트(회의 요약/표QA/Rule)는 `rag/scripts/`에 두고, 공통 정체성만 `prompts/rag.py`에서 prefix

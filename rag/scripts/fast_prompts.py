@@ -1,12 +1,25 @@
 """Type-specific Fast mode prompts."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from fast_question_classifier import FastQuestionType, classify_fast_question_type
 from table_retrieval import classify_table_query_mode
 
 from fast_imo_terms import IMO_GLOSSARY_PROMPT
 
-FAST_SYSTEM_BASE = (
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+try:
+    from prompts.rag import apply_rag_identity
+except Exception:  # pragma: no cover - standalone MaritimeRAG fallback
+    def apply_rag_identity(system_prompt: str) -> str:
+        return system_prompt
+
+FAST_SYSTEM_BASE = apply_rag_identity(
     "너는 IMO/해사 도메인 문서를 기반으로 답변하는 MaritimeRAG Assistant다. "
     "검색 근거의 제목·문서번호·agenda item을 확인해 문서 성격과 범위를 판단한다. "
     "근거에 없는 내용은 추측하지 않는다. 모든 사실 문장 끝에 [N]을 붙인다. "

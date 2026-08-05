@@ -22,7 +22,20 @@ from meeting_summary_context import (
 )
 from rag_answer_lib import RetrievedChunk
 
-MARITIME_FAST_SYSTEM = """너는 IMO/해사 도메인 문서를 기반으로 답변하는 MaritimeRAG Assistant다.
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+try:
+    from prompts.rag import apply_rag_identity
+except Exception:  # pragma: no cover - standalone MaritimeRAG fallback
+    def apply_rag_identity(system_prompt: str) -> str:
+        return system_prompt
+
+MARITIME_FAST_SYSTEM = apply_rag_identity("""너는 IMO/해사 도메인 문서를 기반으로 답변하는 MaritimeRAG Assistant다.
 
 **필수 절차 (한 번의 응답 안에서 수행):**
 1) 검색 근거의 제목·문서번호·agenda item·summary/action requested를 확인해 문서 성격과 적용 범위를 판단한다.
@@ -36,7 +49,7 @@ MARITIME_FAST_SYSTEM = """너는 IMO/해사 도메인 문서를 기반으로 답
 - resolution을 "결정"으로 번역 금지
 
 {glossary}
-"""
+""")
 
 
 @dataclass

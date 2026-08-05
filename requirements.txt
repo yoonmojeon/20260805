@@ -1,10 +1,11 @@
 # Shared / Ops (ship-data)
 openai>=1.30.0
-pandas>=2.1.0
+pandas==2.2.3
 numpy>=1.26.0
 python-docx>=1.1.0
 folium>=0.16.0
 gradio>=4.36.0
+markdown-it-py>=3.0.0
 openpyxl>=3.1.0
 requests>=2.31.0
 pytest>=8.0.0
@@ -15,6 +16,7 @@ PyMuPDF>=1.24.0
 Pillow>=10.0.0
 tqdm>=4.66.0
 chromadb>=0.5.0
+grpcio==1.62.3
 sentence-transformers>=3.0.0
 rank_bm25>=0.2.2
 streamlit>=1.40.0

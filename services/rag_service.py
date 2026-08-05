@@ -41,13 +41,18 @@ def rag_index_ready(collection_id: str = DEFAULT_RAG_COLLECTION) -> bool:
 
 
 def rag_status_message() -> str:
-    if rag_index_ready():
-        return f"RAG 인덱스 준비됨: {DEFAULT_RAG_COLLECTION}"
-    return (
-        "문서 RAG 인덱스가 아직 없습니다. PDF는 data/raw_pdfs 에 연결되어 있습니다.\n"
-        "인덱스를 만들려면 MaritimeRAG 전처리·통합 인덱스 구축을 실행하세요 "
-        f"(목표 collection: {DEFAULT_RAG_COLLECTION})."
+    if not rag_index_ready():
+        return (
+            "문서 RAG 인덱스가 아직 없습니다. PDF는 data/raw_pdfs 에 연결되어 있습니다.\n"
+            "인덱스를 만들려면 MaritimeRAG 전처리·통합 인덱스 구축을 실행하세요 "
+            f"(목표 collection: {DEFAULT_RAG_COLLECTION})."
+        )
+    table = (
+        f"표QA({DEFAULT_TABLE_COLLECTION}): OK"
+        if rag_index_ready(DEFAULT_TABLE_COLLECTION)
+        else f"표QA({DEFAULT_TABLE_COLLECTION}): 없음 → 전체 코퍼스 사용"
     )
+    return f"RAG 인덱스 준비됨: {DEFAULT_RAG_COLLECTION}  |  {table}"
 
 
 def warmup_rag_resources(unified_id: str = DEFAULT_RAG_COLLECTION) -> dict[str, Any]:
@@ -115,14 +120,20 @@ def run_rag_query(
     table_qa: bool = False,
 ) -> dict[str, Any]:
     """Run MaritimeRAG in-process against the shared data/ tree."""
-    target = DEFAULT_TABLE_COLLECTION if table_qa else DEFAULT_RAG_COLLECTION
-    if not rag_index_ready(target if table_qa else DEFAULT_RAG_COLLECTION):
+    want_table = bool(table_qa)
+    use_table_index = want_table and rag_index_ready(DEFAULT_TABLE_COLLECTION)
+    if not rag_index_ready(DEFAULT_RAG_COLLECTION if not use_table_index else DEFAULT_TABLE_COLLECTION):
+        missing = DEFAULT_TABLE_COLLECTION if want_table else DEFAULT_RAG_COLLECTION
         return {
-            "answer": rag_status_message(),
+            "answer": (
+                f"표 QA 인덱스(`{DEFAULT_TABLE_COLLECTION}`)와 전체 문서 인덱스가 모두 없습니다. "
+                f"{rag_status_message()}"
+            ),
             "files": [],
             "source": "rag",
             "citations": [],
             "ready": False,
+            "meta": {"missing_index": missing},
         }
 
     _ensure_rag_path()
@@ -135,25 +146,32 @@ def run_rag_query(
             run_full_inprocess,
         )
 
-        category = "" if table_qa else _classify_category(question)
+        category = "table_qa" if want_table else _classify_category(question)
         row: dict[str, Any] = {
             "question_id": "ui_q",
             "question": question,
             "category": category,
         }
-        unified = DEFAULT_RAG_COLLECTION
-        chunks_dir = RAG_CHUNKS_DIR
-        if table_qa:
-            row = normalize_table_question_row(row)
+        if want_table:
+            row["_table_qa"] = True
+            try:
+                row = normalize_table_question_row(row)
+            except Exception:
+                pass
+
+        if use_table_index:
             unified = TABLE_QA_UNIFIED or DEFAULT_TABLE_COLLECTION
             chunks_dir = RAG_TABLE_CHUNKS_DIR
+        else:
+            unified = DEFAULT_RAG_COLLECTION
+            chunks_dir = RAG_CHUNKS_DIR
 
         # Reuse warm handles when available (same collection).
         collection = None
         embed_model = None
         manifest = None
         if (
-            not table_qa
+            not use_table_index
             and _WARM.get("unified_id") == unified
             and _WARM.get("collection") is not None
         ):
@@ -186,7 +204,7 @@ def run_rag_query(
             answer = search.get("answer") or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
 
         # Keep warm after first successful load
-        if not table_qa and _WARM.get("collection") is None:
+        if not use_table_index and _WARM.get("collection") is None:
             try:
                 from rag_resource_cache import load_unified_collection  # type: ignore
 
@@ -207,6 +225,8 @@ def run_rag_query(
                 "unified_id": unified,
                 "latency_mode": latency_mode,
                 "category": category,
+                "table_qa_requested": want_table,
+                "table_index_used": use_table_index,
                 "answer_mode": out.get("answer_mode")
                 or (out.get("search_out") or {}).get("answer_mode"),
                 "timing_metrics": (out.get("timing_metrics") or {}),

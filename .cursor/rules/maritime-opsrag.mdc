@@ -1,0 +1,34 @@
+---
+description: MaritimeOpsRAG 경로·프롬프트 분리 규칙
+alwaysApply: true
+---
+
+# MaritimeOpsRAG
+
+최상위 라우트는 데이터 소스다. 주제 카테고리(동향/MASS/표QA)를 최상위로 올리지 않는다.
+
+- `chat` → 안내 템플릿. SQLite/Chroma/Ollama 호출 금지
+- `ops` → 운항 SQLite + CII/Noon/MRV 툴
+- `rag` → 문서 Chroma. 내부 `question_classifier`는 2층에서 유지
+
+경로별 프롬프트는 `prompts/`만 수정한다.
+
+- `prompts/chat.py` 안내
+- `prompts/ops.py` 운항 에이전트
+- `prompts/rag.py` RAG 정체성 prefix
+- `prompts/router_prompt.py` 의도 분류기
+
+문장 전체를 매칭하지 말고 단서만 본다. 구어체(지금 배 어디야, 기름 얼마나)도 ops/rag로 보내야 한다.
+단서 없으면 `chat`에서 되묻기. 운항+문서가 같이 강하면 `hybrid`.
+짧은 후속 질문은 `last_route`를 유지하고, `문서로/운항으로`면 경로를 바꾼다.
+CII/배출은 단어가 아니라 단서로 나눈다: 우리/올해/항차 → ops, MEPC/규정/회의 → rag.
+
+```text
+# ❌ BAD
+너 누구야? → rag 기본값
+
+# ✅ GOOD
+너 누구야? → chat 소개 템플릿
+올해 CII 등급 → ops
+MEPC CII 규제 → rag
+```

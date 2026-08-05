@@ -40,7 +40,7 @@ _MD = (
 def _markdown_to_html(text: str) -> str:
     """Render model markdown to HTML (do not html.escape the whole body)."""
     if not (text or "").strip():
-        return "<p class='answer-empty'>질문을 입력하세요. 운항 데이터 또는 규정/회의 문서를 자동으로 구분합니다.</p>"
+            return "<p class='answer-empty'>질문을 입력하세요. 안내 / 운항 데이터 / 규정·회의 문서를 자동으로 구분합니다.</p>"
     return _MD.render(text)
 
 
@@ -81,10 +81,16 @@ def _status_line() -> str:
     )
 
 
-def chat_fn(user_msg: str, history: list, route_mode: str, use_llm_router: bool):
+def chat_fn(
+    user_msg: str,
+    history: list,
+    last_route: str | None,
+    route_mode: str,
+    use_llm_router: bool,
+):
     empty = build_answer_html("", "")
     if not (user_msg or "").strip():
-        return history, empty, []
+        return history, last_route, empty, []
 
     force = "auto" if route_mode.startswith("자동") else ("ops" if "운항" in route_mode else "rag")
     result = handle_question(
@@ -93,12 +99,19 @@ def chat_fn(user_msg: str, history: list, route_mode: str, use_llm_router: bool)
         force_route=force,  # type: ignore[arg-type]
         use_llm_router=bool(use_llm_router),
         rag_latency_mode="fast",
+        last_route=last_route,
     )
     files = [f for f in (result.get("files") or []) if Path(f).exists()]
     route = result.get("route") or {}
     banner = ""
     if route:
-        kind = "운항 DB (ops)" if route.get("route") == "ops" else "문서 RAG (rag)"
+        labels = {
+            "ops": "운항 DB (ops)",
+            "rag": "문서 RAG (rag)",
+            "chat": "안내 (chat)",
+            "hybrid": "운항+문서 (hybrid)",
+        }
+        kind = labels.get(str(route.get("route") or ""), str(route.get("route") or ""))
         banner = (
             f"[경로: {kind} | 신뢰도 {float(route.get('confidence') or 0):.0%} "
             f"| {route.get('method')}] {route.get('reason') or ''}"
@@ -106,6 +119,7 @@ def chat_fn(user_msg: str, history: list, route_mode: str, use_llm_router: bool)
 
     return (
         result.get("history") or history,
+        result.get("last_route"),
         build_answer_html(
             user_msg,
             result.get("answer", ""),
@@ -165,6 +179,7 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
     """)
 
     history_state = gr.State([])
+    last_route_state = gr.State(None)
 
     with gr.Row():
         route_mode = gr.Radio(
@@ -190,6 +205,7 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
             "최신 MEPC 회의 주요 내용을 정리해줘",
             "DNV에서 자율운항 관련 Rule/Guidance를 찾아줘",
             "선령 15년을 초과한 선박의 평형수탱크 검사 범위는?",
+            "우리 CII랑 MEPC 규제 같이 알려줘",
         ]
         example_btns = [gr.Button(t, size="sm") for t in examples]
 
@@ -212,14 +228,14 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
 
     send_btn.click(
         chat_fn,
-        inputs=[user_input, history_state, route_mode, use_llm_router],
-        outputs=[history_state, answer_html, generated_files],
+        inputs=[user_input, history_state, last_route_state, route_mode, use_llm_router],
+        outputs=[history_state, last_route_state, answer_html, generated_files],
     ).then(lambda: "", outputs=user_input)
 
     user_input.submit(
         chat_fn,
-        inputs=[user_input, history_state, route_mode, use_llm_router],
-        outputs=[history_state, answer_html, generated_files],
+        inputs=[user_input, history_state, last_route_state, route_mode, use_llm_router],
+        outputs=[history_state, last_route_state, answer_html, generated_files],
     ).then(lambda: "", outputs=user_input)
 
 
@@ -229,9 +245,7 @@ if __name__ == "__main__":
     print(f"  {_status_line().replace('&nbsp;', ' ')}")
     print("=" * 56)
     if rag_index_ready():
-        print("  RAG warm-up 중 (Chroma/e5/Ollama)…")
-        warm = warmup_rag_resources()
-        print(f"  warm-up: {warm}")
+        print("  문서 인덱스 준비됨. 첫 RAG 질문 때 모델을 로드합니다.")
     print("  브라우저: http://127.0.0.1:7860  (0.0.0.0 은 접속 주소가 아님)")
     print("=" * 56)
     demo.launch(
