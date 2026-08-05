@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Ops sensor Excel / SQLite
+data/ho_data/*.xlsx
+data/ho_data/~$*
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.xlsx
+
+# MaritimeRAG heavy artifacts (raw PDFs may be a junction; ignore local copies)
+data/raw_pdfs/**
+!data/raw_pdfs/.gitkeep
+data/processed/
+rag/data/
+rag/models/
+reports/output/*.docx
+outputs/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+[server]
+enableWebsocketCompression = true
+maxUploadSize = 512
+# Long-running RAG/LLM scripts (seconds)
+runOnSave = false
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[runner]
+fastReruns = false
+magicEnabled = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"

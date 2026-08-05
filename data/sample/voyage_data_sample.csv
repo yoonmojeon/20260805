@@ -1,0 +1,3 @@
+voyage_id,ship_id,voyage_date,from_port,to_port,distance_nm,dwt,cargo_ton,fuel_type,fuel_consumed_ton,co2_factor_kg_per_kg_fuel,eua_price_eur_per_tco2,ets_coverage_rate
+V001,SHIP001,2026-01-01,Busan,Singapore,2500,50000,42000,VLSFO,120,3.114,80,0.7
+V002,SHIP001,2026-01-15,Singapore,Rotterdam,8300,50000,45000,VLSFO,410,3.114,80,0.7

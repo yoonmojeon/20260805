@@ -1,0 +1,63 @@
+{
+  "embedding_policy_version": "embedding-policy-v1",
+  "chunk_policy_version": "chunk-v1-420-60",
+  "embedding": {
+    "preset": "e5-base",
+    "model": "intfloat/multilingual-e5-base",
+    "model_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+    "provider": "sentence-transformers",
+    "languages": ["ko", "en"],
+    "normalize_embeddings": true,
+    "query_prefix": "query: ",
+    "passage_prefix": "passage: ",
+    "distance": "cosine"
+  },
+  "chunking": {
+    "max_embedding_tokens": 420,
+    "overlap_tokens": 60,
+    "split_only_when_oversized": true,
+    "boundary_priority": ["existing_clause_or_layout_element", "paragraph", "sentence", "token"],
+    "included_types": [
+      "text",
+      "picture",
+      "table_schema",
+      "table_summary",
+      "table_row",
+      "table_markdown"
+    ]
+  },
+  "embedding_text_metadata": {
+    "included": [
+      "source",
+      "human_readable_file_name",
+      "document_type",
+      "folder",
+      "section_title",
+      "clause_number",
+      "table_caption",
+      "table_columns"
+    ],
+    "metadata_only": [
+      "chunk_id",
+      "doc_id",
+      "page_number",
+      "element_id",
+      "table_id",
+      "row_index",
+      "crop_path",
+      "source_page_image"
+    ]
+  },
+  "indexes": {
+    "general": {
+      "collection_id": "full_corpus_715_v1",
+      "structured_table_mode": "exclude",
+      "include_types": ["text", "picture"]
+    },
+    "tables": {
+      "collection_id": "kr_tables_v1",
+      "structured_table_mode": "only",
+      "include_types": ["table"]
+    }
+  }
+}

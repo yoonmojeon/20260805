@@ -1,0 +1,3 @@
+voyage_id,ship_id,total_co2_ton,ets_covered_co2_ton,eua_price_eur_per_tco2,estimated_ets_cost_eur
+V001,SHIP001,373.680000,261.576000,80.000000,20926.080000
+V002,SHIP001,1276.740000,893.718000,80.000000,71497.440000

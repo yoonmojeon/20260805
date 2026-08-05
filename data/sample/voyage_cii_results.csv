@@ -1,0 +1,3 @@
+voyage_id,ship_id,total_co2_ton,transport_work,cii_gco2_per_dwt_nm
+V001,SHIP001,373.680000,125000000.000000,2.989440
+V002,SHIP001,1276.740000,415000000.000000,3.076482
