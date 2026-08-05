@@ -1,4 +1,4 @@
-"""Hybrid path — run ops and rag, then merge with source labels."""
+"""Hybrid path — run ops and rag on split queries, then merge with source labels."""
 from __future__ import annotations
 
 from typing import Any
@@ -26,10 +26,14 @@ def run_hybrid_query(
     *,
     rag_latency_mode: str = "fast",
     table_qa: bool = False,
+    ops_query: str | None = None,
+    rag_query: str | None = None,
 ) -> dict[str, Any]:
-    ops_result = run_ops_query(question, history)
+    ops_q = (ops_query or question).strip()
+    rag_q = (rag_query or question).strip()
+    ops_result = run_ops_query(ops_q, history)
     rag_result = run_rag_query(
-        question, latency_mode=rag_latency_mode, table_qa=table_qa
+        rag_q, latency_mode=rag_latency_mode, table_qa=table_qa
     )
     answer = merge_hybrid_answers(
         str(ops_result.get("answer") or ""),
@@ -52,5 +56,7 @@ def run_hybrid_query(
         "meta": {
             "ops": ops_result.get("meta") or {"source": ops_result.get("source")},
             "rag": rag_result.get("meta") or {"source": rag_result.get("source")},
+            "ops_query": ops_q,
+            "rag_query": rag_q,
         },
     }

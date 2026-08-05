@@ -64,13 +64,14 @@ python app.py
 | rag | MEPC/MSC 동향, DNV·KR Rule, 표 질의 | Chroma + `prompts/rag.py` 정체성 |
 | hybrid | 우리 CII랑 MEPC 규제 같이 | ops+rag 결과를 출처별로 합침 |
 
-- 1차: 키워드 점수 (`router/intent_router.py`)
+- 1차: 화행/슬롯 + 키워드 점수 (`router/`)
 - 점수 0/0 또는 잡담 → **chat** (문서 RAG로 보내지 않음)
-- 운항+문서 단서가 같이 있으면 **hybrid**
-- 짧은 후속 질문(`그럼 더 자세히`)은 이전 경로 유지
-- 애매하면: Ollama JSON 분류 (UI에서 끄기 가능)
-- UI에서 **운항 DB 강제 / 문서 RAG 강제** 가능
-- 라우터 골든셋: `python tests/run_router_eval.py`
+- 명시적 dual/비교 프레임만 **hybrid**. 근접 점수는 되묻기
+- hybrid는 ops/rag 질의를 나눠 실행
+- 짧은 후속 질문은 이전 주제·경로를 이어 질문을 펼침
+- 애매하면 프로토타입 투표, 그다음 Ollama JSON (UI에서 끄기 가능)
+- UI에서 경로 강제 및 `운항만/문서만/둘 다로 다시` 가능
+- 라우터 평가: `python tests/run_router_eval.py`
 
 ## 데이터 배치
 

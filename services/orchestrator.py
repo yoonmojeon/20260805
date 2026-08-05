@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from router.dialogue import DialogueState, parse_dialogue_state
 from router.intent_router import RouteDecision, route_question
 from services.chat_service import run_chat_query
 from services.hybrid_service import run_hybrid_query
@@ -17,12 +18,6 @@ def _table_qa_hint(question: str) -> bool:
     return any(k in question for k in TABLE_HINTS)
 
 
-def _next_last_route(decision: RouteDecision, previous: str | None) -> str | None:
-    if decision.route in {"ops", "rag", "hybrid"}:
-        return decision.route
-    return previous
-
-
 def handle_question(
     question: str,
     history: list | None = None,
@@ -31,8 +26,10 @@ def handle_question(
     use_llm_router: bool = True,
     rag_latency_mode: str = "fast",
     last_route: str | None = None,
+    dialogue_state: DialogueState | dict | None = None,
 ) -> dict[str, Any]:
     q = (question or "").strip()
+    state = parse_dialogue_state(dialogue_state, last_route)
     if not q:
         return {
             "answer": "질문을 입력하세요.",
@@ -40,7 +37,8 @@ def handle_question(
             "history": history or [],
             "files": [],
             "map_html": "",
-            "last_route": last_route,
+            "last_route": state.last_route,
+            "dialogue_state": state.to_dict(),
         }
 
     forced = None if force_route == "auto" else force_route
@@ -48,23 +46,28 @@ def handle_question(
         q,
         use_llm_fallback=use_llm_router,
         force_route=forced,
-        last_route=last_route,
+        last_route=state.last_route,
+        dialogue_state=state,
     )
+    next_state = decision.dialogue_state or state.to_dict()
+    effective_q = (decision.expanded_question or q).strip()
 
     if decision.route == "chat":
         result = run_chat_query(q, history, chat_mode=decision.chat_mode)
     elif decision.route == "ops":
-        result = run_ops_query(q, history)
+        result = run_ops_query(effective_q, history)
     elif decision.route == "hybrid":
         result = run_hybrid_query(
             q,
             history,
             rag_latency_mode=rag_latency_mode,
-            table_qa=_table_qa_hint(q),
+            table_qa=_table_qa_hint(effective_q),
+            ops_query=decision.ops_query,
+            rag_query=decision.rag_query,
         )
     else:
         result = run_rag_query(
-            q, latency_mode=rag_latency_mode, table_qa=_table_qa_hint(q)
+            effective_q, latency_mode=rag_latency_mode, table_qa=_table_qa_hint(effective_q)
         )
         result.setdefault("history", (history or []) + [
             {"role": "user", "content": q},
@@ -80,5 +83,6 @@ def handle_question(
         "map_html": result.get("map_html") or "",
         "source": result.get("source"),
         "meta": result.get("meta"),
-        "last_route": _next_last_route(decision, last_route),
+        "last_route": next_state.get("last_route"),
+        "dialogue_state": next_state,
     }

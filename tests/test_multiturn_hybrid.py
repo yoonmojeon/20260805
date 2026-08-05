@@ -23,6 +23,7 @@ def test_handle_question_tracks_last_route():
 
     tracked = handle_question("질문", use_llm_router=False, force_route="chat")
     assert "last_route" in tracked
+    assert "dialogue_state" in tracked
 
 
 def test_handle_question_hybrid_route_only():

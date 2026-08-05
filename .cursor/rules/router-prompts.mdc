@@ -7,6 +7,7 @@ alwaysApply: false
 # Router and prompts
 
 - 분류는 `router/intent_router.py`의 `route_question()`
+- 단서/슬롯은 `router/cues.py`, 대화상태는 `router/dialogue.py`, rewrite는 `router/rewrite.py`
 - 실행 스위치는 `services/orchestrator.py`의 `handle_question()`
 - 답 문장은 라우터가 쓰지 않는다
 - 새 경로를 추가하면 `prompts/` 프롬프트와 `services/*_service.py`를 함께 추가

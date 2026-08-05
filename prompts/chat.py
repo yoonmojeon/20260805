@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-ChatMode = Literal["identity", "greeting", "meta", "clarify", "dual", "oos"]
+ChatMode = Literal["identity", "greeting", "meta", "clarify", "dual", "oos", "thanks"]
 
 CHAT_SYSTEM_PROMPT = """너는 MaritimeOpsRAG의 안내 경로다.
 운항 SQLite도, 선급/IMO 문서 검색도 하지 않는다.
@@ -36,7 +36,8 @@ CHAT_ROUTER = """질문은 **의도 라우터**가 단서만 보고 셋 중 하�
 **3. rag (문서)** — 선급·IMO 검색. 예: `MEPC에서 뭐 결정됐어`, `검사 주기 표`
 **4. hybrid** — 운항 숫자와 문서를 같이 물어보면 양쪽 답을 출처별로 붙입니다.
 
-단서가 없으면 되묻습니다. 짧은 후속 질문(`그럼 더 자세히`)은 이전 경로를 유지합니다.
+단서가 없으면 되묻습니다. 짧은 후속 질문은 이전 주제와 경로를 이어 받습니다.
+점수가 애매하면 추측하지 않고 다시 묻습니다.
 """
 
 CHAT_CLARIFY = """질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.
@@ -54,6 +55,11 @@ CHAT_DUAL = """이 질문에는 운항 데이터 단서와 규정/회의 문서 
 - 규정·회의·선급 문서 → 문서 검색
 
 한 가지만 집어서 다시 물어보시면 바로 해당 경로로 갑니다.
+"""
+
+CHAT_THANKS = """도움이 되었다니 다행입니다.
+
+이어서 운항 수치를 볼까요, 규정·회의 문서를 볼까요?
 """
 
 CHAT_OOS = """그 주제는 이 시스템이 다루는 범위가 아닙니다.
@@ -75,6 +81,7 @@ def render_chat_answer(question: str, chat_mode: ChatMode | str | None = None) -
         "clarify": CHAT_CLARIFY,
         "dual": CHAT_DUAL,
         "oos": CHAT_OOS,
+        "thanks": CHAT_THANKS,
     }
     if mode in templates:
         return templates[mode].strip()
