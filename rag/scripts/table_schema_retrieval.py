@@ -461,6 +461,28 @@ def score_table_candidate(
     return bd
 
 
+def _material_grade_entities(row_entities: list[str]) -> list[str]:
+    """Keep only steel/material grade tokens for the expensive Chroma row scan.
+
+    Generic Korean phrases (평형수탱크, long cell-lookup restatements) must not
+    trigger ``collection.get`` over every table_row in many docs — that path
+    dominated interactive latency (15–25s) on the precise corpus.
+    """
+    try:
+        from table_normalize_lib import MATERIAL_GRADE_RE, normalize_material_grade
+    except ImportError:
+        return []
+    out: list[str] = []
+    for entity in row_entities or []:
+        text = str(entity or "").strip()
+        if not text:
+            continue
+        match = MATERIAL_GRADE_RE.search(text)
+        if match:
+            out.append(normalize_material_grade(match.group(0)))
+    return list(dict.fromkeys(out))
+
+
 def _merge_grade_scan_candidates(
     collection,
     parsed: ParsedTableQuery,
@@ -469,24 +491,29 @@ def _merge_grade_scan_candidates(
     doc_id: str | None,
     top_k: int = TABLE_SCHEMA_ROUTE_K,
 ) -> list[TableScoreBreakdown]:
-    """Additive fallback: literal row-entity scan inside routed docs (pre-index schema gaps)."""
-    if not parsed.row_entities:
-        return candidates
+    """Additive fallback: literal material-grade scan inside a few routed docs."""
+    grades = _material_grade_entities(list(parsed.row_entities or []))
+    if not grades:
+        return candidates[:top_k]
     try:
         from table_first_retrieval import _scan_tables_for_grades
     except ImportError:
-        return candidates
+        return candidates[:top_k]
 
+    # Only inspect the already-strong head — never every BM25 table's doc.
+    head = candidates[: max(top_k * 3, 24)]
     scan_docs: list[str] = []
     if doc_id:
         scan_docs = [doc_id]
     else:
-        for c in candidates:
+        for c in head:
             did = str((c.meta or {}).get("doc_id") or "")
             if did and did not in scan_docs:
                 scan_docs.append(did)
+            if len(scan_docs) >= 4:
+                break
     if not scan_docs:
-        return candidates
+        return candidates[:top_k]
 
     intent = "general_table"
     if any("화학" in t or "chemical" in t.lower() for t in parsed.table_topic_candidates):
@@ -501,7 +528,7 @@ def _merge_grade_scan_candidates(
     slots.intent = intent  # type: ignore[attr-defined]
 
     by_id = {c.table_id: c for c in candidates}
-    scanned = _scan_tables_for_grades(collection, parsed.row_entities, scan_docs, slots=slots)
+    scanned = _scan_tables_for_grades(collection, grades, scan_docs, slots=slots)
     needs_column = bool(parsed.column_entities) and parsed.query_type in ("cell_lookup", "column_lookup")
     for i, tid in enumerate(scanned):
         scan_score = round(0.82 - i * 0.035, 4)

@@ -102,6 +102,25 @@ def warmup_rag_resources(unified_id: str = DEFAULT_RAG_COLLECTION) -> dict[str, 
             unified_id, RAG_INDEX_DIR
         )
         prime = prime_interactive_retrieval(collection, embed_model)
+        bm25_warm = False
+        if unified_id == DEFAULT_TABLE_COLLECTION:
+            try:
+                from bm25_index import load_or_build_table_bm25  # type: ignore
+                from rag_resource_cache import unified_index_fingerprint  # type: ignore
+
+                fp = unified_index_fingerprint(unified_id, RAG_INDEX_DIR)
+                bm25_warm = (
+                    load_or_build_table_bm25(
+                        collection,
+                        unified_id=unified_id,
+                        index_dir=RAG_INDEX_DIR,
+                        fingerprint=fp,
+                        allow_disk_load=True,
+                    )
+                    is not None
+                )
+            except Exception:
+                bm25_warm = False
         try:
             from ollama_warmup import ensure_fast_warm  # type: ignore
             from rag_answer_lib import DEFAULT_OLLAMA_BASE, DEFAULT_OLLAMA_MODEL  # type: ignore
@@ -121,6 +140,7 @@ def warmup_rag_resources(unified_id: str = DEFAULT_RAG_COLLECTION) -> dict[str, 
             "unified_id": unified_id,
             "prime": prime,
             "ollama_warm": ollama_warm,
+            "bm25_warm": bm25_warm,
         }
     finally:
         os.chdir(prev)

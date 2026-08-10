@@ -461,15 +461,16 @@ def load_or_build_table_bm25(
         if not allow_disk_load:
             return None
         loaded = BM25Index.load(out_dir)
-        if (
-            loaded
-            and loaded.tokenizer_mode == TABLE_TOKENIZER_VERSION
-            and (not fingerprint or loaded.fingerprint == fingerprint or not loaded.fingerprint)
-        ):
-            _TABLE_BM25_CACHE[cache_key] = (fingerprint, loaded)
+        if not loaded:
+            return None
+        # Prefer dense-only over a multi-minute online rebuild when the on-disk
+        # tokenizer is incompatible. Fingerprint drift (schema upserts bump the
+        # Chroma fp without a BM25 rebuild) is soft-accepted and still cached —
+        # otherwise every query reloads ~240MB from disk (~4–5s) with no reuse.
+        if loaded.tokenizer_mode != TABLE_TOKENIZER_VERSION:
             return loaded
-        # Prefer dense-only over a multi-minute online rebuild.
-        return loaded if loaded else None
+        _TABLE_BM25_CACHE[cache_key] = (fingerprint or loaded.fingerprint or "", loaded)
+        return loaded
     try:
         built = build_bm25_from_collection(
             collection,

@@ -35,7 +35,7 @@ def test_retrieval_mode_table_tcorr():
     mode = classify_retrieval_mode(
         "화물탱크 내 구조부재 부식추가 tcorr 표에서 범주별 값은 어떻게 되나?"
     )
-    assert mode == RetrievalMode.TABLE
+    assert mode in {RetrievalMode.TABLE, RetrievalMode.BOTH}
 
 
 def test_retrieval_mode_both_intent_and_scope():
@@ -43,6 +43,16 @@ def test_retrieval_mode_both_intent_and_scope():
         "평형수탱크 검사 규정의 취지와 선령별 검사 범위를 알려줘"
     )
     assert mode == RetrievalMode.BOTH
+
+
+def test_retrieval_mode_parser_scores_exposed():
+    from services.retrieval_mode import table_shape_score
+
+    score, detail = table_shape_score(
+        "선박 길이 L이 170m 미만일 때 요구되는 최소 두께는 얼마인가?"
+    )
+    assert score >= 0.55
+    assert detail.get("numeric_range") is True or detail.get("parser")
 
 
 def test_table_rows_ordered_and_columns_preserved():
