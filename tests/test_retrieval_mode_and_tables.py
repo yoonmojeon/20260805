@@ -24,6 +24,20 @@ def test_retrieval_mode_table_age_tank():
     assert mode == RetrievalMode.TABLE
 
 
+def test_retrieval_mode_table_min_thickness_cell_lookup():
+    mode = classify_retrieval_mode(
+        "선박 길이 L이 170m 미만일 때 요구되는 최소 두께는 얼마인가?"
+    )
+    assert mode == RetrievalMode.TABLE
+
+
+def test_retrieval_mode_table_tcorr():
+    mode = classify_retrieval_mode(
+        "화물탱크 내 구조부재 부식추가 tcorr 표에서 범주별 값은 어떻게 되나?"
+    )
+    assert mode == RetrievalMode.TABLE
+
+
 def test_retrieval_mode_both_intent_and_scope():
     mode = classify_retrieval_mode(
         "평형수탱크 검사 규정의 취지와 선령별 검사 범위를 알려줘"

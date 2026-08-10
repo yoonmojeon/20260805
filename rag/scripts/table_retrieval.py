@@ -23,6 +23,18 @@ TABLE_QUESTION_KEYWORDS = [
     "regulation",
     "reporting",
     "verification",
+    "최소 두께",
+    "판두께",
+    "선박 길이",
+    "부식추가",
+    "tcorr",
+    "화학성분",
+    "재료기호",
+    "용접강",
+    "항복",
+    "인장",
+    "화물창",
+    "화물탱크",
 ]
 
 TABLE_CHUNK_PRIORITY_DEFAULT = ("table_summary", "table_row", "table_markdown")

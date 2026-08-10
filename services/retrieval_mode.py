@@ -22,6 +22,12 @@ _TABLE_PATTERNS = [
     r"(?:intermediate|annual|special|docking|continuous|class)\s*survey",
     r"survey\s*interval|tank\s*inspection",
     r"열\s*\d+|row\s*\d+|cell",
+    # Cell-lookup / structural tables (no need to say "표")
+    r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|\btcorr\b",
+    r"선박\s*길이|\bL\s*[<>≤≥=]|L이\s*\d+",
+    r"항복\s*(?:응력|강도)|인장\s*강도|기계적\s*성질|화학성분|재료기호|용접강",
+    r"화물창|화물탱크|reporting\s*요건|N\s*/?\s*mm",
+    r"\d+\s*m\s*(?:미만|이상|이하)|미만일\s*때|이상일\s*때",
 ]
 
 # Prose / regulation-explanation cues (prefer text corpus)
@@ -71,7 +77,10 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
         strong_table = bool(
             re.search(
                 r"표|선령|검사\s*주기|검사주기|평형수|밸러스트|개방검사|"
-                r"survey\s*interval|intermediate\s*survey",
+                r"survey\s*interval|intermediate\s*survey|"
+                r"최소\s*두께|판두께|선박\s*길이|부식추가|\btcorr\b|"
+                r"화학성분|재료기호|용접강|항복|인장|화물창|화물탱크|"
+                r"reporting|N\s*/?\s*mm|\d+\s*m\s*(?:미만|이상|이하)",
                 q,
                 flags=re.IGNORECASE,
             )
