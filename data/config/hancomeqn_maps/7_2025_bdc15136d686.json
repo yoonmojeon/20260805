@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "document": "7편_2025.pdf",
+  "font_fingerprint_prefix": "c39215195f8c6b5d",
+  "status": "expanded_from_part7_contextual_glyph_atlas_v2",
+  "glyphs": {
+    "U+E000": {"text": "A"},
+    "U+E001": {"text": "B"},
+    "U+E002": {"text": "C"},
+    "U+E003": {"text": "D"},
+    "U+E004": {"text": "E"},
+    "U+E005": {"text": "F"},
+    "U+E006": {"text": "G"},
+    "U+E007": {"text": "H"},
+    "U+E008": {"text": "I"},
+    "U+E009": {"text": "J"},
+    "U+E00A": {"text": "K"},
+    "U+E00B": {"text": "L"},
+    "U+E00C": {"text": "M"},
+    "U+E00D": {"text": "N"},
+    "U+E00E": {"text": "O"},
+    "U+E00F": {"text": "P"},
+    "U+E010": {"text": "Q"},
+    "U+E011": {"text": "R"},
+    "U+E012": {"text": "S"},
+    "U+E013": {"text": "T"},
+    "U+E014": {"text": "U"},
+    "U+E015": {"text": "V"},
+    "U+E016": {"text": "W"},
+    "U+E017": {"text": "X"},
+    "U+E018": {"text": "Y"},
+    "U+E019": {"text": "Z"},
+    "U+E034": {"text": "1"},
+    "U+E035": {"text": "2"},
+    "U+E036": {"text": "3"},
+    "U+E037": {"text": "4"},
+    "U+E038": {"text": "5"},
+    "U+E039": {"text": "6"},
+    "U+E03A": {"text": "7"},
+    "U+E03B": {"text": "8"},
+    "U+E03C": {"text": "9"},
+    "U+E03D": {"text": "0"},
+    "U+E042": {"text": "%"},
+    "U+E044": {"text": "("},
+    "U+E045": {"text": ")"},
+    "U+E046": {"text": "-"},
+    "U+E047": {"text": "="},
+    "U+E048": {"text": "+"},
+    "U+E049": {"text": "["},
+    "U+E04A": {"text": "]"},
+    "U+E04B": {"text": "{"},
+    "U+E04C": {"text": "}"},
+    "U+E04E": {"text": ";"},
+    "U+E053": {"text": "."},
+    "U+E054": {"text": ":"},
+    "U+E055": {"text": "<"},
+    "U+E056": {"text": ">"},
+    "U+E05C": {"text": "", "role": "radical_bar"},
+    "U+E06D": {"text": "√", "role": "sqrt"},
+    "U+E078": {"text": "{", "role": "delimiter_anchor"},
+    "U+E079": {"text": "", "role": "delimiter_piece"},
+    "U+E07A": {"text": "", "role": "delimiter_piece"},
+    "U+E07B": {"text": "", "role": "delimiter_piece"},
+    "U+E082": {"text": "}", "role": "delimiter_anchor"},
+    "U+E083": {"text": "", "role": "delimiter_piece"},
+    "U+E084": {"text": "", "role": "delimiter_piece"},
+    "U+E088": {"text": "Δ"},
+    "U+E09D": {"text": "α"},
+    "U+E09E": {"text": "β"},
+    "U+E09F": {"text": "γ"},
+    "U+E0A0": {"text": "δ"},
+    "U+E0A1": {"text": "ε"},
+    "U+E0A2": {"text": "ζ"},
+    "U+E0A3": {"text": "η"},
+    "U+E0A4": {"text": "θ"},
+    "U+E0A5": {"text": "ι"},
+    "U+E0A6": {"text": "κ"},
+    "U+E0A7": {"text": "λ"},
+    "U+E0A8": {"text": "μ"},
+    "U+E0A9": {"text": "ν"},
+    "U+E0AA": {"text": "ξ"},
+    "U+E0AB": {"text": "ο"},
+    "U+E0AC": {"text": "π"},
+    "U+E0AD": {"text": "ρ"},
+    "U+E0AE": {"text": "σ"},
+    "U+E0AF": {"text": "τ"},
+    "U+E0B0": {"text": "υ"},
+    "U+E0B1": {"text": "φ"},
+    "U+E0B2": {"text": "χ"},
+    "U+E0B3": {"text": "ψ"},
+    "U+E0B4": {"text": "ω"},
+    "U+E0C8": {"text": "°"},
+    "U+E0E5": {"text": "a"},
+    "U+E0E6": {"text": "b"},
+    "U+E0E7": {"text": "c"},
+    "U+E0E8": {"text": "d"},
+    "U+E0E9": {"text": "e"},
+    "U+E0EA": {"text": "f"},
+    "U+E0EB": {"text": "g"},
+    "U+E0EC": {"text": "h"},
+    "U+E0ED": {"text": "i"},
+    "U+E0EE": {"text": "j"},
+    "U+E0EF": {"text": "k"},
+    "U+E0F0": {"text": "l"}
+    ,"U+E0F1": {"text": "m"}
+    ,"U+E0F2": {"text": "n"}
+    ,"U+E0F3": {"text": "o"}
+    ,"U+E0F4": {"text": "p"}
+    ,"U+E0F5": {"text": "q"}
+    ,"U+E0F6": {"text": "r"}
+    ,"U+E0F7": {"text": "s"}
+    ,"U+E0F8": {"text": "t"}
+    ,"U+E0F9": {"text": "u"}
+    ,"U+E0FA": {"text": "v"}
+    ,"U+E0FB": {"text": "w"}
+    ,"U+E0FC": {"text": "x"}
+    ,"U+E0FD": {"text": "y"}
+    ,"U+E0FE": {"text": "z"}
+    ,"U+E100": {"text": "[", "role": "delimiter_anchor"}
+    ,"U+E101": {"text": "", "role": "delimiter_piece"}
+    ,"U+E102": {"text": "", "role": "delimiter_piece"}
+    ,"U+E103": {"text": "]", "role": "delimiter_anchor"}
+    ,"U+E104": {"text": "", "role": "delimiter_piece"}
+    ,"U+E105": {"text": "", "role": "delimiter_piece"}
+  }
+}

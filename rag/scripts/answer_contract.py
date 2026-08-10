@@ -61,13 +61,21 @@ def _canonical_heading(line: str) -> str | None:
         return None
     text = re.sub(r"^#+\s*", "", line.strip()).strip()
     text = re.sub(r"^\d+[.)]\s*", "", text).strip()
+    # Table/rule generators emit "결론: <fact> [n]".  That is an answer line,
+    # not a section title — treating it as a heading wiped the entire claim.
+    fact_prefix = re.match(r"^(결론|확인\s*필요)\s*[:：]\s*(.+)$", text)
+    if fact_prefix and len(fact_prefix.group(2).strip()) >= 2:
+        return None
     text = text.rstrip(":：").strip()
     low = text.lower()
-    if any(key in low for key in ("핵심 요약", "핵심 답변", "결론")):
+    if any(key in low for key in ("핵심 요약", "핵심 답변")) or low in {"결론", "핵심"}:
         return "## 1) 핵심 요약"
     if any(key in low for key in ("선박 운항/업무 영향", "선박 운항·업무 영향", "실무 영향")):
         return "## 2) 선박 운항/업무 영향"
-    if any(key in low for key in ("추후 확인 필요사항", "추후 확인 필요", "후속 확인 필요", "추가 확인", "확인 필요")):
+    if any(
+        key in low
+        for key in ("추후 확인 필요사항", "추후 확인 필요", "후속 확인 필요", "추가 확인")
+    ) or low in {"확인 필요", "확인필요"}:
         return "## 3) 추후 확인 필요사항"
     if "근거 조항" in low:
         return "## 핵심 조항"
@@ -214,13 +222,14 @@ def build_cited_evidence_table(answer: str, citation_chunks: list[Any]) -> list[
 
 
 def _ensure_required_sections(answer: str) -> str:
-    """Keep the four-section UI contract even when a section is not applicable."""
+    """Keep section 1 always; keep 2–4 only when they have real (non-placeholder) body."""
     defaults = {
         "## 1) 핵심 요약": "> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.",
         "## 2) 선박 운항/업무 영향": "> 검색 근거에서 직접 확인되는 별도 운항·업무 영향이 없습니다.",
         "## 3) 추후 확인 필요사항": "> 추가 확인 필요사항이 별도로 식별되지 않았습니다.",
         "## 4) 관련 선급 Rule / Guidance": "> 관련 선급 Rule / Guidance가 검색 근거에 없거나 해당하지 않습니다.",
     }
+    placeholders = {heading: body for heading, body in defaults.items() if heading != "## 1) 핵심 요약"}
     sections: dict[str, list[str]] = {}
     current = ""
     for line in (answer or "").splitlines():
@@ -230,9 +239,19 @@ def _ensure_required_sections(answer: str) -> str:
         elif current:
             sections[current].append(line)
     out: list[str] = []
-    for heading, fallback in defaults.items():
+    # Section 1 is always present (fallback if empty).
+    h1 = "## 1) 핵심 요약"
+    body1 = "\n".join(sections.get(h1, [])).strip()
+    out.extend([h1, "", body1 or defaults[h1], ""])
+    for heading in (
+        "## 2) 선박 운항/업무 영향",
+        "## 3) 추후 확인 필요사항",
+        "## 4) 관련 선급 Rule / Guidance",
+    ):
         body = "\n".join(sections.get(heading, [])).strip()
-        out.extend([heading, "", body or fallback, ""])
+        if not body or body == placeholders.get(heading):
+            continue
+        out.extend([heading, "", body, ""])
     return "\n".join(out).strip()
 
 

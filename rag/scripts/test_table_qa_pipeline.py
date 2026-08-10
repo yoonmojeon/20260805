@@ -120,9 +120,11 @@ class TableQAPipelineTest(unittest.TestCase):
         }
         row = {}
         answer = build_deterministic_table_answer(row, [chunk], debug=debug)
-        self.assertIn("결론: 6∼150", answer or "")
+        self.assertIn("결론:", answer or "")
+        self.assertIn("6∼150", answer or "")
         self.assertIn("[1]", answer or "")
         self.assertEqual(row["_answer_citation_chunks"], [chunk])
+        self.assertTrue(row.get("_verified_structured_answer"))
 
     def test_natural_cell_answer_ignores_identity_cell(self) -> None:
         chunk = SimpleNamespace(
@@ -156,9 +158,11 @@ class TableQAPipelineTest(unittest.TestCase):
             [chunk],
             debug=debug,
         )
-        self.assertIn("결론: 250", answer or "")
+        self.assertIn("결론:", answer or "")
+        self.assertIn("250", answer or "")
         self.assertIn("[1]", answer or "")
         self.assertEqual(row["_answer_citation_chunks"], [chunk])
+        self.assertTrue(row.get("_verified_structured_answer"))
 
     def test_fast_table_answer_bypasses_ollama(self) -> None:
         chunk = SimpleNamespace(

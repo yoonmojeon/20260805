@@ -3,6 +3,31 @@
 이 문서는 715개 문서를 대상으로 하는 범용 표 임베딩 파이프라인과 KR 7편에서
 검증한 고정밀 표 복원 파이프라인을 구분하여 설명합니다.
 
+## Runtime source of truth (MaritimeOpsRAG)
+
+통합 앱이 **실제로** 읽는 Table Chroma ID는 `project_paths.DEFAULT_TABLE_COLLECTION`이다.
+
+| 구분 | 값 |
+|------|-----|
+| Text collection | `full_corpus_715_v1` |
+| Table collection | `full_corpus_715_tables_precise_v1` |
+| Table chunks dir | `data/processed/chunks_tables_precise` |
+| Env override | `MARITIME_RAG_TEXT_COLLECTION` / `MARITIME_RAG_TABLE_COLLECTION` |
+| Corpus PDFs | 715 |
+| Text-indexed | 714 (WITHDRAWN stub 제외) |
+| Table-indexed | 529 (~74%) |
+| No table detected | 179 |
+| Filtered/empty | 7 |
+| Extraction failed | 0 (local audit) |
+
+문서 하단의 `full_corpus_715_tables_v1` / `_v2` 등은 **과거·대안 빌드 ID**이며,
+현재 런타임 기본값이 아니다. 진단:
+
+```powershell
+python scripts/inspect_rag_indexes.py --full
+python scripts/audit_table_coverage.py
+```
+
 원본 PDF, 모델 가중치, 표 crop, 생성된 청크 및 Chroma 벡터 DB는 Git 저장소에
 포함하지 않습니다.
 

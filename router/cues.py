@@ -13,30 +13,65 @@ OPS_PATTERNS: list[tuple[str, float]] = [
     (r"Noon\s*Report|눈\s*리포트|눈리포트|MRV|배출량|CO2e?|CH4|FOC|FGC|연료\s*소모", 2.5),
     (r"기름값|기름\s*(얼마나|얼마|썼|소비|소모)|연비|연료\s*(얼마나|소비|사용|썼|소모)", 2.3),
     (rf"스피드|속도|{_AC}SOG{_AZ}|속력|위도|경도|항적|항차\s*분석|sensor|센서", 2.0),
-    (r"Ballast|Laden|H2521|voyage|항해\s*거리|distance_nm", 1.5),
-    (r"유류|LNG|가스\s*소모|oil_flow|gas_flow", 1.5),
+    (
+        rf"{_AC}YTD{_AZ}|연초\s*누적|운항\s*거리|항해\s*거리|항차\s*수|항차수|"
+        r"Ballast|Laden|H2521|voyage|distance_nm",
+        2.0,
+    ),
+    (r"유류|LNG\s*(소모|소비|사용|연료)|가스\s*소모|oil_flow|gas_flow", 1.5),
     (r"보고서\s*(만들|생성|뽑아)|워드|docx|브리핑", 1.2),
-    (r"우리\s*(배|선박|호선)|이\s*선박|온보드|선내\s*(데이터|로그)", 1.0),
+    (r"우리\s*(배|선박|호선)|이\s*선박|온보드|선내\s*(데이터|로그)|올해\s*(운항|항차|거리|배출)", 1.0),
 ]
 
 RAG_PATTERNS: list[tuple[str, float]] = [
-    (rf"{_AC}(?:MEPC|MSC|MASS){_AZ}|멥시|엠이피시|아이모|IMO\s*회의|회의\s*(결과|주요|동향|결정)", 3.0),
-    (rf"선급|Rule/?Guidance|{_AC}(?:DNV|ABS|LR){_AZ}|디엔브이|KR\s*규칙|{_AC}KR{_AZ}\s*Rule", 3.0),
-    (r"규정|지침|요건|조항|\bclause\b|\bchapter\b|Guidance|규제", 2.0),
+    (
+        rf"{_AC}(?:MEPC|MSC|MASS){_AZ}|멥시|엠이피시|아이모|"
+        rf"{_AC}IMO{_AZ}|회의\s*(결과|주요|동향|결정)|"
+        rf"{_AC}GHG{_AZ}|온실가스|중기조치|well-?to-?wake|Strategy",
+        3.0,
+    ),
+    (
+        rf"선급|Rule/?Guidance|{_AC}(?:DNV|ABS|LR){_AZ}|디엔브이|"
+        rf"KR\s*(?:규칙|Rule|\d+\s*편|표)|{_AC}KR{_AZ}\s*(?:Rule|\d)|"
+        rf"RU\s*-?\s*SHIP|rules?\s+for\s+steel",
+        3.0,
+    ),
+    (
+        r"규정|지침|요건|조항|\bclause\b|\bchapter\b|Guidance|가이던스|가이드|"
+        r"guidance\s*note|규제|스마트\s*(?:십|기능)|원격\s*검사|remote\s*survey",
+        2.0,
+    ),
     (r"MARPOL|마르폴|SOLAS|Net-?Zero|GFI|SEEMP|EEXI|DCS|GISIS", 2.0),
-    (r"표\s*(에서|질의|검색|기준)|정기검사|평형수|밸러스트\s*탱크|선령|검사\s*주기|검사주기|검사\s*(범위|기준|표)", 2.5),
+    (
+        r"표\s*(에서|에|의|질의|검색|기준)|표에|정기검사|평형수|밸러스트\s*탱크|선령|"
+        r"검사\s*주기|검사주기|검사\s*(범위|기준|표|일반)|"
+        r"(?:survey\s*)?interval|intermediate\s*survey|annual\s*survey|"
+        r"docking\s*survey|special\s*survey|continuous\s*survey|class\s*survey|"
+        r"tank\s*inspection|개방검사|두께계측",
+        2.5,
+    ),
     (r"문서|PDF|회의록|circular|resolution|WP\.?\d", 1.5),
-    (r"자율운항|대체연료\s*안전|환경규제\s*대응|최신\s*동향", 2.0),
+    (r"자율운항|대체연료.{0,12}안전|환경규제\s*대응|최신\s*동향", 2.0),
     (r"규칙\s*(이|은|뭐|어디)|뭐라고\s*(돼|되어)|요건이\s*뭐|기준이\s*뭐", 1.8),
     (r"이사회|총회|워킹그룹|작년에\s*.*회의", 1.5),
 ]
 
 GREET_PATTERN = re.compile(r"^(안녕|헬로|hello|\bhi\b)[\s!?.]*$", flags=re.IGNORECASE)
+# 봇 능력·소개. 도메인 단어가 섞여도 chat으로 고정할 때 사용.
+# '둘 다 알려줘'(내용 요청)와 구분되도록 '가능/할 수' 단서를 요구한다.
+CAPABILITY_PATTERN = re.compile(
+    r"(뭐|무엇)\s*할\s*수|할\s*수\s*있|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
+    r"(운항|문서).{0,20}가능|둘\s*다.{0,10}가능|가능.{0,12}(운항|문서|둘)|"
+    r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써|"
+    r"어떤\s*데이터(?:를\s*)?보니|데이터를\s*보니",
+    flags=re.IGNORECASE,
+)
 IDENTITY_PATTERN = re.compile(
     r"너\s*누구|누구야|너는\s*누구|너는\s*뭐|너\s*뭐야|자기소개|너에\s*대해|"
     r"뭐\s*할\s*수|할\s*수\s*있|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
     r"이\s*봇|이\s*에이전트|정체가\s*뭐|이름이\s*뭐|누가\s*만들|너는\s*사람|"
-    r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써",
+    r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써|"
+    r"(운항|문서).{0,20}가능|둘\s*다.{0,10}가능",
     flags=re.IGNORECASE,
 )
 META_PATTERN = re.compile(
@@ -80,8 +115,9 @@ OOS_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 DOC_FRAME_PATTERN = re.compile(
-    r"MEPC|MSC|선급|규정|규제|조항|회의|Rule|지침|동향|문서에서|PDF|circular|"
-    r"MARPOL|SOLAS|resolution|워킹그룹|이사회|총회",
+    r"MEPC|MSC|선급|규정|규제|조항|회의|Rule|지침|가이드|가이던스|동향|"
+    r"문서에서|PDF|circular|MARPOL|SOLAS|resolution|워킹그룹|이사회|총회|"
+    rf"{_AC}(?:IMO|GHG|KR){_AZ}|대체연료|원격\s*검사|survey|표에|표\s*에서",
     flags=re.IGNORECASE,
 )
 SHIP_FRAME_PATTERN = re.compile(
@@ -103,13 +139,13 @@ OVERLAP_TERM_PATTERN = re.compile(
 
 TOPIC_PATTERNS: list[tuple[str, str]] = [
     ("cii", r"CII|탄소집약|attained|required\s*cii"),
-    ("voyage", r"항차|운항\s*상태|\bvoyage\b"),
+    ("voyage", r"항차|운항\s*상태|\bvoyage\b|YTD|운항\s*거리"),
     ("fuel", r"연료|기름|FOC|LNG|연비|유류"),
     ("position", r"위치|어디|위도|경도|스피드|SOG|속력"),
-    ("mepc", r"MEPC"),
+    ("mepc", r"MEPC|GHG|온실가스"),
     ("msc", r"MSC|\bMASS\b"),
-    ("class", r"선급|DNV|ABS|\bLR\b|KR\s*Rule|KR\s*규칙"),
-    ("table", r"표|검사\s*주기|평형수|밸러스트|선령|정기검사"),
+    ("class", r"선급|DNV|ABS|\bLR\b|KR\s*Rule|KR\s*규칙|KR\s*\d+\s*편|RU\s*-?\s*SHIP"),
+    ("table", r"표|검사\s*주기|평형수|밸러스트|선령|정기검사|survey|개방검사"),
     ("seemp", r"SEEMP|EEXI|MARPOL|SOLAS"),
     ("report", r"Noon|MRV|보고서"),
 ]
@@ -161,6 +197,19 @@ def adjust_overlap(question: str, ops: float, rag: float) -> tuple[float, float]
     if re.search(r"문서에서", q) and overlap:
         rag += 1.0
         ops = max(0.0, ops - 1.5)
+
+    # 연료 단어(LNG 등)가 문서·안전 맥락이면 ops가 아니라 rag.
+    if re.search(r"대체연료|안전\s*관련|가이드|가이던스|문서", q, flags=re.IGNORECASE) and doc_frame:
+        if not re.search(r"소모|소비|FOC|FGC|얼마나\s*썼|연비", q, flags=re.IGNORECASE):
+            rag += 1.2
+            ops = max(0.0, ops - 1.5)
+
+    # 명시적 dual 표지 + 양쪽 소스 단어면 점수를 채워 hybrid 후보로 올린다.
+    if has_dual_mark(q):
+        if re.search(r"운항|항차|Noon|MRV|배출|CII|온보드|이\s*선박", q, flags=re.IGNORECASE):
+            ops = max(ops, 1.5)
+        if re.search(r"문서|규정|선급|회의|표|MEPC|MSC|가이드", q, flags=re.IGNORECASE):
+            rag = max(rag, 1.5)
 
     return ops, rag
 

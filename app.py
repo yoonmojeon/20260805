@@ -8,7 +8,6 @@ MaritimeOpsRAG — 통합 Gradio UI
 from __future__ import annotations
 
 import html
-import re
 import sys
 from pathlib import Path
 
@@ -19,10 +18,15 @@ if str(ROOT) not in sys.path:
 import gradio as gr
 from markdown_it import MarkdownIt
 
-from project_paths import DEFAULT_RAG_COLLECTION, OPS_DB_PATH, RAW_PDFS_DIR
+from project_paths import DEFAULT_RAG_COLLECTION, DEFAULT_TABLE_COLLECTION, OPS_DB_PATH, RAW_PDFS_DIR
+from services.answer_ui import render_evidence_table_html, render_related_tables_html
 from services.ops_service import ops_db_ready
 from services.orchestrator import handle_question
-from services.rag_service import rag_index_ready, rag_status_message, warmup_rag_resources
+from services.rag_service import (
+    rag_index_banner,
+    rag_index_ready,
+    rag_status_message,
+)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -40,7 +44,10 @@ _MD = (
 def _markdown_to_html(text: str) -> str:
     """Render model markdown to HTML (do not html.escape the whole body)."""
     if not (text or "").strip():
-            return "<p class='answer-empty'>질문을 입력하세요. 안내 / 운항 데이터 / 규정·회의 문서를 자동으로 구분합니다.</p>"
+        return (
+            "<p class='answer-empty'>질문을 입력하세요. "
+            "안내 / 운항 데이터 / 규정·회의 문서를 자동으로 구분합니다.</p>"
+        )
     return _MD.render(text)
 
 
@@ -50,12 +57,18 @@ def build_answer_html(
     map_html: str = "",
     *,
     route_banner: str = "",
+    evidence_table: list | None = None,
+    related_tables: list | None = None,
 ) -> str:
     q = html.escape(query.strip()) if query.strip() else ""
     banner = ""
     if route_banner.strip():
         banner = f"<div class='route-banner'>{html.escape(route_banner.strip())}</div>"
     body = _markdown_to_html(answer)
+    evidence_html = render_evidence_table_html(evidence_table or [])
+    related_html = render_related_tables_html(
+        related_tables or [], markdown_to_html=_markdown_to_html
+    )
     query_block = f"<div class='query-box'><b>질문</b> {q}</div>" if q else ""
     map_block = (
         f"<div class='map-box'><div class='map-title'>항차 이동 경로</div>{map_html}</div>"
@@ -67,6 +80,8 @@ def build_answer_html(
       {query_block}
       {banner}
       <div class="answer-body markdown-body">{body}</div>
+      {evidence_html}
+      {related_html}
       {map_block}
     </div>"""
 
@@ -107,6 +122,17 @@ def _force_from_mode(route_mode: str) -> str:
     return "rag"
 
 
+def _pack_answer(user_msg: str, result: dict) -> str:
+    return build_answer_html(
+        user_msg,
+        result.get("answer", ""),
+        result.get("map_html") or "",
+        route_banner=_route_banner(result.get("route")),
+        evidence_table=result.get("evidence_table") or [],
+        related_tables=result.get("related_tables") or [],
+    )
+
+
 def chat_fn(
     user_msg: str,
     history: list,
@@ -130,12 +156,7 @@ def chat_fn(
     return (
         result.get("history") or history,
         result.get("dialogue_state") or dialogue_state or {},
-        build_answer_html(
-            user_msg,
-            result.get("answer", ""),
-            result.get("map_html") or "",
-            route_banner=_route_banner(result.get("route")),
-        ),
+        _pack_answer(user_msg, result),
         files or [],
         user_msg,
     )
@@ -167,12 +188,7 @@ def retry_fn(
     return (
         result.get("history") or hist,
         result.get("dialogue_state") or dialogue_state or {},
-        build_answer_html(
-            q,
-            result.get("answer", ""),
-            result.get("map_html") or "",
-            route_banner=_route_banner(result.get("route")),
-        ),
+        _pack_answer(q, result),
         files or [],
         q,
     )
@@ -211,9 +227,42 @@ body, .gradio-container {
 .answer-body.markdown-body code {
   background: #f4f5f7; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.92em;
 }
+.answer-body.markdown-body table,
+.related-table-md table {
+  border-collapse: collapse; width: 100%; margin: 0.6em 0 1em; font-size: 13px;
+}
+.answer-body.markdown-body th, .answer-body.markdown-body td,
+.related-table-md th, .related-table-md td {
+  border: 1px solid #e0e3ea; padding: 6px 8px; vertical-align: top;
+}
+.answer-body.markdown-body th, .related-table-md th { background: #f8f9fb; font-weight: 600; }
 .answer-empty { color: #808495; font-size: 14px; }
 .map-box { margin-top: 20px; border: 1px solid #e6e8ec; border-radius: 8px; overflow: hidden; }
 .map-title { padding: 8px 12px; background: #f8f9fb; font-size: 13px; font-weight: 600; color: #555; }
+.evidence-block, .related-tables-block {
+  margin-top: 18px; border: 1px solid #e6e8ec; border-radius: 8px; overflow: hidden;
+  background: #fff;
+}
+.evidence-title {
+  padding: 10px 12px; background: #f8f9fb; font-size: 13px; font-weight: 700; color: #333;
+  border-bottom: 1px solid #eef0f4;
+}
+.evidence-hint { font-weight: 500; color: #808495; margin-left: 8px; font-size: 12px; }
+.evidence-scroll { overflow-x: auto; }
+.evidence-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.evidence-table th, .evidence-table td {
+  border-bottom: 1px solid #eef0f4; padding: 8px 10px; text-align: left; vertical-align: top;
+}
+.evidence-table th { background: #fafbfc; color: #555; font-weight: 600; white-space: nowrap; }
+.evidence-table td.cite { font-weight: 700; color: #c62828; white-space: nowrap; width: 48px; }
+.evidence-table td.page { white-space: nowrap; width: 56px; color: #555; }
+.evidence-table td.preview { color: #444; line-height: 1.45; }
+.related-table-card { padding: 12px 14px; border-top: 1px solid #eef0f4; }
+.related-table-card:first-of-type { border-top: none; }
+.related-table-head { margin-bottom: 8px; font-size: 13px; color: #444; }
+.evidence-note { font-size: 12px; color: #808495; margin: 6px 0 0; }
+.table-crop { margin: 10px 0 0; }
+.table-crop figcaption { font-size: 12px; color: #808495; margin-top: 4px; }
 .send-btn button { background: #ff4b4b !important; border-color: #ff4b4b !important; font-weight: 600 !important; }
 footer { display: none !important; }
 """
@@ -274,8 +323,18 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
         retry_rag = gr.Button("문서만으로 다시", size="sm")
         retry_hyb = gr.Button("둘 다로 다시", size="sm")
 
-    generated_files = gr.File(label="생성된 보고서 다운로드", file_count="multiple")
-    gr.Markdown(f"<small>{html.escape(rag_status_message())}<br>DB: `{OPS_DB_PATH}`</small>")
+    generated_files = gr.File(label="생성된 보고서 / 표 crop", file_count="multiple")
+    try:
+        banner = rag_index_banner(sample_size=1500)
+    except Exception as exc:
+        banner = f"[RAG INDEX]\n(diagnostics unavailable: {exc})"
+    gr.Markdown(
+        f"<small>{html.escape(rag_status_message())}<br>"
+        f"Text: `{DEFAULT_RAG_COLLECTION}` / Table: `{DEFAULT_TABLE_COLLECTION}`<br>"
+        f"DB: `{OPS_DB_PATH}`</small>"
+    )
+    with gr.Accordion("RAG index diagnostics", open=False):
+        gr.Markdown(f"```\n{banner}\n```")
 
     for btn, text in zip(example_btns, examples):
         btn.click(lambda t=text: t, outputs=user_input)

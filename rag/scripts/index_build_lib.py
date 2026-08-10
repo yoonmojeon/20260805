@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from clause_parse import article_number_from_text, is_article_clause_number
@@ -12,8 +14,50 @@ REFERENCE_CLAUSE_RE = re.compile(r"(\d{3,})\.\s*의\s*규정")
 PICTURE_PLACEHOLDER_MARKERS = ("[picture element", "refer to crop image")
 
 DEFAULT_INDEX_TYPES = frozenset({"text", "table", "picture"})
-TABLE_CHUNK_TYPES = frozenset({"table_summary", "table_markdown", "table_row", "table_schema"})
+TABLE_CHUNK_TYPES = frozenset(
+    {"table_summary", "table_markdown", "table_row", "table_row_aux", "table_schema"}
+)
 MIN_INDEX_TEXT_CHARS = 10
+# Body text (excluding the 2-line table header) must clear this for row/summary chunks.
+MIN_TABLE_BODY_CHARS = 40
+
+
+@lru_cache(maxsize=4)
+def load_quarantine_table_ids(path: str | None = None) -> frozenset[str]:
+    """Optional JSON side-file: {"table_ids": [...]} excluded from the table index."""
+    candidates = []
+    if path:
+        candidates.append(Path(path))
+    env = os.environ.get("TABLE_QUARANTINE_IDS")
+    if env:
+        candidates.append(Path(env))
+    candidates.append(Path(__file__).resolve().parents[1] / "data/processed/logs/precise_table_quarantine_ids.json")
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        ids = payload.get("table_ids") if isinstance(payload, dict) else payload
+        return frozenset(str(x) for x in (ids or []))
+    return frozenset()
+
+
+def _table_body_text(text: str) -> str:
+    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    if len(lines) > 2:
+        return "\n".join(lines[2:])
+    return "\n".join(lines)
+
+
+def _is_tocish_table_text(text: str) -> bool:
+    body = _table_body_text(text)
+    if "Surveys..." in body or body.count("....") >= 2:
+        return True
+    if body.count("|") <= 1 and ("...." in body or "Surveys" in body):
+        return True
+    return False
 
 
 def load_chunks(chunks_path: Path) -> list[dict]:
@@ -177,7 +221,21 @@ def should_index_table_chunk(chunk: dict, min_chars: int = 8) -> bool:
     chunk_type = str(chunk.get("chunk_type", "")).lower()
     if chunk_type not in TABLE_CHUNK_TYPES:
         return False
-    return len(str(chunk.get("text", "")).strip()) >= min_chars
+    table_id = str(chunk.get("table_id") or "")
+    if table_id and table_id in load_quarantine_table_ids():
+        return False
+    text = str(chunk.get("text", "")).strip()
+    if len(text) < min_chars:
+        return False
+    if _is_tocish_table_text(text):
+        return False
+    body = _table_body_text(text)
+    # Keep short schema/header-only noise out of the vector index.
+    if chunk_type in {"table_row", "table_row_aux", "table_summary"} and len(body) < MIN_TABLE_BODY_CHARS:
+        # Allow rows that still carry structured cell separators with some content.
+        if body.count("|") < 1 or len(body.replace("(빈 셀)", "").strip(" |")) < 12:
+            return False
+    return True
 
 
 def should_index_chunk(
@@ -186,8 +244,9 @@ def should_index_chunk(
     skip_ids: set[str],
     min_chars: int,
 ) -> bool:
-    if should_index_table_chunk(chunk, min_chars=min(8, min_chars)):
-        return True
+    chunk_type = str(chunk.get("chunk_type", "")).lower()
+    if chunk_type in TABLE_CHUNK_TYPES:
+        return should_index_table_chunk(chunk, min_chars=min(8, min_chars))
 
     chunk_id = str(chunk.get("chunk_id", ""))
     if chunk_id in skip_ids:

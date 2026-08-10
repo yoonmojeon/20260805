@@ -284,14 +284,15 @@ def run_fast_retrieval_only(
     if timing is not None and hasattr(timing, "mark") and "t_retrieval_start" not in timing.monotonic:
         timing.mark("t_retrieval_start")
 
-    rule_guidance = is_rule_guidance_lookup(
+    table_qa = bool(row.get("_table_qa") or str(row.get("category") or "") == "table_qa")
+    rule_guidance = (not table_qa) and is_rule_guidance_lookup(
         str(row.get("question") or ""),
         row,
         category=str(row.get("category") or ""),
     )
     from meeting_category_profile import uses_structured_meeting_answer
 
-    meeting_q = uses_structured_meeting_answer(
+    meeting_q = (not table_qa) and uses_structured_meeting_answer(
         row, legacy_category=str(row.get("category") or row.get("_eval_category") or "")
     )
     if retrieval_cfg is not None:
@@ -409,7 +410,7 @@ def run_fast_retrieval_only(
         timing.mark("t_retrieval_end")
 
     category = str(row.get("category") or classify_question_category(str(row.get("question", "")), row))
-    table_qa = bool(row.get("_table_qa") or category == "table_qa")
+    table_qa = bool(table_qa or row.get("_table_qa") or category == "table_qa")
     answer_mode = (
         "table_qa"
         if table_qa

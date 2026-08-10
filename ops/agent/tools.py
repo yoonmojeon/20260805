@@ -53,6 +53,7 @@ def _annual_cii_result(year: int, scope: str = "annual") -> dict:
     """연간(또는 YTD 잠정) CII — ytd_summary 집계를 사용."""
     store = get_store()
     dwt   = _get_vessel_dwt()
+    year  = cii_calc._coerce_year(year)
 
     # 지원하지 않는 연도는 데이터 유무와 무관하게 먼저 명확히 걸러낸다
     # (임의 보간/외삽 금지 — compute_cii가 이유를 결정론적으로 반환).
@@ -211,11 +212,16 @@ def get_voyage_analysis(voyage_id: str = "", period: str = "current") -> dict:
 
 
 # ── Tool 3: CII 등급 계산 ───────────────────────────────────────────────────────
-def calculate_cii_rating(year: int = 2024) -> dict:
+def calculate_cii_rating(year: int | None = None) -> dict:
     """
     연간(또는 진행 중인 연도는 YTD 잠정) IMO CII 등급 계산.
     실제 공식/등급 판정은 agent/cii.py 로 단일화되어 있다 (여기서는 재계산하지 않음).
+    year 생략/"올해" 호출 시 데이터 기준 연도(CURRENT_DATE)를 쓴다.
     """
+    year = cii_calc._coerce_year(year)
+    if year is None:
+        year = _current_data_year()
+
     store = get_store()
     ytd   = store.ytd_summary(year)
 
@@ -335,8 +341,12 @@ def generate_mrv_voyage_report(voyage_id: str = "") -> dict:
 
 
 # ── Tool 7: MRV Annual Report 생성 ─────────────────────────────────────────────
-def generate_mrv_annual_report(year: int = 2024) -> dict:
+def generate_mrv_annual_report(year: int | None = None) -> dict:
     """연간 MRV Report Word 파일 생성"""
+    year = cii_calc._coerce_year(year)
+    if year is None:
+        year = _current_data_year()
+
     store  = get_store()
     annual = store.annual_summary(year)
     vessel = store.get_vessel()
@@ -415,11 +425,21 @@ TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "calculate_cii_rating",
-            "description": "지정 연도의 IMO CII(탄소집약도) Attained/Required 값과 A~E 등급 계산 (Bulk Carrier, DWT 기준). 진행 중인 연도는 YTD 잠정치로 표시됨.",
+            "description": (
+                "지정 연도의 IMO CII(탄소집약도) Attained/Required 값과 A~E 등급 계산 "
+                "(Bulk Carrier, DWT 기준). 올해/연도 미지정이면 데이터 기준 연도"
+                f"({CURRENT_DATE[:4]})를 사용. 진행 중인 연도는 YTD 잠정치."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "year": {"type": "integer", "description": "계산 연도 (예: 2024, 2025, 2026)"},
+                    "year": {
+                        "type": "integer",
+                        "description": (
+                            f"계산 연도. 올해={CURRENT_DATE[:4]}. "
+                            "생략 시 데이터 기준 연도 사용. 문자열로 와도 정수로 해석됨."
+                        ),
+                    },
                 },
                 "required": [],
             },

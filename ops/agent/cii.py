@@ -71,9 +71,22 @@ def reference_cii(dwt: float) -> float:
     return a * (dwt ** (-c))
 
 
+def _coerce_year(year) -> Optional[int]:
+    """Tool/LLM args often arrive as str/float; normalize to int year."""
+    if year is None or year == "":
+        return None
+    try:
+        return int(float(year))
+    except (TypeError, ValueError):
+        return None
+
+
 def reduction_factor_percent(year: int) -> Optional[float]:
     """연도별 감축계수 Z(%). 지원하지 않는 연도는 None."""
-    return CII_PARAMS["reduction"].get(year)
+    year_i = _coerce_year(year)
+    if year_i is None:
+        return None
+    return CII_PARAMS["reduction"].get(year_i)
 
 
 def required_cii(ref_cii: float, z_percent: float) -> float:
@@ -129,6 +142,7 @@ def compute_cii(
            이 함수는 "현재 시스템 연도"를 임의로 사용하지 않는다.
     """
     ship_type = ship_type or VESSEL.get("type", "Bulk Carrier")
+    year = _coerce_year(year)
 
     if year is None:
         return _unavailable(scope, "연도가 지정되지 않았습니다.", ship_type=ship_type, dwt=dwt)

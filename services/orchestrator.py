@@ -9,13 +9,9 @@ from services.chat_service import run_chat_query
 from services.hybrid_service import run_hybrid_query
 from services.ops_service import run_ops_query
 from services.rag_service import run_rag_query
+from services.retrieval_mode import classify_retrieval_mode
 
 ForceRoute = Literal["auto", "ops", "rag", "chat", "hybrid"]
-TABLE_HINTS = ("표", "선령", "정기검사", "평형수탱크", "밸러스트", "검사 주기", "검사주기")
-
-
-def _table_qa_hint(question: str) -> bool:
-    return any(k in question for k in TABLE_HINTS)
 
 
 def handle_question(
@@ -37,6 +33,8 @@ def handle_question(
             "history": history or [],
             "files": [],
             "map_html": "",
+            "evidence_table": [],
+            "related_tables": [],
             "last_route": state.last_route,
             "dialogue_state": state.to_dict(),
         }
@@ -57,23 +55,37 @@ def handle_question(
     elif decision.route == "ops":
         result = run_ops_query(effective_q, history)
     elif decision.route == "hybrid":
+        rag_mode = classify_retrieval_mode(decision.rag_query or effective_q)
         result = run_hybrid_query(
             q,
             history,
             rag_latency_mode=rag_latency_mode,
-            table_qa=_table_qa_hint(effective_q),
+            retrieval_mode=rag_mode,
             ops_query=decision.ops_query,
             rag_query=decision.rag_query,
         )
     else:
+        rag_mode = classify_retrieval_mode(effective_q)
         result = run_rag_query(
-            effective_q, latency_mode=rag_latency_mode, table_qa=_table_qa_hint(effective_q)
+            effective_q,
+            latency_mode=rag_latency_mode,
+            retrieval_mode=rag_mode,
         )
-        result.setdefault("history", (history or []) + [
-            {"role": "user", "content": q},
-            {"role": "assistant", "content": result.get("answer", "")},
-        ])
+        result.setdefault(
+            "history",
+            (history or [])
+            + [
+                {"role": "user", "content": q},
+                {"role": "assistant", "content": result.get("answer", "")},
+            ],
+        )
         result.setdefault("map_html", "")
+
+    meta = dict(result.get("meta") or {})
+    if decision.route in {"rag", "hybrid"} and "retrieval_mode" not in meta:
+        meta["retrieval_mode"] = classify_retrieval_mode(
+            (decision.rag_query if decision.route == "hybrid" else None) or effective_q
+        ).value
 
     return {
         "answer": result.get("answer", ""),
@@ -81,8 +93,10 @@ def handle_question(
         "history": result.get("history") or history or [],
         "files": result.get("files") or [],
         "map_html": result.get("map_html") or "",
+        "evidence_table": list(result.get("evidence_table") or []),
+        "related_tables": list(result.get("related_tables") or []),
         "source": result.get("source"),
-        "meta": result.get("meta"),
+        "meta": meta or result.get("meta"),
         "last_route": next_state.get("last_route"),
         "dialogue_state": next_state,
     }

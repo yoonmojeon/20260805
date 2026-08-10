@@ -4,7 +4,7 @@ Word 문서 리포트 생성 모듈 (python-docx)
 - MRV Voyage Report
 - MRV Annual Report
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import sys
@@ -245,7 +245,8 @@ def generate_noon_report_docx(data: dict, voyage: dict, vessel: dict, cii: dict 
 
     doc.add_paragraph()
     doc.add_paragraph(
-        f"Confirmed by Master   |   Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}",
+        "Draft — Master Confirmation Required   |   "
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         style="Normal"
     ).alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
@@ -344,7 +345,7 @@ def generate_mrv_voyage_docx(voyage: dict, vessel: dict, cii: dict = None) -> Pa
 
     doc.add_paragraph()
     doc.add_paragraph(
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  "
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  "
         f"|  Pursuant to Regulation (EU) 2015/757",
         style="Normal"
     )
@@ -446,7 +447,7 @@ def generate_mrv_annual_docx(summary: dict, voyages_list,
 
     doc.add_paragraph()
     doc.add_paragraph(
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}  "
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  "
         f"|  Pursuant to Regulation (EU) 2015/757",
         style="Normal"
     )

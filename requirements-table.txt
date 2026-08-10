@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Table Transformer runtime. Install the CUDA build of torch that matches the
+# target machine first when GPU acceleration is required.
+torch>=2.4.0
+transformers>=4.45.0
+huggingface-hub>=0.26.0
+safetensors>=0.4.5
+requests>=2.32.0

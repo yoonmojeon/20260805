@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from prompts.router_prompt import ROUTER_SYSTEM_PROMPT, build_router_user_prompt
 from router.cues import (
+    CAPABILITY_PATTERN,
     GREET_PATTERN,
     IDENTITY_PATTERN,
     META_PATTERN,
@@ -120,6 +121,9 @@ def _speech_act(question: str) -> RouteDecision | None:
         return _chat_decision("인사는 chat 경로입니다.", chat_mode="greeting")
     if THANKS_PATTERN.search(q):
         return _chat_decision("감사 인사는 chat 경로입니다.", chat_mode="thanks")
+    # 능력·범위 질문은 운항/문서 단어가 섞여도 chat (예: 운항이랑 문서 둘 다 가능해?).
+    if CAPABILITY_PATTERN.search(q):
+        return _chat_decision("기능·범위 안내는 chat 경로입니다.", chat_mode="identity")
     if IDENTITY_PATTERN.search(q):
         ops, rag = score_question(q)
         if ops == 0 and rag == 0:

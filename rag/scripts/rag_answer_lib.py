@@ -141,6 +141,7 @@ class RetrievedChunk:
     chunk_type: str = ""
     table_id: str = ""
     caption: str = ""
+    crop_path: str = ""
     row_index: int | None = None
     matched_columns: list[str] = field(default_factory=list)
     dense_score: float | None = None
@@ -223,6 +224,7 @@ def _retrieved_from_fused_hits(
                 chunk_type=chunk_type,
                 table_id=table_id,
                 caption=caption,
+                crop_path=str(meta.get("crop_path") or ""),
                 row_index=row_index,
                 matched_columns=matched_cols,
                 dense_score=hit.dense_score,
@@ -298,18 +300,33 @@ def retrieve_for_question(
 
         if use_table_schema_retrieval():
             from table_schema_retrieval import build_table_schema_raw
-            from bm25_index import load_or_build_table_bm25
+            from bm25_index import load_or_build_table_bm25, peek_table_bm25_cache
             from rag_inprocess import DEFAULT_INDEX_DIR, DEFAULT_UNIFIED
             from rag_resource_cache import unified_index_fingerprint
+            import os
 
             uid = unified_id or str(row.get("unified_id") or DEFAULT_UNIFIED)
             idir = index_dir or Path(str(row.get("index_dir") or DEFAULT_INDEX_DIR))
-            table_bm25 = load_or_build_table_bm25(
-                collection,
-                unified_id=uid,
-                index_dir=idir,
-                fingerprint=unified_index_fingerprint(uid, idir),
+            fp = unified_index_fingerprint(uid, idir)
+            # Table BM25 pickle is ~1.3GB / ~25s. Interactive queries use the
+            # warm cache only unless MARITIME_TABLE_BM25=1 explicitly opts in.
+            allow_disk = os.environ.get("MARITIME_TABLE_BM25", "0").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            table_bm25 = peek_table_bm25_cache(
+                unified_id=uid, index_dir=idir, fingerprint=fp
             )
+            if table_bm25 is None:
+                table_bm25 = load_or_build_table_bm25(
+                    collection,
+                    unified_id=uid,
+                    index_dir=idir,
+                    fingerprint=fp,
+                    allow_disk_load=allow_disk,
+                )
 
             raw = build_table_schema_raw(
                 collection,
@@ -400,7 +417,6 @@ def retrieve_for_question(
                 from meeting_outcome_retrieval import (
                     meeting_outcome_metadata_adjustment,
                 )
-                from retrieval_query_analysis import analyze_query
                 from retrieval_search import safe_chroma_query
 
                 # Query each meeting topic separately.  Concatenating MASS,
@@ -563,7 +579,7 @@ def retrieve_for_question(
             if any(table_by_type.values()):
                 raw = merge_table_aware_into_raw(raw, table_by_type, top_k=n_fetch, question=question)
 
-    if is_meeting_outcome_question(question, row):
+    if (not use_table_first) and is_meeting_outcome_question(question, row):
         signals = analyze_query(question)
         meeting_hits = query_meeting_outcome_chunks(
             collection,
@@ -667,6 +683,7 @@ def retrieve_for_question(
                 chunk_type=chunk_type,
                 table_id=table_id,
                 caption=caption,
+                crop_path=str(meta.get("crop_path") or ""),
                 row_index=row_index,
                 matched_columns=matched_cols,
             )

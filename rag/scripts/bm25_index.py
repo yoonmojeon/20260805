@@ -297,8 +297,21 @@ class BM25Index:
         path = out_dir / INDEX_NAME
         if not path.exists() or BM25Okapi is None:
             return None
-        with path.open("rb") as f:
-            payload = pickle.load(f)
+        try:
+            size = path.stat().st_size
+            if size < 64:
+                return None
+            with path.open("rb") as f:
+                payload = pickle.load(f)
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "BM25 pickle load failed (%s): %s", path, exc
+            )
+            return None
+        if not isinstance(payload, dict) or "chunk_ids" not in payload:
+            return None
         inst = cls(
             chunk_ids=payload["chunk_ids"],
             metas=payload["metas"],
@@ -404,6 +417,21 @@ def clear_bm25_caches() -> None:
     _TABLE_BM25_CACHE.clear()
 
 
+def peek_table_bm25_cache(
+    *,
+    unified_id: str,
+    index_dir: Path,
+    fingerprint: str = "",
+) -> BM25Index | None:
+    """Return an already-warmed table BM25 handle, or None (no disk I/O)."""
+    out_dir = table_bm25_index_dir(index_dir, unified_id)
+    cache_key = str(out_dir.resolve())
+    cached = _TABLE_BM25_CACHE.get(cache_key)
+    if cached and (not fingerprint or cached[0] == fingerprint):
+        return cached[1]
+    return None
+
+
 def load_or_build_table_bm25(
     collection,
     *,
@@ -411,14 +439,24 @@ def load_or_build_table_bm25(
     index_dir: Path,
     fingerprint: str = "",
     rebuild: bool = False,
+    allow_disk_load: bool = True,
 ) -> BM25Index | None:
-    """Load/build the table-only lexical index without changing generic BM25."""
+    """Load the table-only lexical index.
+
+    Interactive RAG must not rebuild this on failure — the precise table
+    corpus is ~190k chunks and a silent rebuild can hang the UI for minutes.
+    The on-disk pickle is also ~1.3GB (~25s to load); set allow_disk_load=False
+    to use only an already-warm process cache (dense-only otherwise).
+    Offline rebuild: ``python scripts/35_build_bm25_index.py --table --rebuild``.
+    """
     out_dir = table_bm25_index_dir(index_dir, unified_id)
     cache_key = str(out_dir.resolve())
     cached = _TABLE_BM25_CACHE.get(cache_key)
     if not rebuild and cached and (not fingerprint or cached[0] == fingerprint):
         return cached[1]
     if not rebuild:
+        if not allow_disk_load:
+            return None
         loaded = BM25Index.load(out_dir)
         if (
             loaded
@@ -427,6 +465,8 @@ def load_or_build_table_bm25(
         ):
             _TABLE_BM25_CACHE[cache_key] = (fingerprint, loaded)
             return loaded
+        # Prefer dense-only over a multi-minute online rebuild.
+        return loaded if loaded else None
     try:
         built = build_bm25_from_collection(
             collection,

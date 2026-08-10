@@ -246,5 +246,11 @@ def build_meeting_retrieval_profile(question: str, row: dict, *, legacy_category
 
 def uses_structured_meeting_answer(row: dict, *, legacy_category: str) -> bool:
     """Categories 1–3 use evidence-based 4-section structured answers (no LLM)."""
+    # table_qa is not in LEGACY_TO_TOP and must not fall through to TREND,
+    # or Fast retrieval injects meeting evidence slots and drops table crops.
+    if row.get("_table_qa") or str(row.get("category") or "") == "table_qa":
+        return False
+    if str(legacy_category or "") == "table_qa":
+        return False
     top = resolve_top_level_category(legacy_category)
     return top in {TOP_LEVEL_TREND, TOP_LEVEL_ENV, TOP_LEVEL_AUTO}

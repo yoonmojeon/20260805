@@ -7,6 +7,7 @@ from typing import Any
 
 _TYPE_ORDER = {
     "table_row": 0,
+    "table_row_aux": 0,
     "table_markdown": 1,
     "table_schema": 2,
     "table_summary": 3,
@@ -85,9 +86,9 @@ def select_table_evidence(
     # Preserve one schema/summary/markdown description for each of the two best tables.
     for tid in candidates[:2]:
         same = [c for c in ranked if str(getattr(c, "table_id", "") or "") == tid]
-        for ctype in ("table_row", "table_markdown", "table_schema", "table_summary"):
+        for ctype in ("table_row", "table_row_aux", "table_markdown", "table_schema", "table_summary"):
             matches = [c for c in same if str(getattr(c, "chunk_type", "") or "") == ctype]
-            for chunk in matches[: (4 if ctype == "table_row" else 1)]:
+            for chunk in matches[: (4 if ctype in {"table_row", "table_row_aux"} else 1)]:
                 add(chunk)
 
     for chunk in ranked:
@@ -111,16 +112,29 @@ def build_table_context(evidence: list[Any]) -> str:
 
 def _cell_assignments(text: str) -> dict[str, str]:
     for line in str(text or "").splitlines():
-        if not line.startswith("셀:"):
+        stripped = line.strip()
+        if stripped.startswith("셀:"):
+            payload = stripped.removeprefix("셀:").strip()
+        elif "열1=" in stripped or stripped.startswith("열"):
+            payload = stripped
+        else:
             continue
         out: dict[str, str] = {}
-        for part in line.removeprefix("셀:").strip().split(" | "):
+        for part in payload.split(" | "):
             if "=" not in part:
                 continue
             key, value = part.split("=", 1)
-            if key.strip() and value.strip():
-                out[key.strip()] = value.strip()
-        return out
+            key, value = key.strip(), value.strip()
+            if not key or not value or value == "(빈 셀)":
+                continue
+            # "열2=개방검사 시기: 정기검사 시" → prefer human label after 열N=
+            if key.startswith("열") and ":" in value:
+                label, cell = value.split(":", 1)
+                key = label.strip() or key
+                value = cell.strip() or value
+            out[key] = value
+        if out:
+            return out
     return {}
 
 
@@ -179,7 +193,7 @@ def _rank_structured_cells(
 
     ranked: list[tuple[float, Any, str, str]] = []
     for evidence_rank, chunk in enumerate(evidence, 1):
-        if str(getattr(chunk, "chunk_type", "") or "") != "table_row":
+        if str(getattr(chunk, "chunk_type", "") or "") not in {"table_row", "table_row_aux", "table_summary"}:
             continue
         text = str(getattr(chunk, "text", "") or "")
         assignments = _cell_assignments(text)
@@ -307,9 +321,16 @@ def build_deterministic_table_answer(
         if len(citation_chunks) >= 3:
             break
     row["_answer_citation_chunks"] = citation_chunks
+    row["_verified_structured_answer"] = True
     display_value = "별도 요건 없음 (-)" if value == "-" else value
     citations = "".join(f"[{i}]" for i in range(1, len(citation_chunks) + 1))
-    return f"결론: {display_value}입니다. {citations}"
+    # Emit a cited bullet under section 1 so answer_contract cannot mis-read
+    # "결론: …" as an empty section heading and wipe the cell value.
+    label = selected_key.strip() if selected_key and not str(selected_key).startswith("열") else "표 셀"
+    return (
+        "## 1) 핵심 요약\n\n"
+        f"- 결론: {label} → {display_value} {citations}"
+    )
 
 
 def build_table_answer_prompts(

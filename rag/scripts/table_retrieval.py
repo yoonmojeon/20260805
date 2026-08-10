@@ -48,6 +48,9 @@ ROW_ENTITY_TERMS = (
     "빌지저장탱크",
     "이중저탱크",
     "기관실",
+    "주기관",
+    "보조기관",
+    "개방검사",
 )
 INSPECTION_COLUMN_TERMS = (
     "제1차 정기검사",
@@ -89,6 +92,8 @@ def enrich_table_query_for_embedding(question: str) -> str:
             parts.append(term)
     if "reporting" in question.lower() or "정기검사" in question:
         parts.append("정기검사 reporting")
+    if "개방검사" in question or "주기관" in question:
+        parts.append("주기관/보조기관수 개방검사 시기")
     if not parts:
         return question
     return f"{' '.join(dict.fromkeys(parts))} {question}".strip()
@@ -119,7 +124,7 @@ def table_chunk_boosts_for_question(question: str) -> dict[str, float]:
     if mode == "table_summary":
         return {"table_summary": 0.20, "table_markdown": 0.12, "table_row": 0.08}
     if mode in ("cell_lookup", "row_lookup", "column_comparison"):
-        return {"table_row": 0.22, "table_markdown": 0.14, "table_summary": 0.06}
+        return {"table_row": 0.26, "table_markdown": 0.14, "table_summary": 0.06}
     return dict(TABLE_CHUNK_BOOST_DEFAULT)
 
 

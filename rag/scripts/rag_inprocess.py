@@ -34,8 +34,15 @@ from accurate_streaming import mark_accurate_initial_ack, wrap_accurate_on_token
 from retrieval_timing import TimingTrace, populate_timing_meta, set_run_context
 from retrieval_verification import append_retrieval_trace_log, serialize_chunk_list
 
-DEFAULT_UNIFIED = "full_corpus_715_v1"
-TABLE_QA_UNIFIED = "kr_tables_v2"
+import sys as _sys
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+from project_paths import DEFAULT_RAG_COLLECTION, DEFAULT_TABLE_COLLECTION
+
+DEFAULT_UNIFIED = DEFAULT_RAG_COLLECTION
+TABLE_QA_UNIFIED = DEFAULT_TABLE_COLLECTION
 TABLE_QA_ACCURATE = {
     "top_k": 10,
     "fetch_k": 30,
@@ -52,7 +59,7 @@ ACCURATE_RULE_RETRIEVAL = {
 }
 DEFAULT_INDEX_DIR = Path("data/processed/index")
 DEFAULT_CHUNKS_DIR = Path("data/processed/chunks")
-TABLE_QA_CHUNKS_DIR = Path("data/processed/chunks_v2")
+TABLE_QA_CHUNKS_DIR = Path("data/processed/chunks_tables_precise")
 INTERACTIVE_ACCURATE_NUM_CTX = 4096
 TRACE_LOG = Path("data/processed/logs/pilot_validation/retrieval_trace_ui.jsonl")
 
@@ -687,8 +694,60 @@ def run_answer_inprocess(
     from retrieval_verification import build_answer_citation_mapping
 
     pre_contract_answer = answer
+    # Table LLM drafts often omit [n] even when evidence is present. Attach the
+    # top evidence citations before the shared lexical contract runs.
+    if is_table_qa_row(row) and pre_contract_answer and citation_chunks:
+        if not re.search(r"\[\d+\]", pre_contract_answer):
+            cite = "".join(f"[{i}]" for i in range(1, min(3, len(citation_chunks)) + 1))
+            patched: list[str] = []
+            for line in pre_contract_answer.splitlines():
+                stripped = line.strip()
+                if (
+                    stripped
+                    and not stripped.startswith("#")
+                    and not stripped.endswith((":", "："))
+                    and not re.search(r"\[\d+\]", stripped)
+                    and (
+                        stripped.startswith(("결론:", "-", "*"))
+                        or len(stripped) >= 12
+                    )
+                ):
+                    patched.append(f"{line.rstrip()} {cite}")
+                else:
+                    patched.append(line)
+            pre_contract_answer = "\n".join(patched)
+            answer = pre_contract_answer
+            row.setdefault("warning_flags", []).append("table_default_citations_attached")
+
     contract = apply_answer_contract(answer, citation_chunks)
     answer = contract.answer
+    if (
+        is_table_qa_row(row)
+        and citation_chunks
+        and "인용으로 검증되지 않은 문장은 답변에서 제외" in (answer or "")
+    ):
+        from answer_depth_guidance import join_four_sections
+
+        bullets: list[str] = []
+        for index, chunk in enumerate(citation_chunks[:6], 1):
+            text = str(getattr(chunk, "text", "") or "").strip()
+            if not text:
+                continue
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            body = " ".join(lines[2:] if len(lines) > 2 else lines)
+            body = re.sub(r"\s+", " ", body).strip()
+            if len(body) < 24:
+                continue
+            if len(body) > 320:
+                body = body[:317] + "..."
+            bullets.append(f"- {body} [{index}]")
+        if bullets:
+            answer = join_four_sections(
+                {"1": "\n".join(bullets[:5]), "2": "", "3": "", "4": ""}
+            )
+            contract = apply_answer_contract(answer, citation_chunks)
+            answer = contract.answer
+            row.setdefault("warning_flags", []).append("answer_contract_table_rescued")
     if direct_clause_answer and pre_contract_answer and re.search(r"##\s*1\)", pre_contract_answer):
         # The direct-clause route has already checked each generated claim
         # against its atomic English proposition, including modality.  The

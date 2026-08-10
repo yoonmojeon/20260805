@@ -542,6 +542,7 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
 
 
 def _to_chunk(cid: str, document: str, meta: dict) -> RetrievedChunk:
+    meta = meta or {}
     return RetrievedChunk(
         chunk_id=str(cid),
         doc_id=str(meta.get("doc_id") or ""),
@@ -552,6 +553,10 @@ def _to_chunk(cid: str, document: str, meta: dict) -> RetrievedChunk:
         element_type=str(meta.get("element_type") or ""),
         distance=0.0,
         text=str(document or ""),
+        chunk_type=str(meta.get("chunk_type") or ""),
+        table_id=str(meta.get("table_id") or ""),
+        caption=str(meta.get("caption") or ""),
+        crop_path=str(meta.get("crop_path") or ""),
     )
 
 

@@ -21,9 +21,45 @@
 
 핵심만 요약하면:
 
-1. **빌드 타임** — 운항 Excel → SQLite, PDF 본문/표 → Chroma 2개 (`full_corpus_715_v1`, `full_corpus_715_tables_precise_v1`)
-2. **질의 타임** — 라우터가 `chat` / `ops` / `rag` / `hybrid`를 고른 뒤 해당 서비스 실행
-3. 최상위는 주제(동향·MASS·표QA)가 아니라 **데이터 소스**
+## Corpus coverage (local runtime, measured)
+
+| 구분 | 값 | 근거 |
+|------|-----|------|
+| Corpus PDFs | **715** | `data/raw_pdfs` rglob + `data/manifests/full_corpus_715.csv` |
+| Text-indexed PDFs | **714** | `full_corpus_715_v1` manifest `doc_ids` |
+| Text missing | **1** | `MSC 111-15-1 - WITHDRAWN (Italy).pdf` — 1,759B stub, page text 0, chunks.jsonl empty. Index intentionally skipped (`missing_chunks_doc_ids`). Not a silent bug; re-embed yields 0 chunks. |
+| Table-indexed PDFs | **529** | `full_corpus_715_tables_precise_v1` |
+| No usable table detected | **179** | precise `missing_table_documents` + empty `tables.jsonl` |
+| Filtered / empty (pseudo TOC or quarantine) | **7** | 6 KR TOC-only + 1 ABS quarantined |
+| Table extraction failed | **0** | audit classification |
+| Coverage | **~74%** of 715 have table chunks |
+
+진단:
+
+```powershell
+python scripts/audit_text_coverage.py
+python scripts/audit_table_coverage.py
+python scripts/inspect_rag_indexes.py --full
+```
+
+`715 PDFs 전체를 table QA로 완전히 검증했다`는 사실이 아닙니다. 표 인덱스는 529문서입니다.
+
+BOTH retrieval 기본값: `MARITIME_RAG_DUAL` unset → **ON** (`services/rag_service.dual_retrieval_enabled`). `=0`이면 single-index fallback.
+
+## 최근 업데이트 (표 QA · UI)
+
+통합 Gradio(`app.py`)에서 표 질문이 느려지거나 crop/오류만 보이던 문제를 고쳤습니다.
+
+| 증상 | 원인 | 조치 |
+|------|------|------|
+| 표 질문만 1분+ / 멈춤 | Table BM25 pickle(~1.3GB) 디스크 로드·재빌드 | 대화형 기본은 dense-only. 필요 시 `MARITIME_TABLE_BM25=1` |
+| 답·Evidence는 나오는데 표 crop 빈칸 | `table_qa`가 meeting 경로로 잘못 들어가 `table_id`/`crop_path` 유실 | `uses_structured_meeting_answer`가 table_qa를 제외 |
+| MEPC 등 「오류」만 표시 | `analyze_query` 지역 import → `UnboundLocalError` | 모듈 import만 사용, 표 질의는 meeting merge 스킵 |
+| `[n]` 의미 불명확 | 인용 번호만 있고 Evidence Table 미표시 | Gradio에 Evidence Table + PDF crop gallery |
+
+UI는 MaritimeRAG Streamlit과 같이 **원본 표 crop 이미지**를 우선 보여 줍니다(Markdown 표 재구성이 아님).
+
+관련 코드: `services/rag_service.py`, `services/answer_ui.py`, `services/table_render.py`, `rag/scripts/rag_fast_mode.py`, `rag/scripts/meeting_category_profile.py`, `rag/scripts/bm25_index.py`.
 
 ## 구조
 

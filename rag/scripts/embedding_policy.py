@@ -188,6 +188,8 @@ def get_sentence_transformer(model_name: str):
     if model_name not in _ENCODER_CACHE:
         import os
 
+        import torch
+
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
         from sentence_transformers import SentenceTransformer
@@ -200,7 +202,10 @@ def get_sentence_transformer(model_name: str):
             ),
             None,
         )
-        kwargs = {"revision": revision} if revision else {}
+        kwargs: dict = {"revision": revision} if revision else {}
+        # Prefer GPU when available (RTX / CUDA builds).
+        if torch.cuda.is_available():
+            kwargs["device"] = "cuda"
         _ENCODER_CACHE[model_name] = SentenceTransformer(model_name, **kwargs)
     return _ENCODER_CACHE[model_name]
 

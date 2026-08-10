@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "description": "KR 문서는 7편에서 검증한 HancomEQN 공통 코드 매핑을 기본 사용한다. 매핑 범위 밖 PUA가 남은 표만 자동 격리한다.",
+  "source_defaults": {
+    "KR": "7_2025_bdc15136d686.json"
+  },
+  "documents": {
+    "kr_kr_rules_7_2025_2f2d6373": "7_2025_bdc15136d686.json"
+  }
+}

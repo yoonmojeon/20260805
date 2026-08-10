@@ -119,8 +119,12 @@ PDF는 **본문**과 **표**의 정보 구조가 달라 인덱스를 분리합�
 | Chroma 루트 | `data/processed/index/unified_<collection_id>/` |
 | 본문 컬렉션 | `full_corpus_715_v1` |
 | 표 컬렉션 | `full_corpus_715_tables_precise_v1` |
-| 매니페스트 | `data/manifests/full_corpus_715.csv` |
-| 임베딩 | `intfloat/multilingual-e5-base` (로컬 sentence-transformers) |
+| Corpus PDF 수 | **715** (`full_corpus_715.csv` / `raw_pdfs`) |
+| Text 인덱싱 | **714** — WITHDRAWN stub 1건은 텍스트 0이라 제외 |
+| Table 인덱싱 | **529** — 표 없음 179 + filtered 7 + indexed 529 |
+
+자세한 coverage 감사: `scripts/audit_text_coverage.py`, `scripts/audit_table_coverage.py`,
+결과 JSON은 `data/eval/text_corpus_coverage.json`, `data/eval/table_coverage_audit.json`.
 
 ### 3.1 본문 인덱스
 
@@ -177,17 +181,43 @@ preprocess / prepare
   → answer_contract 로 답변 형식 정리
 ```
 
-**표 힌트** (`services/orchestrator.py`의 `TABLE_HINTS`):
-`표`, `선령`, `정기검사`, `평형수탱크`, `밸러스트`, `검사 주기`, `검사주기` 등.
+**Retrieval mode** (`services/retrieval_mode.py`): RAG 질문 안에서
+`TEXT` / `TABLE` / `BOTH`를 rule 기반으로 고른다.
 
-**Dual 검색** (환경·설정에 따라):
+| Mode | 언제 | 검색 |
+|------|------|------|
+| TEXT | 회의 결과·정의·취지 등 본문 | `full_corpus_715_v1` |
+| TABLE | 선령/주기/표 값·행 질의 | `full_corpus_715_tables_precise_v1` |
+| BOTH | 취지+선령별 범위처럼 본문·표 동시 필요 | 두 인덱스 검색 후 fuse |
 
-- 표 힌트가 있고 본문·표 인덱스가 모두 준비되면
-  두 컬렉션을 검색한 뒤 (`search2`) 근거를 fuse하고 LLM은 한 번 (`llm1`)
-- 평가 속도를 위해 `MARITIME_RAG_DUAL=0`으로 dual을 끌 수 있음
+애매하면서 표 단서가 있으면 BOTH를 우선한다. 표 답변에는 동일 `table_id`의
+`table_row`를 deterministic Markdown 표로 복원해 `### 관련 표`로 붙인다
+(`services/table_render.py`). LLM이 표 셀을 새로 만들지 않는다.
 
-RAG 공통 정체성 prefix는 `prompts/rag.py`입니다.
-회의 요약·Rule·표QA 세부 프롬프트는 `rag/scripts/` 쪽에 두는 편입니다.
+진단:
+
+```powershell
+python scripts/inspect_rag_indexes.py
+```
+
+**표 청크 실제 형태 (코드·Chroma 기준):** Markdown 표를 임베딩하지 않는다.
+`70_build_precise_table_corpus.serialize_rows`가 셀을
+`열N=헤더경로: 값 | …` 평문으로 직렬화한다. 예:
+
+```text
+[table_row] source=ABS file=….pdf
+표: …_p0013_t006
+문서: ….pdf, 13쪽
+열1=Quantity in Operations: Frequency | 열2=Permanent Variation: ±5% | 열3=Transient Variation: ±10% (5s)
+```
+
+메타데이터에 `table_id`, `page_number`, `crop_path`(원본 crop 경로), `chunk_type`
+(`table_row` / `table_summary`)가 있다.
+
+환경변수로 컬렉션을 바꿀 수 있다 (기본은 `project_paths.py`):
+
+- `MARITIME_RAG_TEXT_COLLECTION`
+- `MARITIME_RAG_TABLE_COLLECTION`
 
 ---
 

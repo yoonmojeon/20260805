@@ -109,6 +109,17 @@ class AnswerContractTests(unittest.TestCase):
             result.answer,
         )
 
+    def test_table_conclusion_line_is_not_wiped_as_heading(self) -> None:
+        """Deterministic table QA used '결론: <cell> [n]' — must survive contract."""
+        evidence = "열1=평형수탱크 | 열4=15년< 선령: 모든 평형수탱크2), 3), 4)"
+        result = apply_answer_contract(
+            "결론: 모든 평형수탱크2), 3), 4)입니다. [1]",
+            [_chunk(1, evidence)],
+        )
+        self.assertIn("모든 평형수탱크2), 3), 4)", result.answer)
+        self.assertNotIn("인용으로 검증되지 않은 문장은 답변에서 제외", result.answer)
+        self.assertTrue(result.evidence_table)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -120,7 +120,7 @@ def run_agent_sync(user_message: str, history: list) -> tuple[str, list, list, b
 
 def run_agent(user_message: str, history: list) -> Generator[str, None, None]:
     """스트리밍 래퍼 (Gradio용)"""
-    answer, _, _ = run_agent_sync(user_message, history)
+    answer, _, _, _ = run_agent_sync(user_message, history)
     yield answer
 
 
