@@ -53,6 +53,9 @@ def select_table_evidence(
     candidates = _candidate_table_ids(debug)
     candidate_rank = {tid: i for i, tid in enumerate(candidates[:3])}
     terms = [_norm(t) for t in _query_terms(row, debug) if _norm(t)]
+    parsed = (debug or {}).get("parsed_query") or {}
+    row_entities = [str(v) for v in (parsed.get("row_entities") or []) if str(v).strip()]
+    anchors = _row_anchor_keys(str(row.get("question") or ""), row_entities)
 
     unique: dict[str, Any] = {}
     for chunk in list(retrieved) + list(pool):
@@ -62,12 +65,15 @@ def select_table_evidence(
     def score(chunk: Any) -> tuple:
         tid = str(getattr(chunk, "table_id", "") or "")
         ctype = str(getattr(chunk, "chunk_type", "") or "")
-        text = _norm(str(getattr(chunk, "text", "") or ""))
-        matches = sum(1 for term in terms if term in text)
+        text = str(getattr(chunk, "text", "") or "")
+        text_n = _norm(text)
+        matches = sum(1 for term in terms if term in text_n)
+        anchor_hits = sum(1 for key in anchors if _anchor_in_text(key, text_n))
         table_rank = candidate_rank.get(tid, 99)
         candidate_penalty = table_rank if table_rank < 99 else 20
         return (
             candidate_penalty,
+            -anchor_hits,
             -matches,
             _TYPE_ORDER.get(ctype, 9),
             float(getattr(chunk, "distance", 9.0)),
@@ -243,6 +249,9 @@ def _rank_structured_cells(
         tid = str(getattr(chunk, "table_id", "") or "")
         route_bonus = max(0.0, 0.55 - 0.045 * table_rank.get(tid, 12))
         complexity_penalty = max(0, len(assignments) - 2) * 0.25
+        anchor_cov = _row_anchor_coverage(
+            text, _row_anchor_keys(question, row_entities), question
+        )
         row_score = (
             subject_match * 2.3
             + token_coverage * 1.4
@@ -250,6 +259,7 @@ def _rank_structured_cells(
             + numeric_coverage * 2.4
             + route_bonus
             - complexity_penalty
+            + anchor_cov * 2.2
         )
 
         for position, (key, value) in enumerate(assignments.items()):
@@ -290,6 +300,28 @@ def _rank_structured_cells(
                     semantic_key_bonus += 1.0
                 # Criterion columns usually sit at the right edge of the row.
                 semantic_key_bonus += min(0.9, position * 0.18)
+            if any(term in question for term in ("평가 방법", "평가하는가", "방법으로")):
+                if re.match(r"^(SP|UP)-[A-Z]$", str(value).strip(), re.I):
+                    semantic_key_bonus += 2.2
+                if "평가" in key_norm or "방법" in key_norm:
+                    semantic_key_bonus += 1.1
+                # Prefer the structural member named in the question (호퍼/이중선측/…).
+                member_hits = sum(
+                    1
+                    for term in ("호퍼", "경사판", "이중선측", "수평", "거더", "웨브", "종방향")
+                    if term in question and term in text
+                )
+                semantic_key_bonus += member_hits * 0.55
+            if "방화" in question or "보존성" in question:
+                if re.match(r"^L\d$", str(value).strip(), re.I):
+                    semantic_key_bonus += 2.2
+                if "방화" in key_norm or "보존" in key_norm or "fire" in key.lower():
+                    semantic_key_bonus += 1.2
+            if any(term in question for term in ("용접 다리", "최소 각장", "다리 길이")):
+                if re.fullmatch(r"\d+(?:\.\d+)?", str(value).strip()):
+                    semantic_key_bonus += 1.8
+                if any(t in key.lower() for t in ("length", "leg", "각장", "다리")):
+                    semantic_key_bonus += 1.3
             structural_penalty = 0.0
             if "비고" in key_norm:
                 structural_penalty += 1.1
@@ -320,6 +352,226 @@ def _rank_structured_cells(
     return sorted(ranked, key=lambda item: item[0], reverse=True)
 
 
+_ROW_ANCHOR_TERMS = (
+    "넘침",
+    "순차",
+    "평형수",
+    "호퍼",
+    "이중선측",
+    "화물창",
+    "용접",
+    "부식추가",
+    "방화",
+    "침수",
+    "사고",
+    "재화중량",
+    "구명정",
+    "체인로커",
+    "빌지",
+    "드레인",
+    "수평거더",
+    "웨브",
+    "개방갑판",
+    "대피",
+)
+
+
+def _row_anchor_keys(question: str, row_entities: list[str]) -> list[str]:
+    keys: list[str] = []
+    for entity in row_entities:
+        keys.extend(re.findall(r"[가-힣A-Za-z0-9+]{2,}", entity))
+    for term in _ROW_ANCHOR_TERMS:
+        if term in (question or ""):
+            keys.append(term)
+    q = question or ""
+    keys.extend(re.findall(r"[가-힣A-Za-z0-9+]{2,}(?:탱크|로커|구역|거더|웨브)", q))
+    for term in ("한쪽", "면접촉", "양면", "넘침식", "순차식", "임시", "승정"):
+        if term in q:
+            keys.append(term)
+    if re.search(r"첫|제\s*1|1\s*차", q):
+        keys.extend(["제1차", "첫"])
+    # Keep distinctive tokens; drop ultra-generic fillers.
+    drop = {
+        "선박",
+        "구역",
+        "탱크",
+        "방법",
+        "시나리오",
+        "등급",
+        "길이",
+        "값",
+        "초과",
+        "이하",
+        "이상",
+        "미만",
+        "화물창구역",
+    }
+    return [k for k in dict.fromkeys(keys) if k not in drop][:16]
+
+
+def _anchor_in_text(key: str, text_n: str) -> bool:
+    kn = _norm(key)
+    if not kn:
+        return False
+    if kn in text_n:
+        return True
+    # Strip common Korean particles so "재화중량이" matches "재화중량".
+    for suf in ("은", "는", "이", "가", "을", "를", "의", "인", "한", "로", "으로"):
+        if kn.endswith(suf) and len(kn) > len(suf) + 1 and kn[: -len(suf)] in text_n:
+            return True
+    return False
+
+
+def _row_anchor_coverage(chunk_text: str, anchors: list[str], question: str = "") -> float:
+    if not anchors:
+        return 1.0
+    text = str(chunk_text or "")
+    text_n = _norm(text)
+    hits = sum(1 for key in anchors if _anchor_in_text(key, text_n))
+    need = min(3, len(anchors))
+    coverage = hits / max(1, need)
+    # Numeric range asks (10만~15만 ↔ 100000/150000) count as row evidence.
+    q_nums = set(_numeric_terms(question))
+    t_nums = set(_numeric_terms(text))
+    if q_nums and (len(q_nums & t_nums) / len(q_nums)) >= 0.5:
+        coverage = max(coverage, 0.67)
+    return coverage
+
+
+def _is_plausible_cell_value(
+    value: str,
+    *,
+    question: str,
+    selected_key: str,
+) -> bool:
+    v = str(value or "").strip()
+    if not v or v in {"(빈 셀)", "하중", "값", "항목"}:
+        return False
+    if _norm(v) == _norm(selected_key):
+        return False
+    # Column headers / attribute labels must not be emitted as the answer cell.
+    label_terms = (
+        "허용기준",
+        "설계하중",
+        "시나리오",
+        "최소 각장",
+        "적용두께",
+        "구획종류",
+        "재료기호",
+        "정기검사",
+        "판정기준",
+    )
+    if any(term in v for term in label_terms) and not re.search(
+        r"\d|[A-Z]{1,4}\s*[+\-]?\s*[A-Z0-9]|[○●◯✗×Xx\-−]", v
+    ):
+        return False
+    if re.search(r"허용기준|판정기준", question) and not (
+        _ALLOWANCE_CODE_RE.match(v) or re.search(r"[○●◯\-−]", v)
+    ):
+        return False
+    if re.search(r"설계하중\s*시나리오|하중\s*시나리오", question):
+        if _ALLOWANCE_CODE_RE.match(v) or re.search(r"AC-", v, re.I):
+            return False
+        if not re.search(r"S\s*\+\s*D|\bS\+D\b|^[SDP]$|^Pin$|^P$", v, re.I):
+            return False
+    if re.search(r"평가\s*방법|평가하는가|방법으로", question):
+        if not re.match(r"^(SP|UP)-[A-Z]$", v, re.I):
+            return False
+    if re.search(r"방화|보존성", question) and "등급" in question:
+        if not re.match(r"^L\d$", v, re.I):
+            return False
+    if re.search(r"몇\s*(?:mm|톤)|얼마|값은", question) and not re.search(
+        r"\d|[○●◯]", v
+    ):
+        return False
+    if re.search(r"첫|제\s*1|1\s*차", question) and re.search(
+        r"제\s*[2-9]|[2-9]\s*차", v
+    ):
+        return False
+    return True
+
+
+def build_caption_table_answer(
+    row: dict,
+    evidence: list[Any],
+    *,
+    debug: dict | None = None,
+) -> str | None:
+    """Answer caption/title asks from schema/summary metadata before LLM."""
+    question = str(row.get("question") or "")
+    if not re.search(r"표\s*제목|구조화\s*표|caption|제목(?:은|이|가|\?)", question, re.I):
+        return None
+    preferred_ids = set(_candidate_table_ids(debug))
+    ordered = list(evidence)
+    if preferred_ids:
+        ordered = [
+            c for c in evidence if str(getattr(c, "table_id", "") or "") in preferred_ids
+        ] + [
+            c for c in evidence if str(getattr(c, "table_id", "") or "") not in preferred_ids
+        ]
+
+    def _looks_like_internal_id(cap: str) -> bool:
+        text = (cap or "").strip()
+        if not text:
+            return True
+        if re.fullmatch(r"[A-Za-z0-9_./-]{8,}", text) and "_" in text:
+            return True
+        if re.search(r"_p\d{3,}_t\d+|kr_kr_rules|table_id\s*=", text, re.I):
+            return True
+        return False
+
+    def _caption_of(chunk: Any) -> str:
+        candidates: list[str] = []
+        cap = str(getattr(chunk, "caption", "") or "").strip()
+        if cap:
+            candidates.append(re.sub(r"\s+", " ", cap))
+        text = str(getattr(chunk, "text", "") or "")
+        for pattern in (
+            r"(?i)caption\s*[:：]\s*(.+)",
+            r"표\s*(?:제목)?\s*[:：]\s*(표\s*\d+[^\n|]{0,80})",
+            r"(표\s*\d+(?:\.\d+)*\s+[가-힣A-Za-z][^\n|]{0,80})",
+            r"열1\s*=\s*([가-힣A-Za-z0-9 .·\-/,()]{2,40})",
+        ):
+            match = re.search(pattern, text)
+            if match:
+                candidates.append(re.sub(r"\s+", " ", match.group(1).strip(" -–—:")))
+        # Reject "표: <table_id>" lines that only echo the internal id.
+        bare = re.search(r"표:\s*([^\n|]+)", text)
+        if bare:
+            candidates.append(re.sub(r"\s+", " ", bare.group(1).strip()))
+        for candidate in candidates:
+            if candidate and not _looks_like_internal_id(candidate):
+                return candidate
+        return ""
+
+    type_rank = {
+        "table_schema": 0,
+        "table_summary": 1,
+        "table_markdown": 2,
+        "table_row": 3,
+        "table_row_aux": 4,
+    }
+    scored: list[tuple[int, int, Any, str]] = []
+    for chunk in ordered:
+        caption = _caption_of(chunk)
+        if len(caption) < 2:
+            continue
+        ctype = str(getattr(chunk, "chunk_type", "") or "")
+        # Prefer human captions (표 … / Hangul) over bare English stubs.
+        human = 0 if re.search(r"표\s*\d|[가-힣]", caption) else 1
+        scored.append((type_rank.get(ctype, 9), human, chunk, caption))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (item[0], item[1]))
+    _rank, _human, chunk, caption = scored[0]
+    row["_answer_citation_chunks"] = [chunk]
+    row["_verified_structured_answer"] = True
+    return (
+        "## 1) 핵심 요약\n\n"
+        f"- 결론: 표 제목 → {caption} [1]"
+    )
+
+
 def build_deterministic_table_answer(
     row: dict,
     evidence: list[Any],
@@ -334,6 +586,9 @@ def build_deterministic_table_answer(
 
         parsed = parse_table_query(str(row.get("question") or "")).to_dict()
         debug_data["parsed_query"] = parsed
+    caption_answer = build_caption_table_answer(row, evidence, debug=debug_data)
+    if caption_answer:
+        return caption_answer
     query_type = str(parsed.get("query_type") or "")
     row_entities = [str(v) for v in parsed.get("row_entities") or [] if str(v).strip()]
     column_entities = [str(v) for v in parsed.get("column_entities") or [] if str(v).strip()]
@@ -347,11 +602,55 @@ def build_deterministic_table_answer(
         return None
     selected = None
     question = str(row.get("question") or "")
+    anchors = _row_anchor_keys(question, row_entities)
+    # Score margin: refuse to assert when top-2 are nearly tied on different values.
+    if len(candidates) >= 2:
+        top_score, top_chunk, _top_key, top_value = candidates[0]
+        second_score, _second_chunk, _second_key, second_value = candidates[1]
+        if (
+            top_score - second_score < 0.75
+            and _norm(top_value) != _norm(second_value)
+            and _row_anchor_coverage(
+                str(getattr(top_chunk, "text", "") or ""), anchors, question
+            ) < 0.67
+        ):
+            return None
     for _score, chunk, selected_key, value in candidates:
         if _score < 3.5:
             continue
+        coverage = _row_anchor_coverage(
+            str(getattr(chunk, "text", "") or ""), anchors, question
+        )
+        # Prefer rows that actually mention the asked subject; weak coverage needs
+        # a stronger score so wrong-cell lookalikes (e.g. Pin vs S+D) stay out.
+        if anchors and coverage < 0.34:
+            continue
+        if anchors and coverage < 0.67 and _score < 5.0:
+            continue
         if _is_opaque_table_key(value):
             continue
+        if not _is_plausible_cell_value(
+            value, question=question, selected_key=selected_key
+        ):
+            continue
+        chunk_text = str(getattr(chunk, "text", "") or "")
+        # Method-code answers must sit on the named structural member.
+        if any(term in question for term in ("평가 방법", "평가하는가", "방법으로")) and re.match(
+            r"^(SP|UP)-[A-Z]$", str(value).strip(), re.I
+        ):
+            required = [term for term in ("웨브", "수평거더", "수평 거더", "이중선측", "호퍼") if term in question]
+            if required:
+                hits = sum(1 for term in required if term in chunk_text)
+                if hits < max(2, len(required) - 1):
+                    continue
+            if "연결된" in question and "연결된" not in chunk_text:
+                continue
+            if "웨브" in question and "웨브" not in chunk_text:
+                continue
+            if "수평거더" in question and not (
+                "수평거더" in chunk_text or "수평 거더" in chunk_text
+            ):
+                continue
         # Opaque 열N keys are remapped from question slots; keep concrete values.
         if _is_opaque_table_key(selected_key) and not (
             column_entities
@@ -373,9 +672,17 @@ def build_deterministic_table_answer(
         allowance_ok = any(
             term in question for term in ("허용기준", "판정기준", "기준은")
         ) and bool(_ALLOWANCE_CODE_RE.match(str(value).strip()))
+        corrosion_ok = any(
+            term in question for term in ("부식추가", "tcorr", "tc1", "tc2")
+        ) and bool(re.search(r"tc\s*[12]|tcorr|부식", selected_key, re.I))
+        # Strong row coverage + numeric cell can confirm even when the key label
+        # is an internal code like "tc1 또는 tc2".
+        numeric_ok = coverage >= 0.67 and bool(
+            re.fullmatch(r"\d+(?:\.\d+)?", str(value).strip())
+        )
         # Require the chosen key to be about the asked attribute — blocks
         # unrelated top-ranked noise like "단위 → m" on reporting questions.
-        if not allowance_ok and not _is_opaque_table_key(selected_key):
+        if not allowance_ok and not corrosion_ok and not numeric_ok and not _is_opaque_table_key(selected_key):
             if key_anchor < 0.35 and key_in_question < 0.2:
                 if not any(
                     _norm(entity) and _norm(entity) in _norm(selected_key)
@@ -423,6 +730,67 @@ def build_deterministic_table_answer(
         "## 1) 핵심 요약\n\n"
         f"- 결론: {label} → {display_value} {citations}"
     )
+
+
+_TABLE_REFUSE_ANSWER = (
+    "## 1) 핵심 요약\n\n"
+    "- 표 근거에서 질문에 해당하는 셀을 확정하지 못했습니다. "
+    "파일명·페이지 또는 표 번호를 주시면 더 정확히 찾을 수 있습니다."
+)
+
+
+def should_refuse_ungrounded_table(
+    row: dict,
+    evidence: list[Any],
+    *,
+    hints: list[tuple[str, str]] | None = None,
+    debug: dict | None = None,
+) -> bool:
+    """Refuse LLM drafting when retrieved rows barely match the asked subject."""
+    question = str(row.get("question") or "")
+    parsed = (debug or {}).get("parsed_query") or {}
+    row_entities = [str(v) for v in (parsed.get("row_entities") or []) if str(v).strip()]
+    anchors = _row_anchor_keys(question, row_entities)
+    if not evidence:
+        return True
+    best_cov = max(
+        (
+            _row_anchor_coverage(str(getattr(c, "text", "") or ""), anchors, question)
+            for c in evidence[:8]
+        ),
+        default=0.0,
+    )
+    shaped_hint = False
+    for _key, value in hints or []:
+        text = str(value).strip()
+        if re.match(r"^(SP|UP)-[A-Z]$", text, re.I):
+            shaped_hint = True
+        if re.match(r"^L\d$", text, re.I):
+            shaped_hint = True
+        if re.fullmatch(r"\d+(?:\.\d+)?", text):
+            shaped_hint = True
+        if _ALLOWANCE_CODE_RE.match(text):
+            shaped_hint = True
+    if best_cov < 0.34 and not shaped_hint:
+        return True
+    blob = " ".join(str(getattr(c, "text", "") or "") for c in evidence[:8]).lower()
+    if any(term in question for term in ("용접 다리", "최소 각장", "다리 길이")):
+        if not any(
+            term in blob
+            for term in ("leg", "각장", "cargo hold", "minimum length", "용접 다리", "leg size")
+        ):
+            return True
+    if "방화" in question or "보존성" in question:
+        if not any(term in blob for term in ("방화", "fire", "보존")):
+            return True
+    if any(term in question for term in ("평가 방법", "평가하는가", "방법으로")):
+        if not any(term in blob for term in ("평가", "sp-", "up-", "assessment", "방법")):
+            return True
+    return False
+
+
+def build_table_refuse_answer() -> str:
+    return _TABLE_REFUSE_ANSWER
 
 
 def build_table_answer_prompts(

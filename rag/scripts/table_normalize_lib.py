@@ -24,6 +24,24 @@ ENTITY_ALIASES: dict[str, list[str]] = {
     "기계적성질": ["기계적 성질", "mechanical properties", "항복", "인장", "연신", "충격"],
     "정기검사": ["inspection", "reporting", "검사차수", "검사"],
     "선령": ["age", "ship age", "선박연령"],
+    # Open-table bilingual bridges (KR ask ↔ EN cell/caption).
+    "화물창": ["cargo hold", "cargo hold region", "화물창 구역", "hold region"],
+    "최소용접다리길이": [
+        "최소 용접 다리 길이",
+        "용접 다리",
+        "최소 각장",
+        "minimum length",
+        "minimum leg",
+        "leg size",
+        "minimum leg size",
+    ],
+    "방화보존성": ["방화 보존성", "방화보존성", "fire integrity", "fire resistance", "방화"],
+    "평가방법": ["평가 방법", "구조평가 방법", "assessment method", "evaluation method", "SP-A", "SP-B"],
+    "호퍼탱크": ["호퍼 탱크", "hopper tank", "hopper"],
+    "이중선측": ["이중 선측", "double side", "double-side"],
+    "수평거더": ["수평 거더", "horizontal girder"],
+    "구명정": ["lifeboat", "life boat"],
+    "안전대피구역": ["임시 안전대피구역", "임시 안전 대피 구역", "temporary refuge", "refuge"],
 }
 
 MATERIAL_GRADE_RE = re.compile(r"\b(AH|DH|EH|FH)\s*(\d{1,2})\b", re.IGNORECASE)
@@ -38,7 +56,9 @@ _ALIAS_LOOKUP: dict[str, str] | None = None
 
 def _build_alias_lookup() -> dict[str, str]:
     global _ALIAS_LOOKUP
-    if _ALIAS_LOOKUP is not None:
+    # Rebuild when alias map grows (module reload / hot edit).
+    expected = sum(1 + len(v) for v in ENTITY_ALIASES.values())
+    if _ALIAS_LOOKUP is not None and len(_ALIAS_LOOKUP) >= expected:
         return _ALIAS_LOOKUP
     lookup: dict[str, str] = {}
     for canonical, forms in ENTITY_ALIASES.items():
@@ -81,6 +101,23 @@ def expand_entity_aliases(text: str) -> list[str]:
         canon = lookup[compact]
         forms.append(canon)
         forms.append(normalize_compact(canon))
+        for form in ENTITY_ALIASES.get(canon, []):
+            forms.append(form)
+            forms.append(normalize_compact(form))
+    # Substring alias hits for long natural phrases ("화물창 구역의 …").
+    compact_lower = compact
+    for canon, alias_forms in ENTITY_ALIASES.items():
+        canon_c = normalize_compact(canon)
+        if canon_c and canon_c in compact_lower:
+            forms.append(canon)
+            forms.extend(alias_forms)
+            continue
+        for form in alias_forms:
+            form_c = normalize_compact(form)
+            if form_c and len(form_c) >= 3 and form_c in compact_lower:
+                forms.append(canon)
+                forms.extend(alias_forms)
+                break
     for m in PAREN_SYMBOL_RE.finditer(raw):
         ko, sym = m.group(1), m.group(2).upper()
         forms.extend([ko, sym, f"{ko}({sym})", normalize_compact(f"{ko}{sym}")])

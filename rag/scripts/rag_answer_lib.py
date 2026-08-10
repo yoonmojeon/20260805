@@ -2572,7 +2572,9 @@ def generate_answer(
         from table_qa_answer import (
             build_deterministic_table_answer,
             build_table_answer_prompts,
+            build_table_refuse_answer,
             select_table_evidence,
+            should_refuse_ungrounded_table,
             top_table_cell_hints,
         )
 
@@ -2601,6 +2603,17 @@ def generate_answer(
                 "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
             }
             return deterministic, "table_deterministic", "none"
+        if should_refuse_ungrounded_table(row, evidence, hints=hints, debug=debug):
+            refuse = build_table_refuse_answer()
+            row["_answer_generation"] = {
+                "answer_source": "table_refuse",
+                "llm_used": False,
+                "llm_context_chunks": len(evidence),
+                "llm_output_chars": len(refuse),
+                "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+                "fallback_reason": "weak_row_evidence",
+            }
+            return refuse, "table_refuse", "none"
         system, user = build_table_answer_prompts(
             row, evidence, debug=debug, cell_hints=hints
         )

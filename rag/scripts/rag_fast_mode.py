@@ -599,7 +599,9 @@ def generate_fast_answer(
         from table_qa_answer import (
             build_deterministic_table_answer,
             build_table_answer_prompts,
+            build_table_refuse_answer,
             select_table_evidence,
+            should_refuse_ungrounded_table,
             top_table_cell_hints,
         )
 
@@ -636,6 +638,26 @@ def generate_fast_answer(
             if timing is not None and hasattr(timing, "mark_wall"):
                 timing.mark_wall("t_answer_complete")
             return deterministic, meta
+        if should_refuse_ungrounded_table(row, evidence, hints=hints, debug=debug):
+            refuse = build_table_refuse_answer()
+            meta["answer_mode"] = "table_qa"
+            meta["answer_source"] = "table_refuse"
+            meta["llm_skipped"] = True
+            meta["answer_generation"] = {
+                "answer_source": "table_refuse",
+                "llm_used": False,
+                "llm_call_function": None,
+                "llm_prompt_chars": 0,
+                "llm_context_chunks": len(evidence),
+                "llm_output_chars": len(refuse),
+                "llm_grounded_check_pass": True,
+                "fallback_reason": "weak_row_evidence",
+                "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+            }
+            row["_answer_generation"] = meta["answer_generation"]
+            if timing is not None and hasattr(timing, "mark_wall"):
+                timing.mark_wall("t_answer_complete")
+            return refuse, meta
         system, user = build_table_answer_prompts(
             row, evidence, debug=debug, cell_hints=hints
         )

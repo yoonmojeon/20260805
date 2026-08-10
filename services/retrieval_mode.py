@@ -27,6 +27,8 @@ _TABLE_CUE_PATTERNS = [
     r"(?:intermediate|annual|special|docking)\s*survey|survey\s*interval",
     r"열\s*\d+|row\s*\d+|cell",
     r"\d+\s*편[_\s]?\d{4}\.pdf|\.pdf.{0,20}\d+\s*페이지",
+    r"안전사용하중|설계하중\s*시나리오|용접\s*다리|방화\s*보존|부식추가|"
+    r"평가하는가|몇\s*(?:톤|mm)|SP-[A-Z]|호퍼탱크|이중선측",
 ]
 
 _TEXT_PROSE_PATTERNS = [

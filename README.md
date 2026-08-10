@@ -10,6 +10,33 @@
 
 저장소: [github.com/yoonmojeon/20260805](https://github.com/yoonmojeon/20260805)
 
+## 최근 업데이트 (품질·가드)
+
+**의도 라우팅·표 QA·회의 근거를 실패 유형 단위로 보강**했습니다. 한 문항씩 패치하지 않고, 같은 방식으로 틀리던 클래스를 막습니다.
+
+| 강조 항목 | 내용 |
+|-----------|------|
+| **라우팅** | 짧은 용어(`tcorr가 뭐야?`)·열린 표 셀 질문 → chat 되묻기 대신 `rag`(+TABLE) |
+| **표 deterministic 가드** | 행 앵커·점수 마진·헤더/라벨 값 단정 금지. 애매하면 셀을 확정하지 않음 |
+| **열린 표 검색** | KR↔EN 별칭(화물창↔cargo hold, 용접 다리↔leg size, 방화 보존성 등), 슬롯·캡션 가점 |
+| **회의 문서코드** | IGC 질문에 MASS 카드가 끼어들지 않도록 주제 코드 재랭크 |
+| **caption** | 표 제목 질문은 schema/`열1` 헤더에서 구조화 답 |
+| **미확정 UX** | 근거 행이 약하면 LLM 환각 대신 「셀을 확정하지 못했습니다」 |
+
+**quality-30** (`data/eval/quality_30_types.jsonl`, `scripts/run_quality_30.py`) needle 기준:
+
+| 모델 | PASS | FAIL | 비고 |
+|------|------|------|------|
+| `llama3.1:8b` | **27**/30 | 3 | 기본 권장(가장 빠름) |
+| `gemma4:12b` | **27**/30 | 3 | 서술 문장만 조금 더 다듬김 |
+| `mistral-nemo:12b` | **26**/30 | 4 | 동급, 약간 느림 |
+
+남은 실패는 열린 표 검색이 정답 행을 못 올리는 소수 케이스(예: SP-A / 용접각장 / 방화 L2)입니다. 위 별칭·가점으로 계속 줄이는 중입니다.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/run_quality_30.py --model llama3.1:8b
+```
+
 ## 질문이 실제로 어떻게 흐르나
 
 | 질문 | 경로 | 안에서 하는 일 |
@@ -60,8 +87,10 @@ python scripts/inspect_rag_indexes.py --full
 | 답은 있는데 crop 칸이 빔 | 표 질문이 meeting 경로로 새어 나감 | `table_qa`는 meeting 구조화 답변에서 제외 |
 | MEPC 표 질문에서 「오류」만 | `analyze_query` UnboundLocalError | 지역 import 제거 |
 | `[n]`만 보이고 근거 표가 없음 | Evidence Table / crop UI 없음 | Gradio에 Evidence + crop 갤러리 |
+| 열린 표에서 옆 셀을 단정 | 행 매칭 없이 top cell 확정 | deterministic 오셀 가드 + 미확정 거절 |
+| 한글 질문 ↔ 영문 표 셀 불일치 | 별칭/슬롯 부족 | `ENTITY_ALIASES`·embed 질의 확장·캡션 가점 |
 
-관련 코드: `services/rag_service.py`, `services/answer_ui.py`, `services/table_render.py`, `rag/scripts/rag_fast_mode.py`, `rag/scripts/meeting_category_profile.py`, `rag/scripts/bm25_index.py`.
+관련 코드: `services/rag_service.py`, `services/answer_ui.py`, `services/table_render.py`, `rag/scripts/rag_fast_mode.py`, `rag/scripts/table_qa_answer.py`, `rag/scripts/table_query_parser.py`, `rag/scripts/table_normalize_lib.py`, `rag/scripts/meeting_structured_answer.py`, `rag/scripts/meeting_category_profile.py`, `rag/scripts/bm25_index.py`.
 
 ## 구조
 

@@ -7,8 +7,8 @@ _AC = r"(?<![A-Za-z0-9_])"
 _AZ = r"(?![A-Za-z0-9_])"
 
 OPS_PATTERNS: list[tuple[str, float]] = [
-    (r"운항\s*상태|현재\s*항차|이전\s*항차|이번\s*항차|올해\s*연간|연간\s*실적", 3.0),
-    (r"지금\s*(배|선박|위치)|배\s*(가\s*)?(어디|위치)|어디\s*(야|있음|떠)|항해\s*중", 2.8),
+    (r"운항\s*상태|현재\s*항차|지금\s*항차|이전\s*항차|이번\s*항차|올해\s*연간|연간\s*실적", 3.0),
+    (r"지금\s*(배|선박|위치|항차)|배\s*(가\s*)?(어디|위치)|어디\s*(야|있음|떠)|항해\s*중", 2.8),
     (rf"{_AC}CII{_AZ}|씨아이아이|시아이아이|씨아아이|탄소집약|attained|required\s*cii|등급\s*[A-E]", 2.5),
     (r"Noon\s*Report|눈\s*리포트|눈리포트|MRV|배출량|CO2e?|CH4|FOC|FGC|연료\s*소모", 2.5),
     (r"기름값|기름\s*(얼마나|얼마|썼|소비|소모)|연비|연료\s*(얼마나|소비|사용|썼|소모)", 2.3),
@@ -52,12 +52,14 @@ RAG_PATTERNS: list[tuple[str, float]] = [
     ),
     # 선급 표/구조 계산형 — MEPC·KR 단어가 없어도 문서(rag)다.
     (
-        r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|\btcorr\b|"
+        r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|(?<![A-Za-z0-9])tcorr(?![A-Za-z0-9])|"
         r"선박\s*길이|\bL\s*[<>≤≥=]|L이\s*\d|항복\s*(?:응력|강도)|인장\s*강도|"
         r"화학성분|재료기호|용접용?\s*재료|기계적\s*성질|용접강|"
         r"\d+\s*m\s*(?:미만|이상|이하)|미만일\s*때|이상일\s*때|"
         r"N\s*/?\s*mm|표\s*\d+(?:\.\d+)*|"
-        r"화물창|화물탱크|평형수탱크|reporting\s*요건",
+        r"화물창|화물탱크|평형수탱크|reporting\s*요건|"
+        r"안전사용하중|방화\s*보존|설계하중\s*시나리오|평가\s*방법|"
+        r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm)|SP-[A-Z]",
         2.6,
     ),
     (r"문서|PDF|회의록|circular|resolution|WP\.?\d", 1.5),
@@ -66,6 +68,7 @@ RAG_PATTERNS: list[tuple[str, float]] = [
     # Term/definition lookups belong in documents, not chat clarify.
     (
         r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어\s*(?:정의|설명)|"
+        r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9_+-]{1,12}가\s*뭐|"
         r"substantial\s*corrosion|과도한\s*부식",
         2.2,
     ),
@@ -133,7 +136,7 @@ OOS_PATTERN = re.compile(
 # Rule/table-shaped questions that should not fall through to chat clarify
 # when keyword cue scores are still zero (LLM / fallback safety net).
 TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
-    r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|\btcorr\b|"
+    r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|(?<![A-Za-z0-9])tcorr(?![A-Za-z0-9])|"
     r"선박\s*길이|\bL\s*[<>≤≥=]|L이\s*\d|항복\s*(?:응력|강도)|인장\s*강도|"
     r"화학성분|재료기호|용접용?\s*재료|기계적\s*성질|용접강|AH\s*\d{2}|"
     r"화물창|화물탱크|평형수\s*탱크|reporting|정기검사|선령|"
@@ -141,6 +144,9 @@ TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
     r"검사\s*(범위|선정|요건|주기)|두께계측|개방검사|"
     r"yield|tensile|corrosion\s*addition|min(?:imum)?\s*thickness|"
     r"ship\s*length|ballast\s*tank|cargo\s*(?:hold|tank)|"
+    r"안전사용하중|방화\s*보존|설계하중\s*시나리오|평가\s*방법|"
+    r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm)|SP-[A-Z]|"
+    r"재화중량|DWT|임시\s*안전|승정\s*구역|"
     # Definition / glossary shapes (class-rule terms, not ship ops).
     r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어|"
     r"substantial\s*corrosion|과도한\s*부식|허용\s*부식|부식\s*여유|"
@@ -150,7 +156,7 @@ TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
 # Soft ops shape: live ship ops without needing strong keyword hit.
 TECHNICAL_OPS_SHAPE_PATTERN = re.compile(
     r"지금\s*(배|선박|위치|스피드)|배\s*어디|기름\s*얼마나|연료\s*(소모|소비|썼)|"
-    r"올해\s*(CII|항차|운항)|현재\s*항차|Noon|MRV",
+    r"올해\s*(CII|항차|운항)|현재\s*항차|지금\s*항차|Noon|MRV",
     flags=re.IGNORECASE,
 )
 DOC_FRAME_PATTERN = re.compile(
@@ -190,7 +196,8 @@ TOPIC_PATTERNS: list[tuple[str, str]] = [
     (
         "table",
         r"표|검사\s*주기|평형수|밸러스트|선령|정기검사|survey|개방검사|"
-        r"최소\s*두께|판두께|선박\s*길이|부식추가|tcorr|화학성분|재료기호",
+        r"최소\s*두께|판두께|선박\s*길이|부식추가|tcorr|화학성분|재료기호|"
+        r"안전사용하중|방화|설계하중|용접\s*다리|호퍼탱크|평가\s*방법",
     ),
     ("seemp", r"SEEMP|EEXI|MARPOL|SOLAS"),
     ("report", r"Noon|MRV|보고서"),

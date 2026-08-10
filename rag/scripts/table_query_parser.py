@@ -33,6 +33,12 @@ ROW_DOMAIN_TERMS = (
     "피크탱크",
     "기관실",
     "주위벽",
+    "호퍼탱크",
+    "이중선측",
+    "수평거더",
+    "구명정",
+    "개방갑판",
+    "안전대피구역",
     "탱크",
     "구역",
 )
@@ -80,6 +86,7 @@ ATTRIBUTE_TERMS = (
     "허용기준", "적용두께", "강종", "등급", "시험전압", "시험압력", "시험재의 수",
     "분류번호", "보호등급", "회전속도", "절단하중", "판정기준", "설계온도",
     "공칭 두께", "시험규격", "표시 장소", "동력 빌지펌프", "운항거리 제한",
+    "방화 보존성", "최소 용접 다리 길이", "최소 각장", "용접 다리 길이",
 )
 
 
@@ -221,6 +228,10 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
         cols.append("항해범위 제한부호")
     if "어디" in q and "표시" in q:
         cols.append("표시 장소")
+    if "방화" in q and ("보존" in q or "등급" in q):
+        cols.append("방화 보존성")
+    if ("용접" in q and ("다리" in q or "각장" in q)) or "최소 각장" in q:
+        cols.extend(["최소 용접 다리 길이", "Minimum length, in mm", "최소 각장"])
     pump_match = re.search(
         r"([가-힣A-Za-z]+(?:\s+[가-힣A-Za-z]+){0,3})(?:은|는|이|가)\s*몇",
         q,
@@ -260,9 +271,15 @@ def _infer_table_topics(question: str, cols: list[str], rows: list[str]) -> list
     if "열처리" in question or "로트" in question:
         topics.extend(["열처리", "lot_treatment"])
     if "용접" in question or "시험재" in question:
-        topics.extend(["용접", "시험재료", "welding"])
+        topics.extend(["용접", "시험재료", "welding", "leg size", "minimum leg"])
     if "치수" in question or "두께" in question:
         topics.extend(["치수", "dimension"])
+    if "방화" in question or "보존성" in question:
+        topics.extend(["방화", "fire integrity", "방화 보존성"])
+    if "평가" in question and "방법" in question:
+        topics.extend(["평가방법", "assessment method", "구조평가"])
+    if "호퍼" in question or "이중선측" in question or "거더" in question:
+        topics.extend(["구조요소", "structural member", "평가방법"])
     if any(t in question for t in NOTE_TERMS):
         topics.append("비고")
     if not topics and any(t in question for t in SUMMARY_TERMS):
@@ -309,6 +326,11 @@ def parse_table_query(question: str) -> ParsedTableQuery:
         + table_topic_candidates
         + lexical_words[:18]
     )
+    # Bilingual aliases help schema/BM25 rank English KR-rule cells.
+    alias_extra: list[str] = []
+    for term in list(keyword_terms)[:24]:
+        alias_extra.extend(expand_entity_aliases(term)[:8])
+    keyword_terms = _dedupe(keyword_terms + alias_extra)[:40]
     query_type = _infer_query_type(q, column_entities, row_entities, table_topic_candidates)
     return ParsedTableQuery(
         raw_question=q,
@@ -325,11 +347,19 @@ def parse_table_query(question: str) -> ParsedTableQuery:
 
 
 def build_embed_query(parsed: ParsedTableQuery) -> str:
+    alias_bits: list[str] = []
+    for term in (
+        list(parsed.row_entities)[:6]
+        + list(parsed.column_entities)[:6]
+        + list(parsed.table_topic_candidates)[:6]
+    ):
+        alias_bits.extend(expand_entity_aliases(term)[:6])
     parts = (
         parsed.table_topic_candidates[:6]
         + parsed.row_entities[:6]
         + parsed.column_entities[:6]
         + parsed.unit_candidates[:3]
+        + alias_bits[:18]
         + [parsed.raw_question]
     )
     return " ".join(dict.fromkeys(p for p in parts if p)).strip()

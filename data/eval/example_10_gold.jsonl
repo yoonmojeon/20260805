@@ -1,0 +1,10 @@
+{"id": "ops_current", "route": "ops", "question": "지금 항차 상태 요약해줘", "gold": "H2521_V21_Ballast, 거리 약 5847 nm", "needles": ["H2521", "V21|Ballast", "5847|5800"]}
+{"id": "ops_cii", "route": "ops", "question": "2026년 잠정 YTD CII 등급이랑 attained/required 알려줘", "gold": "등급 E, attained ~6.40, required ~3.73 (잠정)", "needles": ["E", "6\\.39|6\\.40|6\\.4", "3\\.73|3\\.731"]}
+{"id": "ops_previous", "route": "ops", "question": "직전 Laden 항차 연료·배출은?", "gold": "H2521_V20_Laden, ~5470 nm, CO2 ~4663 t", "needles": ["V20|Laden", "5470|5460", "4662|4663|CO2|배출"]}
+{"id": "rag_mass", "route": "rag", "question": "MSC 111에서 MASS Code로 뭐가 핵심이었지?", "gold": "MSC 111 / MASS Code 관련 핵심 결정·논의", "needles": ["MASS", "MSC"]}
+{"id": "rag_def", "route": "rag", "question": "과도한 부식(substantial corrosion)의 정의는?", "gold": "substantial corrosion 정의(부식 여유·허용과 연계)", "needles": ["corrosion|부식", "여유|허용|두께|substantial|70%|피팅"]}
+{"id": "rag_mepc", "route": "rag", "question": "MEPC 84 provisional agenda에 뭐 들어가?", "gold": "MEPC 84 임시 의제 항목", "needles": ["MEPC", "agenda|의제|안건|Adoption|item"]}
+{"id": "table_rpv", "route": "rag", "question": "2편_2025.pdf 28쪽 RPV 32~50 적용두께(mm)?", "gold": "6∼150 mm", "needles": ["6", "150"]}
+{"id": "table_caption", "route": "rag", "question": "2편_2025.pdf 10쪽 구조화 표 제목?", "gold": "시험편 관련 표 제목", "needles": ["시험편|표"]}
+{"id": "table_acsd", "route": "rag", "question": "13편_2025.pdf 25쪽, 침수상태·사고 침수로 내부 수밀구획에 미치는 대표 최대하중 행의 허용기준?", "gold": "AC-SD", "needles": ["AC-SD|AC.?SD"]}
+{"id": "table_reporting", "route": "rag", "question": "첫 정기검사 때 화물창·화물탱크 구역은 reporting 대상인가? 범위는?", "gold": "제1차 reporting 대상(○), 화물창·화물탱크", "needles": ["○|O|대상|reporting|제1차"]}

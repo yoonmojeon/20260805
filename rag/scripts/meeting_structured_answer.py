@@ -785,6 +785,9 @@ def _section1_meeting_outcome(
     lines: list[str] = []
     picked: list[Any] = []
     used_ids: set[str] = set()
+    question = str((row or {}).get("question") or "")
+    focus_codes = {c.upper() for c in _question_topic_codes(question)}
+    allow_mass = (not focus_codes) or ("MASS" in focus_codes)
 
     completion = (row or {}).get("_evidence_completion") or {}
     planned_ids = [
@@ -799,6 +802,10 @@ def _section1_meeting_outcome(
         chunk = by_id.get(chunk_id)
         if chunk is None:
             continue
+        blob = _strip_meta(getattr(chunk, "text", ""))
+        if focus_codes and "IGC" in focus_codes and not re.search(r"\bIGC\b", blob, re.I):
+            if MASS_RE.search(blob) and not allow_mass:
+                continue
         claim = _generic_committee_outcome_claim(chunk)
         cite = _cite(chunk, citation_map)
         if not claim or not cite:
@@ -810,6 +817,15 @@ def _section1_meeting_outcome(
             return "\n".join(lines), warnings, picked
 
     known_outcomes: tuple[tuple[re.Pattern[str], str], ...] = (
+        (
+            re.compile(
+                r"(?:finalize|finaliz(?:e|ing)|approv(?:e|ed)|progress).{0,80}"
+                r"(?:draft\s+)?amendments?\s+to\s+the\s+IGC\s+Code|"
+                r"(?:draft\s+)?amendments?\s+to\s+the\s+IGC\s+Code",
+                re.I | re.S,
+            ),
+            "MSC 111에서는 IGC Code 초안 개정을 검토·확정 대상으로 진행한 것으로 기록합니다.",
+        ),
         (
             re.compile(r"(?:adopt(?:ed|ion).{0,80}non-mandatory.{0,40}mass code|non-mandatory.{0,40}mass code.{0,80}adopt)", re.I | re.S),
             "MSC 111 결과 초안은 비강제·목표기반 MASS Code를 채택한 것으로 기록합니다.",
@@ -842,6 +858,12 @@ def _section1_meeting_outcome(
         ),
     )
     for pattern, claim in known_outcomes:
+        if (not allow_mass) and re.search(r"MASS Code", claim):
+            continue
+        if focus_codes and "IGC" in focus_codes and "IGC" not in claim:
+            # Prefer IGC claim first; other MSC headlines only fill remaining slots.
+            if not any("IGC" in line for line in lines):
+                continue
         match = _best_chunk_matching(scored, pattern)
         if match is None:
             continue
@@ -857,15 +879,37 @@ def _section1_meeting_outcome(
         if len(lines) >= n:
             return "\n".join(lines[:n]), warnings, picked[:n]
 
-    mass_best = next(
-        (
-            c
-            for _s, c in scored
-            if MASS_RE.search(_strip_meta(getattr(c, "text", "")))
-            or outcome_topic_id(str(getattr(c, "text", ""))) == "mass_code"
-        ),
-        None,
-    )
+    if focus_codes and "IGC" in focus_codes and not any(re.search(r"\bIGC\b", line) for line in lines):
+        igc_chunk = next(
+            (
+                c
+                for _s, c in scored
+                if re.search(r"\bIGC\b", _chunk_topic_blob(c), re.I)
+            ),
+            None,
+        )
+        if igc_chunk is not None:
+            cite = _cite(igc_chunk, citation_map)
+            if cite:
+                lines.insert(
+                    0,
+                    "- MSC 111에서는 IGC Code 관련 개정·명확화 안건이 논의된 것으로 기록합니다. "
+                    f"{cite}",
+                )
+                picked.insert(0, igc_chunk)
+                used_ids.add(str(getattr(igc_chunk, "chunk_id", "")))
+
+    mass_best = None
+    if allow_mass:
+        mass_best = next(
+            (
+                c
+                for _s, c in scored
+                if MASS_RE.search(_strip_meta(getattr(c, "text", "")))
+                or outcome_topic_id(str(getattr(c, "text", ""))) == "mass_code"
+            ),
+            None,
+        )
     if mass_best and str(getattr(mass_best, "chunk_id", "")) not in used_ids:
         used_ids.add(str(getattr(mass_best, "chunk_id", "")))
         picked.append(mass_best)
@@ -1752,6 +1796,7 @@ def _section2(
     *,
     profile: MeetingRetrievalProfile,
     s1_chunks: list[Any] | None = None,
+    question: str = "",
 ) -> str:
     # Operational impacts are emitted only when the cited passage contains the
     # corresponding requirement.  This replaces the previous category-level
@@ -1762,6 +1807,8 @@ def _section2(
     focus = chunks
     lines: list[str] = []
     seen: set[str] = set()
+    focus_codes = {c.upper() for c in _question_topic_codes(question)}
+    allow_mass_card = (not focus_codes) or ("MASS" in focus_codes)
     if profile.internal_intent == "env_regulation":
         reporting = next(
             (
@@ -1931,7 +1978,7 @@ def _section2(
             ),
             None,
         )
-        if mass:
+        if mass and allow_mass_card:
             lines.append(
                 "- **MASS 적용**: 채택 문구가 비강제 Code를 대상으로 하므로, 현 단계에서 mandatory 요구사항으로 "
                 f"적용해서는 안 됩니다. {_cite(mass, citation_map)}"
@@ -2079,6 +2126,83 @@ def _section4(chunks: list[Any], citation_map: dict[str, int], *, question: str)
     return "\n".join(lines) if lines else "- 검색된 근거 내에서는 관련 선급 Rule/Guidance가 명확히 확인되지 않았습니다."
 
 
+def _question_topic_codes(question: str) -> list[str]:
+    """Explicit instrument/topic codes the user named (IGC, MASS, …)."""
+    q = question or ""
+    codes: list[str] = []
+    for code in ("IGC", "IGF", "MASS", "CII", "SEEMP", "DCS", "GFI"):
+        if re.search(rf"(?<![A-Za-z0-9]){code}(?![A-Za-z0-9])", q, re.I):
+            codes.append(code)
+    if re.search(r"암모니아|ammonia", q, re.I):
+        codes.append("AMMONIA")
+    return codes
+
+
+def _chunk_topic_blob(chunk: Any) -> str:
+    return " ".join(
+        str(part or "")
+        for part in (
+            getattr(chunk, "text", ""),
+            getattr(chunk, "file_name", ""),
+            getattr(chunk, "caption", ""),
+            getattr(chunk, "section_path", ""),
+        )
+    )
+
+
+def _rerank_by_question_topic_codes(
+    question: str,
+    scored: list[tuple[float, Any]],
+) -> list[tuple[float, Any]]:
+    """Boost chunks matching named codes; demote MASS when another code is asked."""
+    focus = _question_topic_codes(question)
+    if not focus or not scored:
+        return scored
+    focus_upper = {c.upper() for c in focus}
+    wants_mass = "MASS" in focus_upper
+
+    def matches_focus(blob: str) -> bool:
+        for code in focus:
+            if code == "AMMONIA":
+                if re.search(r"ammonia|암모니아", blob, re.I):
+                    return True
+            elif re.search(rf"(?<![A-Za-z0-9]){re.escape(code)}(?![A-Za-z0-9])", blob, re.I):
+                return True
+        return False
+
+    def adjusted(item: tuple[float, Any]) -> float:
+        score, chunk = item
+        blob = _chunk_topic_blob(chunk)
+        bonus = 0.0
+        if matches_focus(blob):
+            bonus += 5.0
+        if not wants_mass and MASS_RE.search(blob):
+            # Asking IGC/ammonia should not surface MASS timeline as top evidence.
+            bonus -= 4.0
+            if not matches_focus(blob):
+                bonus -= 6.0
+        return score + bonus
+
+    reranked = sorted(scored, key=adjusted, reverse=True)
+    if wants_mass:
+        return reranked
+    # Hard filter: keep focus-matching chunks first; drop pure MASS distractors
+    # when at least one on-topic chunk exists.
+    on_topic = [(s, c) for s, c in reranked if matches_focus(_chunk_topic_blob(c))]
+    if on_topic:
+        rest = [
+            (s, c)
+            for s, c in reranked
+            if not (
+                MASS_RE.search(_chunk_topic_blob(c))
+                and not matches_focus(_chunk_topic_blob(c))
+            )
+            and (s, c) not in on_topic
+        ]
+        return on_topic + rest
+    return reranked
+
+
 def build_meeting_structured_answer(
     chunks: list[Any],
     *,
@@ -2096,6 +2220,32 @@ def build_meeting_structured_answer(
     work = [c for c in work if not is_excluded_chunk(c, profile=profile)]
     if not work:
         work = _filter_forbid_docs(dedupe_page_chunks(citation_chunks), row)
+    # When the user names a code (IGC, ammonia, …), keep that evidence first so
+    # generic MSC outcome extractors cannot fill section 1 with MASS-only text.
+    focus_codes = _question_topic_codes(question)
+    if focus_codes and "MASS" not in {c.upper() for c in focus_codes}:
+        def _matches_focus(chunk: Any) -> bool:
+            blob = _chunk_topic_blob(chunk)
+            for code in focus_codes:
+                if code == "AMMONIA":
+                    if re.search(r"ammonia|암모니아", blob, re.I):
+                        return True
+                elif re.search(
+                    rf"(?<![A-Za-z0-9]){re.escape(code)}(?![A-Za-z0-9])", blob, re.I
+                ):
+                    return True
+            return False
+
+        focused = [c for c in work if _matches_focus(c)]
+        if focused:
+            work = focused + [
+                c
+                for c in work
+                if c not in focused
+                and not (
+                    MASS_RE.search(_chunk_topic_blob(c)) and not _matches_focus(c)
+                )
+            ]
     selected = select_key_clause_chunks(
         question,
         work,
@@ -2142,6 +2292,7 @@ def build_meeting_structured_answer(
                 seen_work.add(cid)
     scored = [(score_chunk(c, profile=profile), c) for c in work]
     scored.sort(key=lambda x: -x[0])
+    scored = _rerank_by_question_topic_codes(question, scored)
 
     if profile.internal_intent == "data_quality_verification":
         sections, quality_chunks = _build_data_quality_sections(
@@ -2209,7 +2360,9 @@ def build_meeting_structured_answer(
         (
             _section2_latest_environment(s1_chunks or work, citation_map)
             if broad_latest_environment
-            else _section2(work, citation_map, profile=profile, s1_chunks=s1_chunks)
+            else _section2(
+                work, citation_map, profile=profile, s1_chunks=s1_chunks, question=question
+            )
         )
         if include_operational_impact
         else ""

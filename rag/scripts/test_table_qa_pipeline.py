@@ -313,6 +313,73 @@ class TableQAPipelineTest(unittest.TestCase):
         self.assertFalse((meta.get("answer_generation") or {}).get("llm_used"))
         self.assertTrue(row.get("_verified_structured_answer"))
 
+    def test_weak_row_match_refuses_wrong_cell(self) -> None:
+        """Do not assert a high-scoring unrelated cell (Pin) for 넘침/순차 S+D."""
+        wrong = SimpleNamespace(
+            chunk_id="pin-1",
+            chunk_type="table_row",
+            table_id="t-load",
+            text=(
+                "[표 행 및 셀 사실]\n행 기준: 하중점 Pin\n"
+                "셀: 구분=하중점 | 설계하중 시나리오=Pin"
+            ),
+            file_name="13편_2025.pdf",
+            page_number=40,
+            distance=0.1,
+        )
+        distractor = SimpleNamespace(
+            chunk_id="other-1",
+            chunk_type="table_row",
+            table_id="t-load",
+            text=(
+                "[표 행 및 셀 사실]\n행 기준: 일반 하중\n"
+                "셀: 구분=일반 | 설계하중 시나리오=S"
+            ),
+            file_name="13편_2025.pdf",
+            page_number=40,
+            distance=0.2,
+        )
+        question = "넘침식 또는 순차식 평형수 교환에는 어떤 설계하중 시나리오를 적용하는가?"
+        from table_query_parser import parse_table_query
+
+        parsed = parse_table_query(question).to_dict()
+        row = {"question": question}
+        answer = build_deterministic_table_answer(
+            row,
+            [wrong, distractor],
+            debug={
+                "parsed_query": parsed,
+                "selected_table_id": "t-load",
+                "selected_table_candidates": [{"table_id": "t-load"}],
+            },
+        )
+        self.assertIsNone(answer)
+        self.assertNotIn("Pin", answer or "")
+
+    def test_caption_ask_uses_schema_caption(self) -> None:
+        schema = SimpleNamespace(
+            chunk_id="cap-1",
+            chunk_type="table_schema",
+            table_id="t-page10",
+            text="표: t-page10 문서: 2편_2025.pdf, 10쪽",
+            file_name="2편_2025.pdf",
+            page_number=10,
+            caption="표 2.1.1 시험편의 모양",
+            distance=0.2,
+        )
+        row = {"question": "2편_2025.pdf 10쪽 구조화 표 제목?"}
+        answer = build_deterministic_table_answer(
+            row,
+            [schema],
+            debug={
+                "selected_table_id": "t-page10",
+                "selected_table_candidates": [{"table_id": "t-page10"}],
+                "parsed_query": {"query_type": "table_lookup"},
+            },
+        )
+        self.assertIn("시험편", answer or "")
+        self.assertTrue(row.get("_verified_structured_answer"))
+
     def test_comparison_requires_both_gold_cells(self) -> None:
         def chunk(row: str, answer: str):
             return SimpleNamespace(

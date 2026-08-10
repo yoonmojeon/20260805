@@ -6,6 +6,11 @@ def test_ops_voyage_status():
     assert d.route == "ops"
 
 
+def test_ops_colloquial_current_voyage():
+    d = route_question("지금 항차 상태 요약해줘", use_llm_fallback=False)
+    assert d.route == "ops"
+
+
 def test_ops_colloquial_location():
     d = route_question("지금 배 어디야?", use_llm_fallback=False)
     assert d.route == "ops"
@@ -66,6 +71,23 @@ def test_rag_corrosion_tcorr():
         use_llm_fallback=False,
     )
     assert d.route == "rag"
+
+
+def test_rag_short_term_tcorr_colloquial():
+    """Hangul after Latin term must not break tcorr boundary (\\btcorr\\b fails)."""
+    d = route_question("tcorr가 뭐야?", use_llm_fallback=False)
+    assert d.route == "rag"
+    assert d.rag_score > 0
+
+
+def test_rag_open_table_cell_shapes():
+    for q in (
+        "재화중량이 10만 톤 초과 15만 톤 이하인 선박의 안전사용하중은 몇 톤인가?",
+        "넘침식 또는 순차식 평형수 교환에는 어떤 설계하중 시나리오를 적용하는가?",
+        "호퍼탱크 경사판과 연결된 이중선측 수평거더 웨브는 어떤 방법으로 평가하는가?",
+    ):
+        d = route_question(q, use_llm_fallback=False)
+        assert d.route == "rag", (q, d.route, d.reason)
 
 
 def test_rag_definition_substantial_corrosion():
