@@ -20,7 +20,12 @@ from typing import Any
 import fitz
 
 ROOT = Path(__file__).resolve().parents[1]
+_SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(_SCRIPT_DIR))
+if str(ROOT.parent) not in sys.path:
+    # Repo root (…/20260805) when this file lives under rag/scripts.
+    sys.path.insert(0, str(ROOT.parent))
 
 from hancomeqn_restore import PUA_RE, load_mapping, restore_inline
 from pdf_io import resolve_pdf_path
@@ -392,8 +397,43 @@ def build_chunks(args: argparse.Namespace, docs: list[dict[str, str]], manifest:
             by_doc[doc_id].append({**common, "chunk_id": f"{table_id}{region_suffix}:ROW{row['row']:03d}",
                                    "element_id": f"{table_id}{region_suffix}:ROW{row['row']:03d}", "chunk_type": "table_row",
                                    "text": header + "\n" + row["text"]})
+        summary_text = header + "\n" + "\n".join(row["text"] for row in rows)
         by_doc[doc_id].append({**common, "chunk_id": f"{table_id}:SUMMARY", "element_id": f"{table_id}:SUMMARY",
-                               "chunk_type": "table_summary", "text": header + "\n" + "\n".join(row["text"] for row in rows)})
+                               "chunk_type": "table_summary", "text": summary_text})
+        # Schema catalog chunk for stage-1 table routing (searcher expects table_schema).
+        try:
+            from table_schema_lib import build_table_schema_text, parse_schema_from_document
+
+            schema = parse_schema_from_document(
+                summary_text,
+                {
+                    "table_id": table_id,
+                    "caption": caption,
+                    "source_file": item.get("file_name", ""),
+                    "file_name": item.get("file_name", ""),
+                    "page": item["page"],
+                    "doc_id": doc_id,
+                },
+            )
+            schema["doc_id"] = doc_id
+            schema["source_file"] = str(item.get("file_name") or "")
+            schema["page"] = int(item["page"])
+            schema["table_id"] = table_id
+            schema["row_count"] = len(rows)
+            if not schema.get("_raw_snippet"):
+                schema["_raw_snippet"] = summary_text[:900]
+            schema_text = build_table_schema_text(schema)
+            by_doc[doc_id].append({
+                **common,
+                "chunk_id": f"{table_id}__schema",
+                "element_id": f"{table_id}__schema",
+                "chunk_type": "table_schema",
+                "column_names": list(schema.get("column_names") or []),
+                "section_title": str(schema.get("section_title") or ""),
+                "text": schema_text,
+            })
+        except Exception as exc:
+            print(f"schema skip {table_id}: {exc}", flush=True)
     finally:
         for document in documents.values():
             document.close()

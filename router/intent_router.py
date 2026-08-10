@@ -30,6 +30,8 @@ from router.cues import (
     has_compare_frame,
     has_dual_mark,
     is_followup_text,
+    looks_like_technical_ops,
+    looks_like_technical_rag,
     score_question,
 )
 from router.dialogue import DialogueState, next_dialogue_state, parse_dialogue_state
@@ -357,7 +359,29 @@ def _llm_classify(
         return None
 
 
-def _resolve_ambiguous(decision: RouteDecision) -> RouteDecision:
+def _shape_override_route(question: str) -> FinalRoute | None:
+    """When cue scores miss, still route technical shapes away from chat clarify."""
+    if looks_like_technical_rag(question):
+        return "rag"
+    if looks_like_technical_ops(question):
+        return "ops"
+    return None
+
+
+def _resolve_ambiguous(decision: RouteDecision, question: str = "") -> RouteDecision:
+    shaped = _shape_override_route(question or decision.expanded_question or "")
+    if shaped in {"ops", "rag"}:
+        decision.route = shaped
+        decision.chat_mode = None
+        decision.method = f"{decision.method}+shape"
+        decision.confidence = max(decision.confidence, 0.68)
+        decision.reason += f" 기술형 발화라 chat 되묻기 대신 {shaped}로 보냅니다."
+        if shaped == "rag":
+            decision.rag_score = max(decision.rag_score, 1.0)
+        else:
+            decision.ops_score = max(decision.ops_score, 1.0)
+        return decision
+
     if decision.ops_score == 0 and decision.rag_score == 0:
         decision.route = "chat"
         decision.chat_mode = "clarify"
@@ -477,6 +501,26 @@ def route_question(
                     decision, question=q, previous=state, topics=topics, entities=entities
                 )
             if llm_route == "chat":
+                shaped = _shape_override_route(expanded)
+                if shaped in {"ops", "rag"}:
+                    decision = RouteDecision(
+                        route=shaped,
+                        confidence=0.72,
+                        ops_score=decision.ops_score if shaped == "ops" else max(decision.ops_score, 0.0),
+                        rag_score=max(decision.rag_score, 1.0) if shaped == "rag" else decision.rag_score,
+                        reason=(
+                            f"LLM은 chat이었지만 기술형 발화라 {shaped}로 교정했습니다."
+                        ),
+                        method="rules+llm+shape",
+                        expanded_question=expanded,
+                        slots=slots,
+                    )
+                    if shaped == "ops":
+                        decision.ops_score = max(decision.ops_score, 1.0)
+                    _fill_hybrid_queries(decision, expanded, state)
+                    return _attach_state(
+                        decision, question=q, previous=state, topics=topics, entities=entities
+                    )
                 decision = RouteDecision(
                     route="chat",
                     confidence=0.65,
@@ -492,8 +536,9 @@ def route_question(
                     decision, question=q, previous=state, topics=topics, entities=entities
                 )
 
-    fallback = _resolve_ambiguous(decision)
+    fallback = _resolve_ambiguous(decision, expanded)
     fallback.slots = slots
     fallback.expanded_question = expanded
-    fallback.reason += " LLM 분류 불가라 되묻기로 처리했습니다." if use_llm_fallback else ""
+    if fallback.route == "chat" and use_llm_fallback:
+        fallback.reason += " LLM 분류 불가라 되묻기로 처리했습니다."
     return _attach_state(fallback, question=q, previous=state, topics=topics, entities=entities)

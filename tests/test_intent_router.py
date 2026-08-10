@@ -51,6 +51,67 @@ def test_rag_inspection_table():
     assert d.route == "rag"
 
 
+def test_rag_structural_min_thickness_table():
+    d = route_question(
+        "선박 길이 L이 170m 미만일 때 요구되는 최소 두께는 얼마인가?",
+        use_llm_fallback=False,
+    )
+    assert d.route == "rag"
+    assert d.rag_score > 0
+
+
+def test_rag_corrosion_tcorr():
+    d = route_question(
+        "화물탱크 내 구조부재 부식추가 tcorr 표에서 범주별 값은 어떻게 되나?",
+        use_llm_fallback=False,
+    )
+    assert d.route == "rag"
+
+
+def test_rag_table_number_chemical():
+    d = route_question("표 2.1.65 종류 및 화학성분 표의 주요 열 구성은?", use_llm_fallback=False)
+    assert d.route == "rag"
+
+
+def test_rag_ah32_welding():
+    d = route_question("AH32 용접강 관련 표에서 확인해야 할 주요 항목은 무엇인가?", use_llm_fallback=False)
+    assert d.route == "rag"
+
+
+def test_rag_age_cargo_hold_reporting():
+    d = route_question(
+        "선령 5~10년 구간 선박의 화물창은 정기검사에서 어떤 reporting 요건이 있나?",
+        use_llm_fallback=False,
+    )
+    assert d.route == "rag"
+
+
+def test_shape_overrides_llm_chat_to_rag():
+    """If LLM says chat on a technical table question, shape policy must force rag."""
+    from router import intent_router as ir
+
+    def fake_llm(*_a, **_k):
+        return {"route": "chat", "ops_query": "", "rag_query": "", "confidence": 0.4}
+
+    q = "요구되는 최소 판두께 값은?"
+    original_score = ir.score_question
+    original_llm = ir._llm_classify
+
+    def zero_score(_q):
+        return 0.0, 0.0
+
+    ir.score_question = zero_score  # type: ignore[assignment]
+    ir._llm_classify = fake_llm  # type: ignore[assignment]
+    try:
+        d = ir.route_question(q, use_llm_fallback=True)
+        assert d.route == "rag", (d.route, d.method, d.reason)
+        assert "shape" in (d.method or "")
+    finally:
+        ir.score_question = original_score  # type: ignore[assignment]
+        ir._llm_classify = original_llm  # type: ignore[assignment]
+
+
+
 def test_chat_who_are_you():
     d = route_question("너 누구야?", use_llm_fallback=False)
     assert d.route == "chat"

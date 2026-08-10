@@ -8,6 +8,7 @@ from typing import Any, Callable
 from rag_answer_lib import (
     RetrievedChunk,
     call_ollama_chat_timed,
+    model_prefers_think_off,
     retrieve_for_question,
 )
 from ollama_warmup import ensure_fast_warm, ensure_fast_warm_checked, mark_fast_llm_run
@@ -652,18 +653,29 @@ def generate_fast_answer(
             "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
         }
         prompt_meta["warmup"] = warm_meta
+        # Table fast path used num_predict=480. Gemma4 default thinking can
+        # consume the whole budget (done_reason=length, content="") — disable
+        # think and keep a safer token ceiling for gemma*.
+        table_num_predict = 480
+        table_think: bool | None = None
+        if model_prefers_think_off(model):
+            table_think = False
+            table_num_predict = max(table_num_predict, 1200)
         answer = call_ollama_chat_timed(
             model,
             system,
             user,
             ollama_base,
             temperature=temp,
-            num_predict=480,
+            num_predict=table_num_predict,
             num_ctx=llm_cfg["num_ctx"],
+            think=table_think,
             timing=timing,
             on_token=on_token,
         )
         prompt_meta["answer_generation"]["llm_output_chars"] = len(answer or "")
+        prompt_meta["answer_generation"]["num_predict"] = table_num_predict
+        prompt_meta["answer_generation"]["think"] = table_think
         row["_answer_generation"] = prompt_meta["answer_generation"]
         mark_fast_llm_run(model, llm_cfg["num_ctx"])
         return answer, prompt_meta

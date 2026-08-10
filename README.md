@@ -56,7 +56,7 @@ python scripts/inspect_rag_indexes.py --full
 
 | 증상 | 원인 | 고친 방식 |
 |------|------|-----------|
-| 표 질문만 1분 넘게 걸림 | Table BM25 pickle(~1.3GB) 로드 | UI 기본은 dense만. 필요하면 `MARITIME_TABLE_BM25=1` |
+| 표 질문만 느림 | 구버전 full-row Table BM25(~1.3GB) | 기본은 schema-only 슬림 BM25(~240MB). 끄려면 `MARITIME_TABLE_BM25=0` |
 | 답은 있는데 crop 칸이 빔 | 표 질문이 meeting 경로로 새어 나감 | `table_qa`는 meeting 구조화 답변에서 제외 |
 | MEPC 표 질문에서 「오류」만 | `analyze_query` UnboundLocalError | 지역 import 제거 |
 | `[n]`만 보이고 근거 표가 없음 | Evidence Table / crop UI 없음 | Gradio에 Evidence + crop 갤러리 |

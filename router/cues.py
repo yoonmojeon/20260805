@@ -50,6 +50,16 @@ RAG_PATTERNS: list[tuple[str, float]] = [
         r"tank\s*inspection|개방검사|두께계측",
         2.5,
     ),
+    # 선급 표/구조 계산형 — MEPC·KR 단어가 없어도 문서(rag)다.
+    (
+        r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|\btcorr\b|"
+        r"선박\s*길이|\bL\s*[<>≤≥=]|L이\s*\d|항복\s*(?:응력|강도)|인장\s*강도|"
+        r"화학성분|재료기호|용접용?\s*재료|기계적\s*성질|용접강|"
+        r"\d+\s*m\s*(?:미만|이상|이하)|미만일\s*때|이상일\s*때|"
+        r"N\s*/?\s*mm|표\s*\d+(?:\.\d+)*|"
+        r"화물창|화물탱크|평형수탱크|reporting\s*요건",
+        2.6,
+    ),
     (r"문서|PDF|회의록|circular|resolution|WP\.?\d", 1.5),
     (r"자율운항|대체연료.{0,12}안전|환경규제\s*대응|최신\s*동향", 2.0),
     (r"규칙\s*(이|은|뭐|어디)|뭐라고\s*(돼|되어)|요건이\s*뭐|기준이\s*뭐", 1.8),
@@ -114,10 +124,31 @@ OOS_PATTERN = re.compile(
     r"영화\s*추천|농담\s*해|심심해|점심\s*뭐|기분\s*어때",
     flags=re.IGNORECASE,
 )
+# Rule/table-shaped questions that should not fall through to chat clarify
+# when keyword cue scores are still zero (LLM / fallback safety net).
+TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
+    r"최소\s*두께|판두께|요구(?:되는)?\s*(?:최소\s*)?두께|부식추가|\btcorr\b|"
+    r"선박\s*길이|\bL\s*[<>≤≥=]|L이\s*\d|항복\s*(?:응력|강도)|인장\s*강도|"
+    r"화학성분|재료기호|용접용?\s*재료|기계적\s*성질|용접강|AH\s*\d{2}|"
+    r"화물창|화물탱크|평형수\s*탱크|reporting|정기검사|선령|"
+    r"표\s*\d+|N\s*/?\s*mm|\d+\s*m\s*(?:미만|이상|이하)|미만일\s*때|"
+    r"검사\s*(범위|선정|요건|주기)|두께계측|개방검사|"
+    r"yield|tensile|corrosion\s*addition|min(?:imum)?\s*thickness|"
+    r"ship\s*length|ballast\s*tank|cargo\s*(?:hold|tank)",
+    flags=re.IGNORECASE,
+)
+# Soft ops shape: live ship ops without needing strong keyword hit.
+TECHNICAL_OPS_SHAPE_PATTERN = re.compile(
+    r"지금\s*(배|선박|위치|스피드)|배\s*어디|기름\s*얼마나|연료\s*(소모|소비|썼)|"
+    r"올해\s*(CII|항차|운항)|현재\s*항차|Noon|MRV",
+    flags=re.IGNORECASE,
+)
 DOC_FRAME_PATTERN = re.compile(
     r"MEPC|MSC|선급|규정|규제|조항|회의|Rule|지침|가이드|가이던스|동향|"
     r"문서에서|PDF|circular|MARPOL|SOLAS|resolution|워킹그룹|이사회|총회|"
-    rf"{_AC}(?:IMO|GHG|KR){_AZ}|대체연료|원격\s*검사|survey|표에|표\s*에서",
+    rf"{_AC}(?:IMO|GHG|KR){_AZ}|대체연료|원격\s*검사|survey|표에|표\s*에서|"
+    r"최소\s*두께|판두께|선박\s*길이|부식추가|화학성분|재료기호|용접강|"
+    r"정기검사|화물창|화물탱크|reporting",
     flags=re.IGNORECASE,
 )
 SHIP_FRAME_PATTERN = re.compile(
@@ -145,7 +176,11 @@ TOPIC_PATTERNS: list[tuple[str, str]] = [
     ("mepc", r"MEPC|GHG|온실가스"),
     ("msc", r"MSC|\bMASS\b"),
     ("class", r"선급|DNV|ABS|\bLR\b|KR\s*Rule|KR\s*규칙|KR\s*\d+\s*편|RU\s*-?\s*SHIP"),
-    ("table", r"표|검사\s*주기|평형수|밸러스트|선령|정기검사|survey|개방검사"),
+    (
+        "table",
+        r"표|검사\s*주기|평형수|밸러스트|선령|정기검사|survey|개방검사|"
+        r"최소\s*두께|판두께|선박\s*길이|부식추가|tcorr|화학성분|재료기호",
+    ),
     ("seemp", r"SEEMP|EEXI|MARPOL|SOLAS"),
     ("report", r"Noon|MRV|보고서"),
 ]
@@ -244,3 +279,24 @@ def is_followup_text(question: str) -> bool:
     if FOLLOWUP_PATTERN.search(q) or DEIXIS_PATTERN.search(q):
         return True
     return len(q) <= 12 and bool(re.search(r"그거|그건|그럼|더|자세히|응|네", q))
+
+
+def looks_like_technical_rag(question: str) -> bool:
+    """True when the utterance is a class-rule / table / structural lookup."""
+    q = (question or "").strip()
+    if not q or OOS_PATTERN.search(q):
+        return False
+    if CAPABILITY_PATTERN.search(q) or IDENTITY_PATTERN.search(q) or GREET_PATTERN.search(q):
+        return False
+    if META_PATTERN.search(q) or THANKS_PATTERN.search(q):
+        return False
+    return bool(TECHNICAL_RAG_SHAPE_PATTERN.search(q))
+
+
+def looks_like_technical_ops(question: str) -> bool:
+    q = (question or "").strip()
+    if not q or OOS_PATTERN.search(q):
+        return False
+    if looks_like_technical_rag(q) and not TECHNICAL_OPS_SHAPE_PATTERN.search(q):
+        return False
+    return bool(TECHNICAL_OPS_SHAPE_PATTERN.search(q))

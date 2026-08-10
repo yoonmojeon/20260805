@@ -342,6 +342,7 @@ def build_bm25_from_collection(
     batch_size: int = CHROMA_GET_BATCH_SIZE,
     tokenizer_mode: str = "generic",
     out_dir: Path | None = None,
+    chunk_types: set[str] | None = None,
 ) -> BM25Index:
     if BM25Okapi is None:
         raise ImportError("rank_bm25 is required: pip install rank_bm25")
@@ -351,6 +352,8 @@ def build_bm25_from_collection(
     doc_list: list[str] = []
     tokens_list: list[list[str]] = []
     for cid, meta, doc in iter_collection_records(collection, batch_size=batch_size):
+        if chunk_types is not None and str((meta or {}).get("chunk_type") or "") not in chunk_types:
+            continue
         enriched = build_bm25_document(text=doc, meta=meta)
         toks = (
             tokenize_for_table_bm25(enriched)

@@ -14,7 +14,7 @@ REPORTS_DIR = _SHARED_REPORTS_DIR
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Ollama (로컬 LLM) - llama3.1:8b (Meta, Ollama tool calling 지원)
+# Ollama (로컬 LLM) — default llama3.1:8b (override with MODEL_NAME)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = "ollama"
 MODEL_NAME = os.getenv("MODEL_NAME", "llama3.1:8b")

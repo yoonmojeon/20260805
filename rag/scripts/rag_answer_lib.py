@@ -48,9 +48,15 @@ from answer_depth_guidance import (
     category_bullet_budget,
 )
 
-DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
-DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434"
-DEFAULT_OLLAMA_KEEP_ALIVE = "24h"
+# Default LLM for this PC. Override with MARITIME_OLLAMA_MODEL / MODEL_NAME.
+# Table-QA compare (10 Qs): llama3.1:8b beat gemma4:12b on grounded answers + latency.
+DEFAULT_OLLAMA_MODEL = (
+    os.environ.get("MARITIME_OLLAMA_MODEL")
+    or os.environ.get("MODEL_NAME")
+    or "llama3.1:8b"
+).strip() or "llama3.1:8b"
+DEFAULT_OLLAMA_BASE = os.environ.get("MARITIME_OLLAMA_BASE", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"
+DEFAULT_OLLAMA_KEEP_ALIVE = os.environ.get("MARITIME_OLLAMA_KEEP_ALIVE", "24h").strip() or "24h"
 PILOT_REFERENCE_PATH = Path(__file__).resolve().parent.parent / "data/eval/pilot_validation_reference.jsonl"
 _REFERENCE_CACHE: dict[str, dict] | None = None
 
@@ -306,9 +312,9 @@ def retrieve_for_question(
             uid = unified_id or str(row.get("unified_id") or DEFAULT_UNIFIED)
             idir = index_dir or Path(str(row.get("index_dir") or DEFAULT_INDEX_DIR))
             fp = unified_index_fingerprint(uid, idir)
-            # Table BM25 pickle is ~1.3GB / ~25s. Interactive queries use the
-            # warm cache only unless MARITIME_TABLE_BM25=1 explicitly opts in.
-            allow_disk = os.environ.get("MARITIME_TABLE_BM25", "0").strip().lower() in {
+            # Slim table BM25 (schema-only ~240MB) is much smaller than the old
+            # full-row ~1.3GB index. Default ON; set MARITIME_TABLE_BM25=0 to skip.
+            allow_disk = os.environ.get("MARITIME_TABLE_BM25", "1").strip().lower() in {
                 "1",
                 "true",
                 "yes",
@@ -993,28 +999,38 @@ def _ollama_chat_payload(
     num_predict: int = 2500,
     num_ctx: int = 16384,
     keep_alive: str = DEFAULT_OLLAMA_KEEP_ALIVE,
+    think: bool | None = None,
 ) -> bytes:
-    return json.dumps(
-        {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "stream": stream,
-            # Ollama accepts keep_alive at the request root.  Putting it under
-            # options is ignored and lets the model unload after Ollama's
-            # short default TTL, making the next Accurate request cold.
-            "keep_alive": keep_alive,
-            "options": {
-                "temperature": temperature,
-                "top_p": 0.92,
-                "num_ctx": num_ctx,
-                "num_predict": num_predict,
-                "repeat_penalty": 1.12,
-            },
-        }
-    ).encode("utf-8")
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": stream,
+        # Ollama accepts keep_alive at the request root.  Putting it under
+        # options is ignored and lets the model unload after Ollama's
+        # short default TTL, making the next Accurate request cold.
+        "keep_alive": keep_alive,
+        "options": {
+            "temperature": temperature,
+            "top_p": 0.92,
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
+            "repeat_penalty": 1.12,
+        },
+    }
+    # Gemma4 (and similar) may spend the whole num_predict budget on
+    # ``message.thinking`` and return empty ``message.content`` with
+    # done_reason=length. Explicit False disables that path.
+    if think is not None:
+        body["think"] = think
+    return json.dumps(body).encode("utf-8")
+
+
+def model_prefers_think_off(model: str) -> bool:
+    name = (model or "").strip().lower()
+    return name.startswith("gemma") or ":gemma" in name or "/gemma" in name
 
 
 def call_ollama_chat(
@@ -1026,9 +1042,18 @@ def call_ollama_chat(
     *,
     temperature: float = 0.15,
     num_predict: int = 2500,
+    think: bool | None = None,
 ) -> str:
+    if think is None and model_prefers_think_off(model):
+        think = False
     payload = _ollama_chat_payload(
-        model, system, user, stream=False, temperature=temperature, num_predict=num_predict
+        model,
+        system,
+        user,
+        stream=False,
+        temperature=temperature,
+        num_predict=num_predict,
+        think=think,
     )
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/api/chat",
@@ -1080,6 +1105,7 @@ def call_ollama_chat_timed(
     temperature: float = 0.15,
     num_predict: int = 2500,
     num_ctx: int = 16384,
+    think: bool | None = None,
     timing=None,
     on_token=None,
 ) -> str:
@@ -1087,6 +1113,8 @@ def call_ollama_chat_timed(
     if timing is not None and hasattr(timing, "mark"):
         if "t_llm_request_start" not in timing.monotonic:
             timing.mark("t_llm_request_start")
+    if think is None and model_prefers_think_off(model):
+        think = False
     payload = _ollama_chat_payload(
         model,
         system,
@@ -1095,6 +1123,7 @@ def call_ollama_chat_timed(
         temperature=temperature,
         num_predict=num_predict,
         num_ctx=num_ctx,
+        think=think,
     )
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/api/chat",
