@@ -302,6 +302,8 @@ def build_deterministic_table_answer(
     if not candidates:
         return None
     _score, chunk, selected_key, value = candidates[0]
+    if _is_opaque_table_key(selected_key) or _is_opaque_table_key(value):
+        return None
     citation_chunks = [chunk]
     seen_chunks = {
         str(getattr(chunk, "chunk_id", "") or "")
@@ -338,24 +340,77 @@ def build_table_answer_prompts(
     evidence: list[Any],
     *,
     debug: dict | None = None,
+    cell_hints: list[tuple[str, str]] | None = None,
 ) -> tuple[str, str]:
     parsed = (debug or {}).get("parsed_query") or {}
-    system = """당신은 선급 규칙의 구조화 표를 판독하는 QA 전문가다.
-오직 제공된 표 근거만 사용하고, 질문의 행과 열이 동시에 일치하는 셀을 우선한다.
-서로 다른 table_id의 행과 열을 결합하지 않는다.
-○는 해당 검사 차수의 대상, '-'는 별도 요건 없음으로 해석하되 표에 있는 경우에만 단정한다.
-첫 줄은 반드시 '결론: '으로 시작해 질문에 직접 답한다.
-그 다음 필요한 경우 차수·선령 구간별 내용을 짧은 bullet로 정리한다.
-모든 사실 문장을 한 문장씩 분리하고 각 문장 끝에 근거 번호 [N]을 붙인다.
-문서명·페이지·원문 청크는 UI Evidence Table에서 표시하므로 별도의 '근거:' 목록은 쓰지 않는다.
-회의 결과, 후속 회의, 최신 동향 형식은 사용하지 않는다.
-행·열이 함께 확인되지 않으면 추측하지 말고 '표 근거에서 정확한 셀을 확인하지 못했습니다'라고 답한다."""
+    system = """당신은 선급·IMO 문서의 표를 읽고 설명하는 RAG assistant다.
+제공된 표 근거 청크([1]..[N])만 사용한다. 근거에 없는 숫자·요건을 만들지 않는다.
+
+답변 형식:
+## 1) 핵심 요약
+- 질문에 대한 직접 답을 bullet 3~7개로 작성한다. 각 bullet은 1~2문장.
+- 선령 구간·검사 차수·구역·수치·○/- 의미를 근거 문구로 풀어 쓴다.
+- '영역', 'REG01', '열1' 같은 내부 메타 라벨을 답의 주어로 쓰지 않는다.
+- 사실 문장 끝에 근거 번호 [N]을 붙인다.
+
+## 2) 세부 (필요 시)
+- 비교·차수별·비고가 있으면 짧게 정리한다. 없으면 비워도 된다.
+
+금지:
+- '결론: 키 → 값' 한 줄만 내고 끝내기
+- 회의 동향/후속 안건 템플릿
+- 별도 '근거:' 목록 (UI Evidence Table이 담당)
+- 서로 다른 table_id의 행·열을 섞어 단정하기
+
+행·열이 확인되지 않으면 추측하지 말고, 확인된 범위만 말하거나
+'표 근거에서 질문에 해당하는 셀을 확정하지 못했습니다'라고 답한다."""
+    hint_lines = ""
+    if cell_hints:
+        rendered = "\n".join(f"- {key}: {value}" for key, value in cell_hints[:5])
+        hint_lines = f"\n자동 추출 후보 셀(참고용, 틀릴 수 있음):\n{rendered}\n"
     user = (
         f"질문: {row.get('question', '')}\n"
         f"질문 유형: {parsed.get('query_type', '')}\n"
         f"찾을 행: {', '.join(parsed.get('row_entities') or []) or '(자동 판별)'}\n"
-        f"찾을 열: {', '.join(parsed.get('column_entities') or []) or '(자동 판별)'}\n\n"
-        f"구조화 표 근거:\n{build_table_context(evidence)}\n\n"
-        "위 근거에서 질문에 해당하는 표·행·열을 확인하여 간결한 한국어 답변을 작성하라."
+        f"찾을 열: {', '.join(parsed.get('column_entities') or []) or '(자동 판별)'}\n"
+        f"{hint_lines}\n"
+        f"표 근거:\n{build_table_context(evidence)}\n\n"
+        "위 표 근거를 읽고 텍스트 문서 질문과 같은 밀도으로 한국어 답변을 작성하라. "
+        "표 crop/Evidence Table은 UI가 따로 보여 주므로, 답변 본문은 설명에 집중한다."
     )
     return system, user
+
+
+def top_table_cell_hints(
+    row: dict,
+    evidence: list[Any],
+    *,
+    debug: dict | None = None,
+    limit: int = 5,
+) -> list[tuple[str, str]]:
+    """Ranked cell key/value pairs for LLM hints (not final answers)."""
+    candidates = _rank_structured_cells(row, evidence, debug=debug)
+    out: list[tuple[str, str]] = []
+    for _score, _chunk, key, value in candidates:
+        if _is_opaque_table_key(key) or _is_opaque_table_key(value):
+            continue
+        display = "별도 요건 없음 (-)" if value == "-" else value
+        item = (key.strip(), display)
+        if item not in out:
+            out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _is_opaque_table_key(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return True
+    if re.fullmatch(r"REG\d+", text, re.I):
+        return True
+    if text in {"영역", "표 셀", "비고"}:
+        return True
+    if re.fullmatch(r"열\d+", text):
+        return True
+    return False

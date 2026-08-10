@@ -164,11 +164,12 @@ class TableQAPipelineTest(unittest.TestCase):
         self.assertEqual(row["_answer_citation_chunks"], [chunk])
         self.assertTrue(row.get("_verified_structured_answer"))
 
-    def test_fast_table_answer_bypasses_ollama(self) -> None:
+    def test_fast_table_answer_uses_llm_like_text(self) -> None:
         chunk = SimpleNamespace(
             chunk_id="row-fast",
             chunk_type="table_row",
             table_id="table-fast",
+            doc_id="doc-fast",
             text=(
                 "[표 행 및 셀 사실]\n행 기준: 잔류응력 측정\n"
                 "셀: 종류=잔류응력 측정 | 시험 결과에 기록되어야 하는 항목=시험재 ID 및 결과"
@@ -181,10 +182,18 @@ class TableQAPipelineTest(unittest.TestCase):
         row = normalize_table_question_row(
             {"question": "잔류응력을 측정한 경우 시험 결과 문서에 어떤 정보를 기록해야 하는가?"}
         )
-        with patch(
-            "rag_fast_mode.call_ollama_chat_timed",
-            side_effect=AssertionError("Ollama must not be called for an exact table cell"),
-        ):
+
+        def fake_llm(model, system, user, *args, **kwargs):
+            self.assertIn("표 근거", user)
+            self.assertIn("시험재 ID 및 결과", user)
+            return (
+                "## 1) 핵심 요약\n\n"
+                "- 잔류응력 측정 시 시험재 ID 및 결과를 기록한다. [1]\n"
+            )
+
+        with patch("rag_fast_mode.call_ollama_chat_timed", side_effect=fake_llm), patch(
+            "rag_fast_mode.ensure_fast_warm_checked", return_value={}
+        ), patch("rag_fast_mode.mark_fast_llm_run"):
             answer, meta = generate_fast_answer(
                 row,
                 [chunk],
@@ -194,9 +203,9 @@ class TableQAPipelineTest(unittest.TestCase):
                 auto_llm_warm=False,
                 fast_meta={"fast_question_type": "table_qa"},
             )
-        self.assertIn("시험재 ID 및 결과", answer)
-        self.assertTrue(meta.get("llm_skipped"))
-        self.assertEqual(meta.get("answer_source"), "structured_table_cell")
+        self.assertIn("시험재 ID", answer)
+        self.assertEqual(meta.get("answer_source"), "table_llm")
+        self.assertTrue((meta.get("answer_generation") or {}).get("llm_used"))
 
     def test_comparison_requires_both_gold_cells(self) -> None:
         def chunk(row: str, answer: str):

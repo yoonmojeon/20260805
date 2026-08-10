@@ -2543,33 +2543,34 @@ def generate_answer(
         return "", provider, model
     if row.get("_table_qa") or answer_mode == "table_qa":
         from table_qa_answer import (
-            build_deterministic_table_answer,
             build_table_answer_prompts,
             select_table_evidence,
+            top_table_cell_hints,
         )
 
         full_table_pool = list(retrieved) + list(pool or retrieved)
-        deterministic = build_deterministic_table_answer(row, full_table_pool, debug=debug)
-        evidence = select_table_evidence(row, retrieved, pool or retrieved, debug=debug)
-        if deterministic:
-            row["_answer_generation"] = {
-                "answer_source": "structured_table_cell",
-                "llm_called": False,
-            }
-            return deterministic, "structured_table", "none"
+        evidence = select_table_evidence(
+            row, retrieved, pool or retrieved, debug=debug, max_chunks=12
+        )
+        if not evidence:
+            evidence = list(retrieved) or list(pool or [])
         if debug and not debug.get("passes_confidence_gate", True):
             from table_schema_retrieval import apply_confidence_gate
 
             return apply_confidence_gate("", debug), "confidence_gate", "none"
+        hints = top_table_cell_hints(row, full_table_pool, debug=debug)
         row["_answer_citation_chunks"] = list(evidence)
-        system, user = build_table_answer_prompts(row, evidence, debug=debug)
+        row.pop("_verified_structured_answer", None)
+        system, user = build_table_answer_prompts(
+            row, evidence, debug=debug, cell_hints=hints
+        )
         try:
             if provider == "openai":
                 answer = call_openai_chat(model, system, user)
             elif stream:
                 answer = "".join(
                     call_ollama_chat_stream(
-                        model, system, user, ollama_base, temperature=min(temperature, 0.05)
+                        model, system, user, ollama_base, temperature=min(temperature, 0.15)
                     )
                 )
             else:
@@ -2578,12 +2579,19 @@ def generate_answer(
                     system,
                     user,
                     ollama_base,
-                    temperature=min(temperature, 0.05),
-                    num_predict=400,
+                    temperature=min(temperature, 0.15),
+                    num_predict=480,
                     num_ctx=num_ctx,
                     timing=timing,
                     on_token=on_token,
                 )
+            row["_answer_generation"] = {
+                "answer_source": "table_llm",
+                "llm_used": True,
+                "llm_context_chunks": len(evidence),
+                "llm_output_chars": len(answer or ""),
+                "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+            }
             return answer, provider, model
         except Exception:
             if allow_extractive_fallback:

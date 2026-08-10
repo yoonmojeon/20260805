@@ -596,49 +596,27 @@ def generate_fast_answer(
 
     if row.get("_table_qa") or str(row.get("category") or "") == "table_qa":
         from table_qa_answer import (
-            build_deterministic_table_answer,
             build_table_answer_prompts,
             select_table_evidence,
+            top_table_cell_hints,
         )
 
         debug = row.get("_table_retrieval_debug") or {}
         full_table_pool = list(chunks) + list(pool or chunks)
-        deterministic = build_deterministic_table_answer(
-            row, full_table_pool, debug=debug
-        )
-        if deterministic:
-            answer_generation = {
-                "answer_source": "structured_table_cell",
-                "llm_used": False,
-                "llm_call_function": None,
-                "llm_prompt_chars": 0,
-                "llm_context_chunks": len(full_table_pool),
-                "llm_output_chars": len(deterministic),
-                "llm_grounded_check_pass": True,
-                "fallback_reason": None,
-            }
-            meta.update(
-                {
-                    "answer_mode": "table_qa",
-                    "llm_skipped": True,
-                    "answer_source": "structured_table_cell",
-                    "answer_generation": answer_generation,
-                }
-            )
-            row["_answer_generation"] = answer_generation
-            if timing is not None and hasattr(timing, "mark_wall"):
-                timing.mark_wall("t_answer_complete")
-            return deterministic, meta
-
         evidence = select_table_evidence(
-            row, chunks, pool or chunks, debug=debug, max_chunks=8
+            row, chunks, pool or chunks, debug=debug, max_chunks=12
         )
-        # The prompt numbers these chunks [1]..[N]; preserve that exact order
-        # for the common answer contract and its Evidence Table.
+        if not evidence:
+            evidence = list(chunks) or list(pool or [])
+        hints = top_table_cell_hints(row, full_table_pool, debug=debug)
+        # Citation order must match prompt numbering for Evidence Table.
         row["_answer_citation_chunks"] = list(evidence)
-        system, user = build_table_answer_prompts(row, evidence, debug=debug)
+        row.pop("_verified_structured_answer", None)
+        system, user = build_table_answer_prompts(
+            row, evidence, debug=debug, cell_hints=hints
+        )
         llm_cfg = FAST_LLM
-        temp = min(temperature if temperature is not None else llm_cfg["temperature"], 0.05)
+        temp = min(temperature if temperature is not None else llm_cfg["temperature"], 0.15)
         warm_meta: dict[str, Any] = {}
         if auto_llm_warm:
             warm_meta = ensure_fast_warm_checked(
@@ -655,12 +633,24 @@ def generate_fast_answer(
             compact_context=user,
             chunks=evidence,
             model_name=model,
-            max_new_tokens=320,
+            max_new_tokens=480,
             num_ctx=llm_cfg["num_ctx"],
             temperature=temp,
             fast_meta={**meta, "answer_mode": "table_qa"},
         )
         prompt_meta["answer_mode"] = "table_qa"
+        prompt_meta["answer_source"] = "table_llm"
+        prompt_meta["answer_generation"] = {
+            "answer_source": "table_llm",
+            "llm_used": True,
+            "llm_call_function": "call_ollama_chat_timed",
+            "llm_prompt_chars": len(system) + len(user),
+            "llm_context_chunks": len(evidence),
+            "llm_output_chars": 0,
+            "llm_grounded_check_pass": None,
+            "fallback_reason": None,
+            "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+        }
         prompt_meta["warmup"] = warm_meta
         answer = call_ollama_chat_timed(
             model,
@@ -668,11 +658,13 @@ def generate_fast_answer(
             user,
             ollama_base,
             temperature=temp,
-            num_predict=320,
+            num_predict=480,
             num_ctx=llm_cfg["num_ctx"],
             timing=timing,
             on_token=on_token,
         )
+        prompt_meta["answer_generation"]["llm_output_chars"] = len(answer or "")
+        row["_answer_generation"] = prompt_meta["answer_generation"]
         mark_fast_llm_run(model, llm_cfg["num_ctx"])
         return answer, prompt_meta
 
