@@ -1,11 +1,10 @@
 # 표 임베딩 파이프라인
 
-이 문서는 715개 문서를 대상으로 하는 범용 표 임베딩 파이프라인과 KR 7편에서
-검증한 고정밀 표 복원 파이프라인을 구분하여 설명합니다.
+715개 문서용 표 인덱스와, KR 7편에서 맞춰 본 고정밀 복원 절차를 구분해서 적습니다.
 
-## Runtime source of truth (MaritimeOpsRAG)
+## 앱이 실제로 쓰는 인덱스
 
-통합 앱이 **실제로** 읽는 Table Chroma ID는 `project_paths.DEFAULT_TABLE_COLLECTION`이다.
+통합 앱의 Table Chroma ID는 `project_paths.DEFAULT_TABLE_COLLECTION`이다.
 
 | 구분 | 값 |
 |------|-----|
@@ -20,48 +19,44 @@
 | Filtered/empty | 7 |
 | Extraction failed | 0 (local audit) |
 
-문서 하단의 `full_corpus_715_tables_v1` / `_v2` 등은 **과거·대안 빌드 ID**이며,
-현재 런타임 기본값이 아니다. 진단:
+아래 `full_corpus_715_tables_v1` / `_v2` 같은 이름은 예전에 쓰던(또는 대안) 빌드 ID다.
+지금 기본값이 아니다. 확인:
 
 ```powershell
 python scripts/inspect_rag_indexes.py --full
 python scripts/audit_table_coverage.py
 ```
 
-원본 PDF, 모델 가중치, 표 crop, 생성된 청크 및 Chroma 벡터 DB는 Git 저장소에
-포함하지 않습니다.
+원본 PDF, 모델 가중치, crop, 청크, Chroma DB는 Git에 넣지 않는다.
 
-## 1. Git clone 후 재현할 수 있는 범위
+## 1. clone 후 다시 만들 수 있는 것
 
-저장소에는 다음 파일이 포함됩니다.
+저장소에 있는 것:
 
-- 715개 문서 코퍼스 매니페스트
-- PDF 레이아웃 분석 및 표 좌표 추출 코드
-- 표 품질검사, 청킹, 임베딩 및 Chroma 인덱스 생성 코드
-- KR 7편용 TATR + PyMuPDF + HancomEQN 고정밀 기준 구현
-- KR 7편 HancomEQN PUA 매핑 파일
-- 표 검색 회귀평가 질문과 단위 테스트
+- 715 문서 매니페스트
+- 레이아웃·표 좌표·품질검사·청킹·임베딩·Chroma 코드
+- KR 7편 TATR + PyMuPDF + HancomEQN 쪽 구현·PUA 매핑
+- 표 검색 회귀 질문·단위 테스트
 
-다음 항목은 저장소에 포함되지 않습니다.
+없는 것:
 
-- 저작권 또는 배포 제한이 있는 원본 PDF
-- YOLO, Table Transformer, 임베딩, VLM, LLM 모델 가중치
-- 렌더링된 PDF 페이지와 표 crop 이미지
-- 생성된 JSONL 청크와 실행 로그
-- Chroma 및 BM25 인덱스
-- 가상환경, 모델 캐시, API 키 및 인증정보
+- 원본 PDF (배포 제한)
+- YOLO / Table Transformer / 임베딩 / VLM / LLM 가중치
+- 페이지·표 crop 이미지
+- 생성된 JSONL·로그
+- Chroma·BM25 인덱스
+- `.venv`, 모델 캐시, API 키
 
 ## 2. 저장소 받기
 
-운영 및 인수인계 기준 브랜치는 `main`입니다. 기능 변경은 별도 브랜치와 Pull
-Request에서 검증하지만, 사용자는 병합이 완료된 `main`을 clone합니다.
+기본 브랜치는 `main`이다.
 
 ```powershell
 git clone --branch main https://github.com/yoonmojeon/20260805.git
 cd 20260805
 ```
 
-이미 저장소를 clone했다면 다음과 같이 `main`을 최신 상태로 맞춥니다.
+이미 clone한 경우:
 
 ```powershell
 git fetch origin
@@ -69,9 +64,9 @@ git switch main
 git pull
 ```
 
-## 3. Python 환경 구성
+## 3. Python 환경
 
-개발 및 검증 환경은 Python 3.11입니다.
+Python 3.11 기준.
 
 ```powershell
 python -m venv .venv

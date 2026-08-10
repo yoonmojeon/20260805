@@ -1,24 +1,22 @@
-# MaritimeOpsRAG 시스템 아키텍처 (상세)
+# MaritimeOpsRAG 시스템 아키텍처
 
-이 문서는 [yoonmojeon/20260805](https://github.com/yoonmojeon/20260805) 통합 서비스가
-**운항(정형) 데이터**와 **문서(비정형) 데이터**를 어떻게 다루는지,
-**라우팅이 어디에 끼는지**, **빌드 타임 vs 질의 타임**이 어떻게 나뉘는지
-공부·인수인계용으로 정리한 것입니다.
+[yoonmojeon/20260805](https://github.com/yoonmojeon/20260805)에서
+운항(정형)과 문서(비정형)를 어떻게 나누고, 질문이 오면 어디로 보내는지 정리한 글입니다.
 
-짧은 사용 절차는 [사용매뉴얼.md](사용매뉴얼.md)를, 표 빌드 재현은
-[TABLE_EMBEDDING_PIPELINE.md](TABLE_EMBEDDING_PIPELINE.md)를 참고하세요.
+UI 절차는 [사용매뉴얼.md](사용매뉴얼.md), 표 인덱스 빌드는
+[TABLE_EMBEDDING_PIPELINE.md](TABLE_EMBEDDING_PIPELINE.md).
 
 ---
 
-## 0. 한 줄로 이해하기
+## 0. 큰 그림
 
-MaritimeOpsRAG는 “모든 걸 한 모델에 넣는 챗봇”이 아니라,
+한 모델에 전부 넣지 않습니다.
 
-1. **데이터 특성에 맞는 저장소**를 미리 만들고 (빌드 타임)
-2. 질문이 오면 **어느 저장소를 쓸지 고른 뒤** (라우팅)
-3. 그 저장소에 맞는 **실행기**로 답을 만듭니다 (질의 타임).
+1. 저장소를 미리 만들고 (빌드)
+2. 질문이 오면 어느 저장소를 쓸지 고르고 (라우팅)
+3. 그 경로의 실행기로 답을 만듭니다 (질의)
 
-최상위 경로는 주제(동향 / MASS / 표QA)가 아니라 **데이터 소스**입니다.
+최상위는 “동향/MASS/표QA” 같은 주제가 아니라 **데이터 소스**입니다.
 
 | 경로 | 의미 | 저장소 | LLM 역할 |
 |------|------|--------|----------|
@@ -35,8 +33,24 @@ MaritimeOpsRAG는 “모든 걸 한 모델에 넣는 챗봇”이 아니라,
 [질의 타임]  질문 → intent_router → chat | ops | rag | hybrid → 답
 ```
 
-**중요:** 라우팅은 데이터를 “만드는” 단계가 아닙니다.
-인덱스가 이미 준비된 뒤, 질문마다 **어느 문을 열지** 고르는 스위치입니다.
+라우팅은 인덱스를 만드는 단계가 아닙니다. 이미 준비된 DB/Chroma 중
+질문마다 문을 고르는 스위치입니다.
+
+### 질문 예시
+
+```text
+현재 CII 알려줘
+  → ops → Tool → SQLite
+
+MSC 111 주요 결과 알려줘
+  → rag → Text Chroma
+
+선령별 탱크 검사 범위 알려줘
+  → rag → Table Chroma → 원본 표 crop
+
+우리 CII와 관련 규정 같이 알려줘
+  → hybrid → ops + rag
+```
 
 ---
 
@@ -97,12 +111,11 @@ MaritimeOpsRAG는 “모든 걸 한 모델에 넣는 챗봇”이 아니라,
 
 프롬프트(툴 사용 규칙)는 `prompts/ops.py`만 수정합니다.
 
-### 2.3 운항 경로의 설계 포인트
+### 2.3 운항 경로에서 지킬 것
 
-- LLM이 숫자를 **지어내지 않도록** 툴 결과를 근거로 씁니다.
-- 데이터가 없으면 “없음/계산 불가”가 정상 동작입니다.
-  (혼합 평가에서 ops weak로 남는 경우가 여기에 해당)
-- 규정 해석·회의 요약은 ops의 일이 아닙니다.
+- 숫자는 툴/SQL 결과를 쓴다. 모델이 임의로 만들지 않는다.
+- 데이터가 없으면 “없음/계산 불가”가 맞다.
+- 규정 해석·회의 요약은 ops가 아니다.
 
 ---
 
@@ -140,14 +153,12 @@ PDF
 관련 스크립트 예: `rag/scripts/rebuild_full_corpus_715.py`,
 `rag/scripts/10_build_unified_index.py`, `rag/scripts/35_build_bm25_index.py`.
 
-본문 인덱스에서는 **구조화 표를 약하게 두거나 제외**하고,
-표 질의는 아래 정밀 표 파이프라인으로 보내는 편이 낫습니다.
+본문 인덱스에는 표를 거의 넣지 않고, 표 질문은 아래 정밀 표 인덱스로 보낸다.
 
 ### 3.2 정밀 표 인덱스
 
-표는 “문장 검색”만으로는 셀 정렬·주기·선령 구간이 깨지기 쉽습니다.
-그래서 탐지 → 구조 → 좌표 스냅 → 텍스트 → (KR) 특수문자 복원 → 청킹 → 인덱스의
-다단계 파이프라인을 씁니다.
+표는 문장 검색만으로 셀·주기·선령 구간이 잘 안 맞는다.
+탐지 → 구조 → 좌표 스냅 → 텍스트 → (KR) 특수문자 복원 → 청킹 → 인덱스 순으로 만든다.
 
 대표 오케스트레이터: `rag/scripts/70_build_precise_table_corpus.py`  
 약한 표 수리/격리: `rag/scripts/71_repair_weak_precise_tables.py`
@@ -165,11 +176,10 @@ preprocess / prepare
   → Chroma: full_corpus_715_tables_precise_v1
 ```
 
-청크는 마크다운 표 복사가 아니라, 검색에 유리한
-`열N=값 | …` 형태의 **평문 직렬화**에 가깝습니다.
+검색용 청크는 Markdown 표 복사가 아니라 `열N=값 | …` 평문에 가깝다.
+화면에는 그 표의 PDF crop을 보여 준다.
 
-상세 재현·의존성·주의사항은
-[TABLE_EMBEDDING_PIPELINE.md](TABLE_EMBEDDING_PIPELINE.md)를 보세요.
+빌드 방법: [TABLE_EMBEDDING_PIPELINE.md](TABLE_EMBEDDING_PIPELINE.md)
 
 ### 3.3 질의 시 RAG 실행
 
@@ -190,9 +200,8 @@ preprocess / prepare
 | TABLE | 선령/주기/표 값·행 질의 | `full_corpus_715_tables_precise_v1` |
 | BOTH | 취지+선령별 범위처럼 본문·표 동시 필요 | 두 인덱스 검색 후 fuse |
 
-애매하면서 표 단서가 있으면 BOTH를 우선한다. 표 답변에는 동일 `table_id`의
-`table_row`를 deterministic Markdown 표로 복원해 `### 관련 표`로 붙인다
-(`services/table_render.py`). LLM이 표 셀을 새로 만들지 않는다.
+표 단서가 애매하면 BOTH로 간다. UI에는 Evidence Table과 `crop_path` 이미지를 붙인다
+(`services/answer_ui.py`, `services/table_render.py`). 모델이 표 셀을 새로 그리지 않는다.
 
 진단:
 
@@ -301,11 +310,11 @@ flowchart TD
   RAG --> OUT
 ```
 
-응답에 같이 실리는 것(개념):
+개념상 응답에 실리는 것:
 
 - 답변 텍스트
-- 선택된 `route` / 점수 / method (rules, multiturn, llm 등)
-- (ops) 생성 파일 경로, 지도 HTML
+- `route` / 점수 / method (rules, multiturn, llm …)
+- (ops) 생성 파일, 지도 HTML
 - 다음 턴용 `dialogue_state`
 
 ---
@@ -342,55 +351,47 @@ Git에 안 올리는 것(일반적): 원본 PDF, 모델 가중치, Chroma 바이
 
 ---
 
-## 7. 평가와 품질 관점
+## 7. 평가
 
-혼합 경로 스모크 예:
-
-- 스위트: `data/eval/suite_100_mixed.json` (chat/ops/text/table 혼합)
+- 혼합 스위트: `data/eval/suite_100_mixed.json`
 - 러너: `scripts/run_eval_suite_100.py`
 - 결과: `data/processed/logs/suite_100_mixed_results.json`
+- 라우터만: `python tests/run_router_eval.py`
 
-라우터만: `python tests/run_router_eval.py`
-
-해석 팁:
-
-- `route_mismatch` → 단서/라우터 문제 (데이터 파이프라인과 별개)
-- `weak` + ops → DB·툴·연도 슬롯 문제
-- `weak` + rag → 검색·요약·커버리지 문제
+`route_mismatch`면 단서/라우터 쪽을 보고, ops `weak`면 DB·툴, rag `weak`면 검색·커버리지를 본다.
 
 ---
 
-## 8. 공부할 때 추천 읽기 순서
+## 8. 코드 따라가기
 
-1. 이 문서 (`docs/ARCHITECTURE.md`) — 큰 그림
-2. `services/orchestrator.py` — 실제 스위치
-3. `router/intent_router.py` + `router/cues.py` — 왜 그 경로인지
+1. 이 문서 — 큰 그림
+2. `services/orchestrator.py` — 경로 스위치
+3. `router/intent_router.py`, `router/cues.py`
 4. `ops/scripts/load_hodata.py` → `ops/agent/tools.py` → `ops/agent/cii.py`
 5. `project_paths.py` — 컬렉션 이름
-6. `docs/TABLE_EMBEDDING_PIPELINE.md` + `rag/scripts/70_build_precise_table_corpus.py`
-7. `services/rag_service.py` — dual / 표 힌트
-8. `docs/사용매뉴얼.md` — UI로 손으로 검증
+6. `docs/TABLE_EMBEDDING_PIPELINE.md`, `rag/scripts/70_build_precise_table_corpus.py`
+7. `services/rag_service.py` — 본문/표/BOTH
+8. `docs/사용매뉴얼.md` — UI로 확인
 
 ---
 
 ## 9. FAQ
 
-**Q. 라우팅을 먼저 했나, 데이터 처리를 먼저 했나?**  
-A. **데이터 처리를 특성별로 먼저** 두고, 질의 시 라우팅으로 연결합니다.
-코드상으로도 `load_hodata` / Chroma 빌드가 선행되어야 ops·rag가 의미 있습니다.
+**Q. 라우팅이 먼저인가, 데이터 처리가 먼저인가?**  
+A. 데이터 처리가 먼저다. `load_hodata` / Chroma가 있어야 ops·rag가 의미가 있다.
 
 **Q. 표 QA는 최상위 경로인가?**  
-A. 아닙니다. 최상위는 `rag`이고, 표 힌트·dual 검색은 RAG **내부** 동작입니다.
+A. 아니다. 최상위는 `rag`이고, 표/본문 선택은 RAG 안에서 한다.
 
-**Q. chat인데도 LLM을 쓰나?**  
-A. 기본 안내·인사는 템플릿입니다. DB/Chroma를 건드리지 않는 것이 규칙입니다.
+**Q. chat에서도 LLM을 쓰나?**  
+A. 인사·안내는 템플릿이다. SQLite/Chroma는 건드리지 않는다.
 
-**Q. hybrid와 “둘 다 가능해?”의 차이는?**  
-A. “가능해?”는 **시스템 능력** → chat.  
-“운항이랑 문서 둘 다 알려줘 / 규정 기준으로 우리 CII”는 **내용 요청** → hybrid.
+**Q. hybrid와 “둘 다 가능해?”의 차이**  
+A. “가능해?”는 능력 질문 → chat.  
+“운항이랑 문서 둘 다 알려줘”처럼 내용이면 → hybrid.
 
 **Q. 로컬에 인덱스가 없으면?**  
-A. 앱은 뜨지만 rag/ops가 준비 안내를 냅니다. 매뉴얼의 상태 확인 명령을 쓰세요.
+A. 앱은 뜨지만 rag/ops가 준비 안내를 낸다. 매뉴얼의 상태 확인을 쓰면 된다.
 
 ---
 
