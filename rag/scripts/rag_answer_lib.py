@@ -257,18 +257,16 @@ def retrieve_for_question(
     question = str(row["question"])
     sources = list(row.get("retrieval_sources") or [])
     source_filter = sources[0] if len(sources) == 1 else None
-    # UI example rows contain only free-text questions, unlike benchmark rows
-    # which already carry ``retrieval_sources``.  Meeting acronyms are explicit
-    # source constraints: without this filter a global dense search can fill the
-    # candidate pool with unrelated class-rule picture captions and leave the
-    # grounded-answer stage with zero usable evidence.
-    if not source_filter:
-        upper_question = question.upper()
-        if re.search(r"\bMEPC\b", upper_question):
-            source_filter = "MEPC"
-        elif re.search(r"\bMSC\b", upper_question):
-            source_filter = "MSC"
-    if not source_filter:
+    # Meeting acronyms always win over a society default left on the row
+    # (table_qa used to pin retrieval_sources=["KR"] and skip this branch).
+    from retrieval_query_analysis import detect_meeting_source_hint
+
+    meeting_source = detect_meeting_source_hint(question)
+    if meeting_source:
+        source_filter = meeting_source
+        row["class_society_hint"] = meeting_source
+        row["retrieval_sources"] = [meeting_source]
+    elif not source_filter:
         from retrieval_query_analysis import detect_class_society_hint
         from retrieval_verification import effective_question_category
 

@@ -70,6 +70,27 @@ def detect_class_society_hint(question: str) -> str:
     return ""
 
 
+def detect_meeting_source_hint(question: str) -> str:
+    """Explicit IMO meeting acronym in the question → Chroma ``source`` filter."""
+    upper = (question or "").upper()
+    if re.search(r"\bMEPC\b", upper):
+        return "MEPC"
+    if re.search(r"\bMSC\b", upper):
+        return "MSC"
+    return ""
+
+
+def detect_table_source_hint(question: str, *, default_society: str = "KR") -> str:
+    """Table QA source: meeting acronym > named society > corpus default (KR)."""
+    meeting = detect_meeting_source_hint(question)
+    if meeting:
+        return meeting
+    society = detect_class_society_hint(question)
+    if society:
+        return society
+    return default_society
+
+
 def is_meeting_outcome_question(question: str, row: dict | None = None) -> bool:
     if row and str(row.get("category") or "") == "meeting_outcome":
         return True

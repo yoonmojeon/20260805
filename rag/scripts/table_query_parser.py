@@ -107,7 +107,16 @@ def _infer_column_entities(question: str) -> list[str]:
         if len(canon) <= 3 and canon.isalpha():
             for form in forms:
                 escaped = re.escape(str(form))
-                if len(str(form)) == 1:
+                form_s = str(form)
+                # Short ASCII aliases ("age", "c") must be whole tokens —
+                # otherwise "age" matches inside "agenda".
+                if form_s.isascii() and len(form_s) <= 8:
+                    matched = re.search(
+                        rf"(?<![0-9A-Za-z]){escaped}(?![0-9A-Za-z])",
+                        question,
+                        re.I,
+                    )
+                elif len(form_s) == 1:
                     matched = re.search(
                         rf"(?<![0-9A-Za-z가-힣]){escaped}(?![0-9A-Za-z가-힣])",
                         question,

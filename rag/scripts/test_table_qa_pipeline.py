@@ -45,6 +45,68 @@ class TableQAPipelineTest(unittest.TestCase):
         self.assertNotIn("P", parsed.column_entities)
         self.assertNotIn("S", parsed.column_entities)
 
+    def test_age_alias_does_not_match_inside_agenda(self) -> None:
+        parsed = parse_table_query("MEPC 84 임시 의제 시간표 표에서 주요 agenda 배정은?")
+        self.assertNotIn("선령", parsed.column_entities)
+        self.assertFalse(any("선령" in c for c in parsed.column_entities))
+
+    def test_table_qa_mepc_question_does_not_default_to_kr(self) -> None:
+        from rag_query_router import enrich_row_for_routing
+
+        row = enrich_row_for_routing(
+            {"question": "MEPC 84 임시 의제 시간표 표에서 주요 agenda 배정은?", "_table_qa": True},
+            latency_mode="fast",
+        )
+        self.assertEqual(row.get("class_society_hint"), "MEPC")
+        self.assertEqual(row.get("retrieval_sources"), ["MEPC"])
+
+    def test_table_number_boost_prefers_exact_caption(self) -> None:
+        from table_query_parser import parse_table_query
+        from table_schema_retrieval import score_table_candidate
+
+        parsed = parse_table_query("표 2.1.65 종류 및 화학성분 표의 주요 열 구성은?")
+        gold = score_table_candidate(
+            parsed,
+            vector_distance=0.25,
+            meta={"caption": "표 2.1.65 종류 및 화학성분", "chunk_type": "table_summary"},
+            document="표: 표 2.1.65 종류 및 화학성분 문서: 2편_2025.pdf 열1=종류 열2=C",
+        )
+        near = score_table_candidate(
+            parsed,
+            vector_distance=0.20,
+            meta={"caption": "표 2.1.55 화학성분", "chunk_type": "table_summary"},
+            document="표: 표 2.1.55 화학성분 문서: 2편_2025.pdf 열1=종류 및 열2=재료기호",
+        )
+        self.assertGreater(gold.combined_score, near.combined_score)
+
+    def test_inspection_age_penalizes_cargo_density_tables(self) -> None:
+        from table_query_parser import parse_table_query
+        from table_schema_retrieval import score_table_candidate
+
+        parsed = parse_table_query(
+            "선령 5~10년 구간 선박의 화물창은 정기검사에서 어떤 reporting 요건이 있나?"
+        )
+        gold = score_table_candidate(
+            parsed,
+            vector_distance=0.30,
+            meta={"caption": "", "chunk_type": "table_row"},
+            document="영역=REG01 | 열1=화물창 | 열2=5년< 선령≤10년: 모든 화물창에 대한 현상검사",
+        )
+        noise = score_table_candidate(
+            parsed,
+            vector_distance=0.18,
+            meta={"caption": "", "chunk_type": "table_summary"},
+            document="영역=REG01 | 선박의 종류 화물 질량/ 화물 밀도 균일 적재상태 (만재 화물창)",
+        )
+        structural = score_table_candidate(
+            parsed,
+            vector_distance=0.15,
+            meta={"caption": "", "chunk_type": "table_summary"},
+            document="영역=REG01 | 열1=구조 부재 구분: C4 화물 창구 모서리부의 강판 (산적화물선",
+        )
+        self.assertGreater(gold.combined_score, noise.combined_score)
+        self.assertGreater(gold.combined_score, structural.combined_score)
+
     def test_table_route_precedes_general_rule_and_meeting_routes(self) -> None:
         row = normalize_table_question_row(
             {"question": "정기검사 표에서 화물탱크 reporting 요건은?"}

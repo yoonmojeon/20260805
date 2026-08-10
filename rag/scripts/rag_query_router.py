@@ -11,7 +11,11 @@ from meeting_category_profile import (
     resolve_top_level_category,
 )
 from question_classifier import CATEGORY_LABELS_KO, classify_question_category, category_label_ko
-from retrieval_query_analysis import analyze_query, detect_class_society_hint
+from retrieval_query_analysis import (
+    analyze_query,
+    detect_class_society_hint,
+    detect_table_source_hint,
+)
 from retrieval_question_profile import build_retrieval_profile
 
 RULE_GUIDANCE_TERMS = (
@@ -78,7 +82,12 @@ def resolve_pipeline_route(
 ) -> dict[str, Any]:
     row = dict(row or {})
     if row.get("_table_qa") or str(row.get("category") or "") == "table_qa":
-        society = str(row.get("class_society_hint") or detect_class_society_hint(question) or "KR")
+        # Meeting acronyms (MEPC/MSC) must win over the KR corpus default;
+        # otherwise table dense search is locked to class-rule PDFs.
+        society = str(
+            row.get("class_society_hint")
+            or detect_table_source_hint(question, default_society="KR")
+        )
         signals = analyze_query(question)
         return {
             "latency_mode": latency_mode,
@@ -151,9 +160,8 @@ def enrich_row_for_routing(row: dict, *, latency_mode: str = "accurate") -> dict
         out.pop("_hard_society_filter", None)
     if route["detected_society"]:
         out["class_society_hint"] = route["detected_society"]
-        sources = list(out.get("retrieval_sources") or [])
-        if route["detected_society"] not in sources:
-            out["retrieval_sources"] = [route["detected_society"]]
+        # Replace (do not merge) so a prior KR default cannot block MEPC/MSC.
+        out["retrieval_sources"] = [route["detected_society"]]
     if route["rule_guidance_lookup"]:
         out["_hard_society_filter"] = route["hard_society_filter"]
         out["_rule_guidance_lookup"] = True

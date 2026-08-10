@@ -130,6 +130,13 @@ def _literal_row_candidates(
     )
     if not entities:
         return []
+    # Prefer compact domain labels ("화물창") over long natural phrases that
+    # almost never appear verbatim inside a cell.
+    compact = [e for e in entities if 2 <= len(e) <= 12]
+    search_entities = (compact or entities)[:3]
+    age_q = "선령" in (parsed.raw_question or "") or any(
+        "선령" in c for c in parsed.column_entities
+    )
     where = _merge_where(
         {"chunk_type": "table_row"},
         {"source": source.upper()} if source else None,
@@ -138,7 +145,7 @@ def _literal_row_candidates(
         {"page_number": int(page_number)} if page_number is not None else None,
     )
     out: dict[str, tuple[str, float, dict, str]] = {}
-    for entity in entities[:3]:
+    for entity in search_entities:
         try:
             raw = collection.get(
                 where=where,
@@ -164,6 +171,13 @@ def _literal_row_candidates(
                 synthetic_distance -= 0.22
             if engineering:
                 synthetic_distance += 0.45
+            # Age-band inspection questions need the 선령 column, not every
+            # row that merely mentions 화물창/탱크 in a structural table.
+            if age_q:
+                if "선령" in doc:
+                    synthetic_distance -= 0.28
+                else:
+                    synthetic_distance += 0.40
             out[str(cid)] = (str(cid), synthetic_distance, meta or {}, doc)
     return list(out.values())
 
@@ -181,12 +195,26 @@ def parse_explicit_table_constraints(question: str) -> tuple[str | None, int | N
     return file_name, page_number
 
 
+TABLE_NUMBER_RE = re.compile(r"(?:표|table)\s*(\d+(?:\.\d+)+)", re.IGNORECASE)
+INSPECTION_DENSITY_NOISE = ("화물 밀도", "화물밀도", "적재상태", "균일 적재", "부분 적재")
+
+
+def _extract_table_numbers(question: str) -> list[str]:
+    return list(dict.fromkeys(m.group(1) for m in TABLE_NUMBER_RE.finditer(question or "")))
+
+
 def _score_caption(parsed: ParsedTableQuery, schema: dict, meta: dict, doc: str) -> float:
     caption = str(schema.get("caption") or meta.get("caption") or "")
     blob = f"{caption} {doc}"
-    if not caption.strip():
+    if not caption.strip() and not any(n in blob for n in _extract_table_numbers(parsed.raw_question)):
         return 0.0
     hits = sum(1 for kw in parsed.keyword_terms[:8] if kw and kw in blob)
+    # Exact "표 2.1.65" style hits dominate weak keyword overlap.
+    for num in _extract_table_numbers(parsed.raw_question):
+        if num in caption or f"표 {num}" in blob or f"표{num}" in blob or f"table {num}" in blob.lower():
+            hits += 4
+    if not caption.strip() and hits <= 0:
+        return 0.0
     return min(1.0, hits / max(1, min(4, len(parsed.keyword_terms[:8]))))
 
 
@@ -246,11 +274,22 @@ def _apply_query_type_adjustments(
     parsed: ParsedTableQuery,
     bd: TableScoreBreakdown,
     schema: dict,
+    document: str = "",
 ) -> float:
     """Boost/penalty rules for cell/column lookup ranking."""
     delta = 0.0
     topics = " ".join(schema.get("table_topics") or []).lower()
     q_topics = [t.lower() for t in parsed.table_topic_candidates]
+    blob = " ".join(
+        [
+            document or "",
+            str(schema.get("caption") or ""),
+            str(schema.get("section_title") or ""),
+            str(schema.get("_raw_snippet") or "")[:900],
+            " ".join(str(x) for x in (schema.get("row_entities") or [])),
+            " ".join(str(x) for x in (schema.get("normalized_row_entities") or [])),
+        ]
+    )
 
     if parsed.query_type in ("cell_lookup", "column_lookup") and parsed.column_entities:
         if bd.column_match < 0.15:
@@ -267,6 +306,49 @@ def _apply_query_type_adjustments(
             and bd.table_topic_match >= 0.4
         ):
             delta += SCORING_BOOST_ROW_COL_TOPIC
+
+    # Exact table-number mention ("표 2.1.65") is a hard identity signal.
+    for num in _extract_table_numbers(parsed.raw_question):
+        if (
+            num in blob
+            or f"표 {num}" in blob
+            or f"표{num}" in blob
+            or f"table {num}".lower() in blob.lower()
+        ):
+            delta += 0.55
+            break
+
+    inspection_q = any(
+        "정기검사" in t or "inspection" in t or "reporting" in t for t in q_topics
+    ) or any(
+        term in parsed.raw_question
+        for term in ("정기검사", "reporting", "검사 선정", "검사 범위", "현상검사")
+    )
+    age_q = "선령" in parsed.raw_question or any("선령" in c for c in parsed.column_entities)
+    domain_rows = [
+        r
+        for r in parsed.row_entities
+        if r
+        in {
+            "평형수탱크",
+            "화물창",
+            "화물탱크",
+            "연료유탱크",
+            "빌지저장탱크",
+            "이중저탱크",
+            "디프탱크",
+            "피크탱크",
+        }
+    ]
+    age_matrix_q = age_q and (inspection_q or bool(domain_rows))
+    if age_matrix_q:
+        subject_hits = [r for r in (domain_rows or parsed.row_entities) if r and r in blob]
+        if "선령" not in blob:
+            delta -= 0.42
+        elif subject_hits:
+            delta += 0.34
+        if any(noise in blob for noise in INSPECTION_DENSITY_NOISE) and "선령" not in blob:
+            delta -= 0.20
 
     if q_topics and topics:
         chemistry_q = any("화학" in t or "chemical" in t for t in q_topics)
@@ -289,7 +371,13 @@ def _score_rows(parsed: ParsedTableQuery, schema: dict) -> float:
     if not parsed.row_entities:
         return 0.5
     rows = schema.get("normalized_row_entities") or schema.get("row_entities") or []
-    return best_entity_overlap(parsed.row_entities, rows)
+    targets = [str(r) for r in rows]
+    raw_snippet = str(schema.get("_raw_snippet") or "")
+    if raw_snippet:
+        targets.append(raw_snippet[:800])
+    if not targets:
+        return 0.0
+    return best_entity_overlap(parsed.row_entities, targets)
 
 
 def _score_units(parsed: ParsedTableQuery, schema: dict) -> float:
@@ -367,7 +455,7 @@ def score_table_candidate(
         + _WEIGHTS["unit_match"] * bd.unit_match
         + _WEIGHTS["keyword_match"] * bd.keyword_match
         - _penalize_topic_mismatch(parsed, schema)
-        + _apply_query_type_adjustments(parsed, bd, schema)
+        + _apply_query_type_adjustments(parsed, bd, schema, document=document or "")
     )
     bd.combined_score = round(max(0.0, combined), 4)
     return bd
@@ -490,6 +578,9 @@ def route_table_candidates(
     hits.extend(literal_hits)
 
     by_table: dict[str, TableScoreBreakdown] = {}
+    age_q = "선령" in (parsed.raw_question or "") or any(
+        "선령" in c for c in parsed.column_entities
+    )
     for _cid, dist, meta, doc in hits:
         meta = meta or {}
         tid = str(meta.get("table_id") or "")
@@ -499,7 +590,10 @@ def route_table_candidates(
         if str(_cid) in literal_ids:
             # An exact row phrase inside the already constrained document is
             # stronger evidence than a dense similarity near miss.
-            bd.combined_score = round(bd.combined_score + 1.25, 4)
+            boost = 1.25
+            if age_q:
+                boost = 1.45 if "선령" in (doc or "") else 0.10
+            bd.combined_score = round(bd.combined_score + boost, 4)
         if str(meta.get("chunk_type") or "") == "table_row":
             assignment_count = len(
                 re.findall(
@@ -598,8 +692,11 @@ def route_table_candidates(
                 1.0 / (60 + bd.dense_rank) if bd.dense_rank else 0.0,
                 6,
             )
+            # UI default has table BM25 off. Dense RRF alone used to drown
+            # caption/age/literal combined_score (capped at 1.2 * 0.15).
             bd.rerank_score = round(
-                min(bd.combined_score, 1.2) * 0.15 + bd.rrf_score * 10.0,
+                float(bd.combined_score) * 2.5
+                + (bd.rrf_score * 4.0 if bd.dense_rank else 0.0),
                 4,
             )
 
