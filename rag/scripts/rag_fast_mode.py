@@ -597,6 +597,7 @@ def generate_fast_answer(
 
     if row.get("_table_qa") or str(row.get("category") or "") == "table_qa":
         from table_qa_answer import (
+            build_deterministic_table_answer,
             build_table_answer_prompts,
             select_table_evidence,
             top_table_cell_hints,
@@ -613,6 +614,28 @@ def generate_fast_answer(
         # Citation order must match prompt numbering for Evidence Table.
         row["_answer_citation_chunks"] = list(evidence)
         row.pop("_verified_structured_answer", None)
+        deterministic = build_deterministic_table_answer(
+            row, full_table_pool, debug=debug
+        )
+        if deterministic:
+            meta["answer_mode"] = "table_qa"
+            meta["answer_source"] = "table_deterministic"
+            meta["llm_skipped"] = True
+            meta["answer_generation"] = {
+                "answer_source": "table_deterministic",
+                "llm_used": False,
+                "llm_call_function": None,
+                "llm_prompt_chars": 0,
+                "llm_context_chunks": len(row.get("_answer_citation_chunks") or evidence),
+                "llm_output_chars": len(deterministic),
+                "llm_grounded_check_pass": True,
+                "fallback_reason": None,
+                "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+            }
+            row["_answer_generation"] = meta["answer_generation"]
+            if timing is not None and hasattr(timing, "mark_wall"):
+                timing.mark_wall("t_answer_complete")
+            return deterministic, meta
         system, user = build_table_answer_prompts(
             row, evidence, debug=debug, cell_hints=hints
         )

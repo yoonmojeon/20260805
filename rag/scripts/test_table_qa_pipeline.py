@@ -226,32 +226,75 @@ class TableQAPipelineTest(unittest.TestCase):
         self.assertEqual(row["_answer_citation_chunks"], [chunk])
         self.assertTrue(row.get("_verified_structured_answer"))
 
-    def test_fast_table_answer_uses_llm_like_text(self) -> None:
+    def test_opaque_column_key_remaps_for_allowance(self) -> None:
+        chunk = SimpleNamespace(
+            chunk_id="flood-1",
+            chunk_type="table_row",
+            table_id="t006",
+            text=(
+                "표: t006 문서: 13편_2025.pdf, 25쪽 영역=REG07 | "
+                "열1=침수상태 | 열2=사고에 | 열3=의한 침수로 내부 수밀구획구조에 | "
+                "열4=(빈 셀) | 열5=AC-SD"
+            ),
+            file_name="13편_2025.pdf",
+            page_number=25,
+            distance=0.4,
+        )
+        distractor = SimpleNamespace(
+            chunk_id="ballast-1",
+            chunk_type="table_row",
+            table_id="t006",
+            text=(
+                "영역=REG05 | 열1=적하, 양하 및 평형수 적재 | "
+                "열3=평형수 조작 상태에서 대표적 최대 하중 | 열4=S | 열5=AC-S"
+            ),
+            file_name="13편_2025.pdf",
+            page_number=25,
+            distance=0.45,
+        )
+        question = (
+            "13편_2025.pdf 25페이지 표에서 침수상태 / 사고에 의한 침수로 "
+            "내부 수밀구획구조에 미치는 대표적인 최대 하중 행의 허용기준은?"
+        )
+        from table_query_parser import parse_table_query
+
+        parsed = parse_table_query(question).to_dict()
+        self.assertIn("허용기준", " ".join(parsed.get("column_entities") or []))
+        row: dict = {"question": question}
+        answer = build_deterministic_table_answer(
+            row,
+            [chunk, distractor],
+            debug={
+                "parsed_query": parsed,
+                "selected_table_id": "t006",
+                "selected_table_candidates": [{"table_id": "t006"}],
+            },
+        )
+        self.assertIn("AC-SD", answer or "")
+        self.assertIn("허용기준", answer or "")
+        self.assertTrue(row.get("_verified_structured_answer"))
+
+    def test_fast_table_answer_prefers_deterministic_cell(self) -> None:
         chunk = SimpleNamespace(
             chunk_id="row-fast",
             chunk_type="table_row",
             table_id="table-fast",
             doc_id="doc-fast",
             text=(
-                "[표 행 및 셀 사실]\n행 기준: 잔류응력 측정\n"
-                "셀: 종류=잔류응력 측정 | 시험 결과에 기록되어야 하는 항목=시험재 ID 및 결과"
+                "[표 행 및 셀 사실]\n행 기준: RPV 32\n"
+                "셀: 재료기호=RPV 32, RPV 36 | 적용두께(mm)=6∼150"
             ),
-            file_name="Circular.pdf",
-            page_number=469,
-            caption="승인 시험 및 시험 결과 관련 문서",
+            file_name="2편_2025.pdf",
+            page_number=28,
+            caption="표 2.1.13 강판의 종류",
             distance=0.1,
         )
         row = normalize_table_question_row(
-            {"question": "잔류응력을 측정한 경우 시험 결과 문서에 어떤 정보를 기록해야 하는가?"}
+            {"question": "2편_2025.pdf 28페이지 표에서 RPV 32~50 행의 적용두께(mm)는?"}
         )
 
-        def fake_llm(model, system, user, *args, **kwargs):
-            self.assertIn("표 근거", user)
-            self.assertIn("시험재 ID 및 결과", user)
-            return (
-                "## 1) 핵심 요약\n\n"
-                "- 잔류응력 측정 시 시험재 ID 및 결과를 기록한다. [1]\n"
-            )
+        def fake_llm(*args, **kwargs):
+            self.fail("LLM should be skipped for deterministic table cells")
 
         with patch("rag_fast_mode.call_ollama_chat_timed", side_effect=fake_llm), patch(
             "rag_fast_mode.ensure_fast_warm_checked", return_value={}
@@ -265,9 +308,10 @@ class TableQAPipelineTest(unittest.TestCase):
                 auto_llm_warm=False,
                 fast_meta={"fast_question_type": "table_qa"},
             )
-        self.assertIn("시험재 ID", answer)
-        self.assertEqual(meta.get("answer_source"), "table_llm")
-        self.assertTrue((meta.get("answer_generation") or {}).get("llm_used"))
+        self.assertIn("6∼150", answer)
+        self.assertEqual(meta.get("answer_source"), "table_deterministic")
+        self.assertFalse((meta.get("answer_generation") or {}).get("llm_used"))
+        self.assertTrue(row.get("_verified_structured_answer"))
 
     def test_comparison_requires_both_gold_cells(self) -> None:
         def chunk(row: str, answer: str):

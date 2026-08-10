@@ -26,6 +26,13 @@ Always state the time reference explicitly:
 - MRV Voyage Report → generate_mrv_voyage_report
 - MRV Annual Report → generate_mrv_annual_report
 
+[VOYAGE ARGS]
+- voyage_id에는 오직 실제 ID만 넣는다 (예: H2521_V20_Laden).
+- Laden/Ballast/이전/현재 같은 말은 voyage_id에 넣지 말고 period로 보낸다.
+- "이전 항차" 또는 "이전 항차(Laden)" → get_voyage_analysis(period="previous") (voyage_id 비움).
+- "현재 항차" → period="current".
+- "올해/YTD" → period="ytd".
+
 [YEAR]
 - 데이터 기준 "올해/현재 연도"는 시스템 시계가 아니라 {today[:4]} (오늘={today}) 이다.
 - calculate_cii_rating / generate_mrv_annual_report 호출 시 year는 정수로 넘긴다 (문자열 "2026" 금지).

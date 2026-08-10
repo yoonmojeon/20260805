@@ -19,12 +19,14 @@ class RetrievalMode(str, Enum):
 
 # Minimal keyword backup (not the main decision path)
 _TABLE_CUE_PATTERNS = [
-    r"표\s*(에서|에|의|기준|내용|알려|정리|요약)?",
+    r"표\s*(에서|에|의|기준|내용|알려|정리|요약|제목)?",
     r"표에\s*(나온|있는|관련)",
+    r"구조화\s*표|표\s*제목|caption",
     r"검사\s*주기|검사주기|선령별|선령\s*\d+",
-    r"평형수\s*탱크|밸러스트\s*탱크|개방검사|두께계측",
+    r"평형수\s*탱크|밸러스트\s*탱크|개방검사|두께계측|reporting",
     r"(?:intermediate|annual|special|docking)\s*survey|survey\s*interval",
     r"열\s*\d+|row\s*\d+|cell",
+    r"\d+\s*편[_\s]?\d{4}\.pdf|\.pdf.{0,20}\d+\s*페이지",
 ]
 
 _TEXT_PROSE_PATTERNS = [
@@ -36,6 +38,12 @@ _TEXT_PROSE_PATTERNS = [
     r"근거\s*조항|조항\s*설명|circular|resolution",
     r"MEPC|MSC|MASS\s*Code|GHG\s*Strategy",
 ]
+
+_EXPLICIT_FILE_PAGE_RE = re.compile(
+    r"[^\s]+\.pdf|페이지\s*\d+|\d+\s*(?:페이지|쪽)",
+    re.IGNORECASE,
+)
+_CAPTION_ASK_RE = re.compile(r"표\s*제목|구조화\s*표|caption|제목은", re.IGNORECASE)
 
 _BOTH_BRIDGE_PATTERNS = [
     r"취지.{0,24}(선령|검사\s*범위|주기|표)",
@@ -174,6 +182,15 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     if not q:
         return RetrievalMode.TEXT
 
+    # Explicit PDF + page (or caption ask) → stay on table index; do not dilute with BOTH.
+    if _EXPLICIT_FILE_PAGE_RE.search(q) and (
+        _CAPTION_ASK_RE.search(q)
+        or re.search(r"표|행|열|적용두께|허용기준|값", q)
+    ):
+        return RetrievalMode.TABLE
+    if _CAPTION_ASK_RE.search(q) and re.search(r"\.pdf|표\s*\d+", q, re.I):
+        return RetrievalMode.TABLE
+
     table_score, _detail = table_shape_score(q)
     prose_score = prose_shape_score(q)
     bridge = _hit(_BOTH_BRIDGE_PATTERNS, q)
@@ -181,6 +198,23 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     strong_table = table_score >= 0.55
     weak_table = 0.25 <= table_score < 0.55
     strong_prose = prose_score >= 0.55
+    table_cues = _hit(_TABLE_CUE_PATTERNS, q)
+    explicit_file_page = bool(_EXPLICIT_FILE_PAGE_RE.search(q))
+
+    # Pure definition/glossary prose without table cues stays TEXT.
+    if strong_prose and not strong_table and not weak_table and not table_cues:
+        return RetrievalMode.TEXT
+
+    # Meeting/decision prose: ignore weak parser row-slots from topic particles
+    # ("MSC 111에서 … 결정은?") unless the question also has table framing.
+    if (
+        strong_prose
+        and weak_table
+        and not strong_table
+        and not table_cues
+        and not explicit_file_page
+    ):
+        return RetrievalMode.TEXT
 
     if bridge or (strong_table and strong_prose):
         return RetrievalMode.BOTH

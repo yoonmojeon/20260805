@@ -2570,6 +2570,7 @@ def generate_answer(
         return "", provider, model
     if row.get("_table_qa") or answer_mode == "table_qa":
         from table_qa_answer import (
+            build_deterministic_table_answer,
             build_table_answer_prompts,
             select_table_evidence,
             top_table_cell_hints,
@@ -2588,6 +2589,18 @@ def generate_answer(
         hints = top_table_cell_hints(row, full_table_pool, debug=debug)
         row["_answer_citation_chunks"] = list(evidence)
         row.pop("_verified_structured_answer", None)
+        deterministic = build_deterministic_table_answer(
+            row, full_table_pool, debug=debug
+        )
+        if deterministic:
+            row["_answer_generation"] = {
+                "answer_source": "table_deterministic",
+                "llm_used": False,
+                "llm_context_chunks": len(row.get("_answer_citation_chunks") or evidence),
+                "llm_output_chars": len(deterministic),
+                "cell_hints": [f"{k}={v}" for k, v in hints[:5]],
+            }
+            return deterministic, "table_deterministic", "none"
         system, user = build_table_answer_prompts(
             row, evidence, debug=debug, cell_hints=hints
         )

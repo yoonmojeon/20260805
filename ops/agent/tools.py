@@ -3,6 +3,7 @@ Maritime Ops Agent - Tool 정의
 LLM이 호출하는 7개 도구 + 지도 렌더링
 """
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -16,6 +17,61 @@ from agent.reports import (
     generate_mrv_voyage_docx,
     generate_mrv_annual_docx,
 )
+
+# Real voyage ids look like H2521_V21_Ballast — never treat Laden/이전 as an id.
+_VOYAGE_ID_RE = re.compile(r"^[A-Za-z0-9]+_V\d+", re.IGNORECASE)
+_CONDITION_RE = re.compile(r"\b(Laden|Ballast)\b", re.IGNORECASE)
+_PREV_RE = re.compile(r"이전|직전|previous", re.IGNORECASE)
+_CUR_RE = re.compile(r"현재|이번|current", re.IGNORECASE)
+_YTD_RE = re.compile(r"올해|연간|YTD|누계", re.IGNORECASE)
+
+
+def resolve_voyage_query(
+    voyage_id: str = "",
+    period: str = "current",
+) -> tuple[str, str, str]:
+    """Normalize LLM tool args into (voyage_id, period, condition).
+
+    Prevents false ``항차 데이터 없음`` when the model stuffs Laden/이전 into voyage_id.
+    """
+    raw_id = str(voyage_id or "").strip()
+    period = str(period or "current").strip().lower() or "current"
+    condition = ""
+
+    blob = raw_id
+    cond_m = _CONDITION_RE.search(blob)
+    if cond_m:
+        token = cond_m.group(1)
+        condition = "Laden" if token.lower() == "laden" else "Ballast"
+
+    if raw_id and _VOYAGE_ID_RE.match(raw_id):
+        return raw_id, period, condition
+
+    # Non-id tokens: derive period/condition, clear voyage_id.
+    if _PREV_RE.search(blob) or period in {"prev", "previous"}:
+        period = "previous"
+    elif _YTD_RE.search(blob) or period == "ytd":
+        period = "ytd"
+    elif _CUR_RE.search(blob):
+        period = "current"
+    elif condition:
+        # Bare Laden/Ballast (or "Laden 항차") → previous matching leg, not current.
+        period = "previous"
+
+    return "", period, condition
+
+
+def _pick_voyage(voyage_id: str = "", period: str = "current") -> dict:
+    store = get_store()
+    vid, period, condition = resolve_voyage_query(voyage_id, period)
+    if vid:
+        hit = store.get_voyage(vid)
+        if hit:
+            return hit
+        # Soft-fail: malformed id with condition/period still recoverable.
+    if period == "ytd":
+        return {}
+    return store.find_voyage(period=period, condition=condition)
 
 
 # ── CII 계산 헬퍼 ─────────────────────────────────────────────────────────────
@@ -160,12 +216,9 @@ def get_current_voyage_status() -> dict:
 def get_voyage_analysis(voyage_id: str = "", period: str = "current") -> dict:
     """특정 항차 또는 현재/이전/올해 기간의 운항 KPI 집계"""
     store = get_store()
+    vid, period, _condition = resolve_voyage_query(voyage_id, period)
 
-    if voyage_id:
-        voyage = store.get_voyage(voyage_id)
-    elif period == "previous":
-        voyage = store.previous_voyage()
-    elif period == "ytd":
+    if period == "ytd" and not vid:
         year = int(CURRENT_DATE[:4])
         ytd  = store.ytd_summary(year)
         return {
@@ -173,9 +226,8 @@ def get_voyage_analysis(voyage_id: str = "", period: str = "current") -> dict:
             "summary":  ytd,
             "cii":      _annual_cii_result(year, scope="annual"),
         }
-    else:
-        voyage = store.current_voyage()
 
+    voyage = _pick_voyage(voyage_id=voyage_id, period=period)
     if not voyage:
         return {"error": "항차 데이터 없음"}
 
@@ -243,10 +295,9 @@ def calculate_cii_rating(year: int | None = None) -> dict:
 def calculate_emissions(voyage_id: str = "", period: str = "current") -> dict:
     """항차 또는 기간별 배출량 (센서 실측 CO2/CH4/CO2e)"""
     store = get_store()
+    vid, period, _condition = resolve_voyage_query(voyage_id, period)
 
-    if voyage_id:
-        voyage = store.get_voyage(voyage_id)
-    elif period == "ytd":
+    if period == "ytd" and not vid:
         year = int(CURRENT_DATE[:4])
         ytd  = store.ytd_summary(year)
         return {
@@ -258,11 +309,8 @@ def calculate_emissions(voyage_id: str = "", period: str = "current") -> dict:
             "fgc_gas_mt":     ytd.get("total_fgc_gas_mt", 0),
             "data_source":    "sensor (ME+GE+AB+GCU)",
         }
-    elif period == "previous":
-        voyage = store.previous_voyage()
-    else:
-        voyage = store.current_voyage()
 
+    voyage = _pick_voyage(voyage_id=voyage_id, period=period)
     if not voyage:
         return {"error": "데이터 없음"}
 
@@ -524,7 +572,22 @@ def dispatch_tool(fn_name: str, fn_args: dict) -> str:
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {fn_name}"})
     try:
-        result = fn(**fn_args)
+        args = dict(fn_args or {})
+        # Coerce period only. Keep original voyage_id string so tools can
+        # re-parse Laden/이전 phrases (clearing id here dropped condition).
+        if fn_name in {
+            "get_voyage_analysis",
+            "calculate_emissions",
+            "generate_mrv_voyage_report",
+        }:
+            _vid, period, _cond = resolve_voyage_query(
+                str(args.get("voyage_id") or ""),
+                str(args.get("period") or "current"),
+            )
+            args["period"] = period
+            if _vid:
+                args["voyage_id"] = _vid
+        result = fn(**args)
         return json.dumps(result, ensure_ascii=False, default=str)
     except Exception as e:
         return json.dumps({"error": str(e)})

@@ -63,6 +63,12 @@ RAG_PATTERNS: list[tuple[str, float]] = [
     (r"문서|PDF|회의록|circular|resolution|WP\.?\d", 1.5),
     (r"자율운항|대체연료.{0,12}안전|환경규제\s*대응|최신\s*동향", 2.0),
     (r"규칙\s*(이|은|뭐|어디)|뭐라고\s*(돼|되어)|요건이\s*뭐|기준이\s*뭐", 1.8),
+    # Term/definition lookups belong in documents, not chat clarify.
+    (
+        r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어\s*(?:정의|설명)|"
+        r"substantial\s*corrosion|과도한\s*부식",
+        2.2,
+    ),
     (r"이사회|총회|워킹그룹|작년에\s*.*회의", 1.5),
 ]
 
@@ -134,7 +140,11 @@ TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
     r"표\s*\d+|N\s*/?\s*mm|\d+\s*m\s*(?:미만|이상|이하)|미만일\s*때|"
     r"검사\s*(범위|선정|요건|주기)|두께계측|개방검사|"
     r"yield|tensile|corrosion\s*addition|min(?:imum)?\s*thickness|"
-    r"ship\s*length|ballast\s*tank|cargo\s*(?:hold|tank)",
+    r"ship\s*length|ballast\s*tank|cargo\s*(?:hold|tank)|"
+    # Definition / glossary shapes (class-rule terms, not ship ops).
+    r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어|"
+    r"substantial\s*corrosion|과도한\s*부식|허용\s*부식|부식\s*여유|"
+    r"glossary|what\s+is\s+(?:substantial\s+)?corrosion",
     flags=re.IGNORECASE,
 )
 # Soft ops shape: live ship ops without needing strong keyword hit.
@@ -148,7 +158,8 @@ DOC_FRAME_PATTERN = re.compile(
     r"문서에서|PDF|circular|MARPOL|SOLAS|resolution|워킹그룹|이사회|총회|"
     rf"{_AC}(?:IMO|GHG|KR){_AZ}|대체연료|원격\s*검사|survey|표에|표\s*에서|"
     r"최소\s*두께|판두께|선박\s*길이|부식추가|화학성분|재료기호|용접강|"
-    r"정기검사|화물창|화물탱크|reporting",
+    r"정기검사|화물창|화물탱크|reporting|"
+    r"(?:의\s*)?정의|substantial\s*corrosion|과도한\s*부식|용어",
     flags=re.IGNORECASE,
 )
 SHIP_FRAME_PATTERN = re.compile(

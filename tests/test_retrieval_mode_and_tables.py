@@ -15,7 +15,7 @@ from services.table_render import parse_row_cells, rows_to_markdown, strip_embed
 
 
 def test_retrieval_mode_text_meeting():
-    mode = classify_retrieval_mode("MSC 111 주요 결과 알려줘")
+    mode = classify_retrieval_mode("MSC 111에서 MASS Code 관련 핵심 결정은?")
     assert mode == RetrievalMode.TEXT
 
 
@@ -53,6 +53,16 @@ def test_retrieval_mode_parser_scores_exposed():
     )
     assert score >= 0.55
     assert detail.get("numeric_range") is True or detail.get("parser")
+
+
+def test_retrieval_mode_file_page_forces_table():
+    mode = classify_retrieval_mode("2편_2025.pdf 10페이지 구조화 표 제목은?")
+    assert mode == RetrievalMode.TABLE
+
+
+def test_retrieval_mode_definition_stays_text():
+    mode = classify_retrieval_mode("과도한 부식(substantial corrosion)의 정의는?")
+    assert mode == RetrievalMode.TEXT
 
 
 def test_table_rows_ordered_and_columns_preserved():

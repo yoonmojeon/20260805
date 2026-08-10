@@ -110,6 +110,13 @@ def build_table_context(evidence: list[Any]) -> str:
     return "\n\n".join(blocks)
 
 
+_META_KEY_RE = re.compile(
+    r"(표\s*:|문서\s*:|영역|table_id|chunk|file=|page=)",
+    re.I,
+)
+_ALLOWANCE_CODE_RE = re.compile(r"^[A-Z]{1,3}-[A-Z0-9]{1,4}$", re.I)
+
+
 def _cell_assignments(text: str) -> dict[str, str]:
     for line in str(text or "").splitlines():
         stripped = line.strip()
@@ -127,6 +134,8 @@ def _cell_assignments(text: str) -> dict[str, str]:
             key, value = key.strip(), value.strip()
             if not key or not value or value == "(빈 셀)":
                 continue
+            if _META_KEY_RE.search(key) or _is_opaque_table_key(value):
+                continue
             # "열2=개방검사 시기: 정기검사 시" → prefer human label after 열N=
             if key.startswith("열") and ":" in value:
                 label, cell = value.split(":", 1)
@@ -136,6 +145,26 @@ def _cell_assignments(text: str) -> dict[str, str]:
         if out:
             return out
     return {}
+
+
+def _display_cell_key(
+    key: str,
+    *,
+    column_entities: list[str] | None = None,
+    attribute_candidates: list[str] | None = None,
+    question: str = "",
+) -> str:
+    """Map opaque 열N keys to a human label from the question slots."""
+    if key and not _is_opaque_table_key(key):
+        return key.strip()
+    for candidate in list(column_entities or []) + list(attribute_candidates or []):
+        text = str(candidate).strip()
+        if text and not _is_opaque_table_key(text):
+            return text
+    for hint in ("허용기준", "적용두께", "판정기준", "기준"):
+        if hint in (question or ""):
+            return hint
+    return "표 셀"
 
 
 def _char_similarity(left: str, right: str) -> float:
@@ -254,11 +283,23 @@ def _rank_structured_cells(
                 semantic_key_bonus += 1.1
             if "항해범위" in key and "운항거리" in question:
                 semantic_key_bonus += 1.1
+            if any(term in question for term in ("허용기준", "판정기준", "기준은")):
+                if _ALLOWANCE_CODE_RE.match(str(value).strip()):
+                    semantic_key_bonus += 1.6
+                if "허용" in key_norm or "기준" in key_norm:
+                    semantic_key_bonus += 1.0
+                # Criterion columns usually sit at the right edge of the row.
+                semantic_key_bonus += min(0.9, position * 0.18)
             structural_penalty = 0.0
             if "비고" in key_norm:
                 structural_penalty += 1.1
             if "세부항목" in key_norm or key_norm.startswith("열"):
-                structural_penalty += 0.65
+                # Opaque 열N is still usable when the value is the asked criterion.
+                if not (
+                    any(term in question for term in ("허용기준", "판정기준", "기준은"))
+                    and _ALLOWANCE_CODE_RE.match(str(value).strip())
+                ):
+                    structural_penalty += 0.65
             if "수식기호" in key and not any(term in question for term in ("기호", "산정식", "공식")):
                 structural_penalty += 0.25
             score = (
@@ -296,14 +337,56 @@ def build_deterministic_table_answer(
     query_type = str(parsed.get("query_type") or "")
     row_entities = [str(v) for v in parsed.get("row_entities") or [] if str(v).strip()]
     column_entities = [str(v) for v in parsed.get("column_entities") or [] if str(v).strip()]
+    attribute_candidates = [
+        str(v) for v in parsed.get("attribute_candidates") or column_entities if str(v).strip()
+    ]
     if query_type not in {"cell_lookup", "row_lookup", "column_lookup", "condition_lookup"}:
         return None
     candidates = _rank_structured_cells(row, evidence, debug=debug_data)
     if not candidates:
         return None
-    _score, chunk, selected_key, value = candidates[0]
-    if _is_opaque_table_key(selected_key) or _is_opaque_table_key(value):
+    selected = None
+    question = str(row.get("question") or "")
+    for _score, chunk, selected_key, value in candidates:
+        if _score < 3.5:
+            continue
+        if _is_opaque_table_key(value):
+            continue
+        # Opaque 열N keys are remapped from question slots; keep concrete values.
+        if _is_opaque_table_key(selected_key) and not (
+            column_entities
+            or attribute_candidates
+            or any(
+                term in question
+                for term in ("허용기준", "판정기준", "적용두께", "기준은")
+            )
+        ):
+            continue
+        key_anchor = max(
+            (
+                _char_similarity(selected_key, entity)
+                for entity in column_entities + attribute_candidates
+            ),
+            default=0.0,
+        )
+        key_in_question = _char_similarity(selected_key, question)
+        allowance_ok = any(
+            term in question for term in ("허용기준", "판정기준", "기준은")
+        ) and bool(_ALLOWANCE_CODE_RE.match(str(value).strip()))
+        # Require the chosen key to be about the asked attribute — blocks
+        # unrelated top-ranked noise like "단위 → m" on reporting questions.
+        if not allowance_ok and not _is_opaque_table_key(selected_key):
+            if key_anchor < 0.35 and key_in_question < 0.2:
+                if not any(
+                    _norm(entity) and _norm(entity) in _norm(selected_key)
+                    for entity in column_entities + attribute_candidates
+                ):
+                    continue
+        selected = (_score, chunk, selected_key, value)
+        break
+    if selected is None:
         return None
+    _score, chunk, selected_key, value = selected
     citation_chunks = [chunk]
     seen_chunks = {
         str(getattr(chunk, "chunk_id", "") or "")
@@ -312,7 +395,9 @@ def build_deterministic_table_answer(
     for _other_score, other, other_key, other_value in candidates[1:]:
         if _norm(other_value) != _norm(value):
             continue
-        if _char_similarity(other_key, selected_key) < 0.45:
+        if _char_similarity(other_key, selected_key) < 0.45 and not (
+            _is_opaque_table_key(selected_key) or _is_opaque_table_key(other_key)
+        ):
             continue
         identity = str(getattr(other, "chunk_id", "") or "") or (
             f"{getattr(other, 'file_name', '')}:{getattr(other, 'page_number', '')}"
@@ -328,7 +413,12 @@ def build_deterministic_table_answer(
     citations = "".join(f"[{i}]" for i in range(1, len(citation_chunks) + 1))
     # Emit a cited bullet under section 1 so answer_contract cannot mis-read
     # "결론: …" as an empty section heading and wipe the cell value.
-    label = selected_key.strip() if selected_key and not str(selected_key).startswith("열") else "표 셀"
+    label = _display_cell_key(
+        selected_key,
+        column_entities=column_entities,
+        attribute_candidates=attribute_candidates,
+        question=str(row.get("question") or ""),
+    )
     return (
         "## 1) 핵심 요약\n\n"
         f"- 결론: {label} → {display_value} {citations}"
@@ -389,13 +479,27 @@ def top_table_cell_hints(
     limit: int = 5,
 ) -> list[tuple[str, str]]:
     """Ranked cell key/value pairs for LLM hints (not final answers)."""
+    parsed = (debug or {}).get("parsed_query") or {}
+    column_entities = [str(v) for v in parsed.get("column_entities") or [] if str(v).strip()]
+    attribute_candidates = [
+        str(v) for v in parsed.get("attribute_candidates") or column_entities if str(v).strip()
+    ]
+    question = str(row.get("question") or "")
     candidates = _rank_structured_cells(row, evidence, debug=debug)
     out: list[tuple[str, str]] = []
     for _score, _chunk, key, value in candidates:
-        if _is_opaque_table_key(key) or _is_opaque_table_key(value):
+        if _is_opaque_table_key(value):
+            continue
+        label = _display_cell_key(
+            key,
+            column_entities=column_entities,
+            attribute_candidates=attribute_candidates,
+            question=question,
+        )
+        if _is_opaque_table_key(label):
             continue
         display = "별도 요건 없음 (-)" if value == "-" else value
-        item = (key.strip(), display)
+        item = (label.strip(), display)
         if item not in out:
             out.append(item)
         if len(out) >= limit:

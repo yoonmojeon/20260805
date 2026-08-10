@@ -55,7 +55,14 @@ CONDITION_TERMS = ("선령", "두께", "조건", "구간", "년", "mm", "이상"
 SUMMARY_TERMS = ("구조", "설명", "주요", "개요", "매트릭스")
 QUOTED_RE = re.compile(r"['‘“]([^'’”]{1,240})['’”]")
 ASCII_ALIAS_RE_TEMPLATE = r"(?<![0-9A-Za-z]){}(?![0-9A-Za-z])"
-MAIN_TOPIC_PARTICLE_RE = re.compile(r"^(.{2,220})(?:에는|에서는|은|는)\s+")
+MAIN_TOPIC_PARTICLE_RE = re.compile(
+    r"^(.{2,220})(?:에는|에서는|은|는)(?:\s+|[?？.!…]|$)"
+)
+# "…행의 허용기준은?" / "…행의 적용두께(mm)는?" — common explicit cell slots.
+ROW_OF_ATTRIBUTE_RE = re.compile(
+    r"(.+?)\s*행의\s+([0-9A-Za-z가-힣·/()%~∼\- ]{2,50}?)"
+    r"(?:은|는|이|가|을|를|와|과)?\s*[?？.!…]?\s*$"
+)
 TECHNICAL_SERIES_RE = re.compile(
     r"\b[A-Z]{1,8}(?:[- ]?\d+[A-Z]?)?(?:\s*[·,/]\s*[A-Z0-9-]{1,10})+"
 )
@@ -63,12 +70,16 @@ QUESTION_FILLERS = {
     "무엇인가", "어떤", "어느", "얼마인가", "몇", "필요한가", "요구되는가",
     "적용하는가", "평가하는가", "의미하는가", "사용해야", "표시해야", "있는가",
 }
+# Possessive tails that are glossary/prose asks, not table column headers.
+NON_COLUMN_ATTRIBUTES = {
+    "정의", "의미", "취지", "목적", "개요", "설명", "내용", "배경", "요지",
+}
 ATTRIBUTE_TERMS = (
     "평가 방법", "구조평가 방법", "적용 규정", "설계하중 시나리오", "자동 작동",
     "안전사용하중", "설치비율", "허용응력", "허용 차이", "허용 바깥지름",
-    "강종", "등급", "시험전압", "시험압력", "시험재의 수", "분류번호",
-    "보호등급", "회전속도", "절단하중", "판정기준", "설계온도", "공칭 두께",
-    "시험규격", "표시 장소", "동력 빌지펌프", "운항거리 제한",
+    "허용기준", "적용두께", "강종", "등급", "시험전압", "시험압력", "시험재의 수",
+    "분류번호", "보호등급", "회전속도", "절단하중", "판정기준", "설계온도",
+    "공칭 두께", "시험규격", "표시 장소", "동력 빌지펌프", "운항거리 제한",
 )
 
 
@@ -145,6 +156,21 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
     cols: list[str] = []
     q = question.rstrip(" ?.!")
 
+    row_of_attr = ROW_OF_ATTRIBUTE_RE.search(q)
+    if row_of_attr:
+        row_phrase = normalize_token(row_of_attr.group(1)).strip(" ,/")
+        col_phrase = normalize_token(row_of_attr.group(2)).strip(" ,")
+        # Drop leading file/page anchors from the row subject.
+        row_phrase = re.sub(
+            r"^[0-9A-Za-z가-힣_.\-]+\.pdf\s+\d+\s*페이지\s*표에서\s*",
+            "",
+            row_phrase,
+        ).strip(" ,/")
+        if 2 <= len(row_phrase) <= 180:
+            rows.append(row_phrase)
+        if 2 <= len(col_phrase) <= 80 and col_phrase not in NON_COLUMN_ATTRIBUTES:
+            cols.append(col_phrase)
+
     # The last topic-marked noun phrase is usually the lookup subject.  If it
     # contains a possessive construction, the part after the final '의' is
     # normally the requested attribute and the left side is the row subject.
@@ -153,10 +179,15 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
         subject = normalize_token(matches[-1].group(1)).strip(" ,")
         if "의 " in subject:
             left, right = subject.rsplit("의 ", 1)
-            if len(left.strip()) >= 2:
-                rows.append(left.strip())
-            if 2 <= len(right.strip()) <= 80:
-                cols.append(right.strip())
+            right = right.strip()
+            if right in NON_COLUMN_ATTRIBUTES:
+                # "…의 정의/의미" is glossary prose, not a table subject/column.
+                pass
+            else:
+                if len(left.strip()) >= 2:
+                    rows.append(left.strip())
+                if 2 <= len(right) <= 80:
+                    cols.append(right)
         elif 2 <= len(subject) <= 180:
             rows.append(subject)
 
@@ -166,7 +197,7 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
 
     # Attribute wording that commonly appears verbatim in table headers.
     attribute_patterns = (
-        r"([0-9A-Za-z가-힣·/()\- ]{2,70}?(?:등급|강종|압력|온도|각도|질량|두께|지름|속도|거리|설치비율|분류번호|보호등급|시험전압|판정기준|설계하중 시나리오))\s*(?:은|는|이|가|을|를)?\s*(?:몇|무엇|어느|어떤|얼마)",
+        r"([0-9A-Za-z가-힣·/()\- ]{2,70}?(?:등급|강종|압력|온도|각도|질량|두께|지름|속도|거리|설치비율|분류번호|보호등급|시험전압|판정기준|허용기준|설계하중 시나리오))\s*(?:은|는|이|가|을|를)?\s*(?:몇|무엇|어느|어떤|얼마|$)",
         r"어떤\s+([0-9A-Za-z가-힣·/()\- ]{2,35}?방법)으로",
         r"어느\s+([0-9A-Za-z가-힣·/()\- ]{1,25}?(?:장|규정|위치))",
     )

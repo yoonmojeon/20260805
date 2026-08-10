@@ -68,6 +68,20 @@ def test_rag_corrosion_tcorr():
     assert d.route == "rag"
 
 
+def test_rag_definition_substantial_corrosion():
+    d = route_question(
+        "과도한 부식(substantial corrosion)의 정의는?",
+        use_llm_fallback=False,
+    )
+    assert d.route == "rag"
+    assert d.rag_score > 0
+
+
+def test_rag_definition_shape_without_society():
+    d = route_question("허용 부식여유의 정의는 무엇인가?", use_llm_fallback=False)
+    assert d.route == "rag"
+
+
 def test_rag_table_number_chemical():
     d = route_question("표 2.1.65 종류 및 화학성분 표의 주요 열 구성은?", use_llm_fallback=False)
     assert d.route == "rag"

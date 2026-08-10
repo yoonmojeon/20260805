@@ -74,6 +74,44 @@ class DataStore:
         """).fetchone()
         return dict(row) if row else {}
 
+    def find_voyage(
+        self,
+        *,
+        period: str = "current",
+        condition: str = "",
+    ) -> dict:
+        """Resolve current/previous/ytd-style voyage with optional Laden/Ballast filter."""
+        period = (period or "current").strip().lower()
+        cond = (condition or "").strip()
+        cond_l = cond.lower()
+        rows = self.conn.execute(
+            "SELECT * FROM voyages ORDER BY end_time DESC"
+        ).fetchall()
+        voyages = [dict(r) for r in rows]
+        if not voyages:
+            return {}
+
+        def _cond_ok(v: dict) -> bool:
+            if not cond_l:
+                return True
+            raw = str(v.get("condition") or v.get("loading_status") or "").lower()
+            vid = str(v.get("voyage_id") or "").lower()
+            return cond_l in raw or cond_l in vid
+
+        if period in {"current", ""}:
+            for v in voyages:
+                if _cond_ok(v):
+                    return v
+            return voyages[0]
+        if period == "previous":
+            # Skip the newest voyage (current), then match condition.
+            for v in voyages[1:]:
+                if _cond_ok(v):
+                    return v
+            return voyages[1] if len(voyages) > 1 else {}
+        # ytd is not a single voyage — caller handles separately
+        return voyages[0] if _cond_ok(voyages[0]) else {}
+
     def get_voyage(self, voyage_id: str) -> dict:
         row = self.conn.execute(
             "SELECT * FROM voyages WHERE voyage_id = ?", (voyage_id,)

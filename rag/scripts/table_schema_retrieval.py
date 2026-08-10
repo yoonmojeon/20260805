@@ -187,12 +187,20 @@ def parse_explicit_table_constraints(question: str) -> tuple[str | None, int | N
     file_match = PDF_FILE_AT_START_RE.search(question or "") or PDF_FILE_TOKEN_RE.search(question or "")
     page_match = PAGE_HINT_RE.search(question or "")
     file_name = file_match.group(1).strip("'\"“”()[]") if file_match else None
+    if file_name:
+        # Normalize path-ish tokens to basename so Chroma file_name matches.
+        file_name = file_name.replace("\\", "/").split("/")[-1].strip()
     page_number = None
     if page_match:
         raw = page_match.group(1) or page_match.group(2)
         if raw:
             page_number = int(raw)
     return file_name, page_number
+
+
+def normalize_file_name_for_match(name: str) -> str:
+    n = (name or "").replace("\\", "/").split("/")[-1].strip().lower()
+    return n
 
 
 TABLE_NUMBER_RE = re.compile(r"(?:표|table)\s*(\d+(?:\.\d+)+)", re.IGNORECASE)
@@ -324,6 +332,20 @@ def _apply_query_type_adjustments(
         term in parsed.raw_question
         for term in ("정기검사", "reporting", "검사 선정", "검사 범위", "현상검사")
     )
+    reporting_q = bool(
+        re.search(r"reporting|보고\s*대상|보고\s*요건|검사\s*보고", parsed.raw_question, re.I)
+    ) or any("reporting" in t for t in q_topics)
+    thickness_survey_blob = bool(
+        re.search(r"두께계측|두께\s*계측|thickness\s*measurement", blob, re.I)
+    )
+    reporting_blob = bool(
+        re.search(r"reporting|보고|제1차\s*정기검사\s*=", blob, re.I)
+    ) or ("○" in blob and "정기검사" in blob)
+    # Reporting-matrix questions must not latch onto thickness-survey tables.
+    if reporting_q and thickness_survey_blob and not reporting_blob:
+        delta -= 0.55
+    if reporting_q and reporting_blob and not thickness_survey_blob:
+        delta += 0.28
     age_q = "선령" in parsed.raw_question or any("선령" in c for c in parsed.column_entities)
     domain_rows = [
         r
