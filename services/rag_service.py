@@ -416,7 +416,11 @@ def _run_single_rag(
     *,
     latency_mode: str,
     mode: RetrievalMode,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
+    from services.llm_models import normalize_llm_model
+
+    model = normalize_llm_model(llm_model)
     want_table = mode == RetrievalMode.TABLE
     use_table_index = want_table and rag_index_ready(DEFAULT_TABLE_COLLECTION)
     target = DEFAULT_TABLE_COLLECTION if use_table_index else DEFAULT_RAG_COLLECTION
@@ -457,6 +461,7 @@ def _run_single_rag(
             embed_model=embed_model,
             manifest=manifest,
             auto_llm_warm=True,
+            llm_model=model,
         )
         answer = _extract_answer(out) or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
         files: list[str] = []
@@ -505,6 +510,7 @@ def _run_single_rag(
                 "answer_mode": out.get("answer_mode")
                 or (out.get("search_out") or {}).get("answer_mode"),
                 "timing_metrics": (out.get("timing_metrics") or {}),
+                "llm_model": model,
             },
             "raw": {k: out[k] for k in out if k not in {"raw", "timing_log"}},
         }
@@ -571,8 +577,12 @@ def _run_both_fused(
     *,
     latency_mode: str,
     prefer: str = "balanced",
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     """Search text + table in parallel, fuse evidence, answer once."""
+    from services.llm_models import normalize_llm_model
+
+    model = normalize_llm_model(llm_model)
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut_table = pool.submit(
             _run_search_only, question, latency_mode=latency_mode, table_side=True
@@ -634,6 +644,7 @@ def _run_both_fused(
             question_category=("table_qa" if use_table_answer else row.get("category")),
             latency_mode=latency_mode,
             auto_llm_warm=True,
+            llm_model=model,
         )
         answer = _extract_answer(answer_out) or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
         _related_md, images, related_tables = _related_tables_from_hits(
@@ -673,6 +684,7 @@ def _run_both_fused(
                     "text_search": text_hit.get("timing_metrics") or {},
                     "answer": (answer_out.get("timing_metrics") or {}),
                 },
+                "llm_model": model,
             },
             "raw": {"answer_out": answer_out, "table_search": table_hit.get("search_out")},
         }
@@ -711,6 +723,7 @@ def run_rag_query(
     table_qa: bool | None = None,
     dual: bool | None = None,
     retrieval_mode: RetrievalMode | str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     """Run MaritimeRAG in-process against the shared data/ tree.
 
@@ -718,6 +731,9 @@ def run_rag_query(
     Legacy: table_qa=True → TABLE (or BOTH when dual env forces).
     BOTH fusion default: ON (MARITIME_RAG_DUAL defaults to "1").
     """
+    from services.llm_models import normalize_llm_model
+
+    model = normalize_llm_model(llm_model)
     mode = _resolve_mode(question, retrieval_mode=retrieval_mode, table_qa=table_qa)
     both_ready = rag_index_ready(DEFAULT_RAG_COLLECTION) and rag_index_ready(
         DEFAULT_TABLE_COLLECTION
@@ -725,17 +741,23 @@ def run_rag_query(
     dual_on = dual_retrieval_enabled(dual)
 
     if mode == RetrievalMode.BOTH and both_ready and dual_on:
-        return _run_both_fused(question, latency_mode=latency_mode, prefer="balanced")
+        return _run_both_fused(
+            question, latency_mode=latency_mode, prefer="balanced", llm_model=model
+        )
     if mode == RetrievalMode.TABLE and both_ready and dual is True:
         # Explicit dual=True even for TABLE → still fuse, table-primary
-        return _run_both_fused(question, latency_mode=latency_mode, prefer="table_primary")
+        return _run_both_fused(
+            question, latency_mode=latency_mode, prefer="table_primary", llm_model=model
+        )
     if mode == RetrievalMode.BOTH and not both_ready:
         fallback = (
             RetrievalMode.TABLE
             if rag_index_ready(DEFAULT_TABLE_COLLECTION)
             else RetrievalMode.TEXT
         )
-        out = _run_single_rag(question, latency_mode=latency_mode, mode=fallback)
+        out = _run_single_rag(
+            question, latency_mode=latency_mode, mode=fallback, llm_model=model
+        )
         meta = dict(out.get("meta") or {})
         meta["dual_retrieval_enabled"] = False
         meta["dual_fallback_reason"] = "missing_index"
@@ -743,7 +765,9 @@ def run_rag_query(
         return out
     if mode == RetrievalMode.BOTH and both_ready and not dual_on:
         # Env explicitly disabled dual: fall back to table-primary single index.
-        out = _run_single_rag(question, latency_mode=latency_mode, mode=RetrievalMode.TABLE)
+        out = _run_single_rag(
+            question, latency_mode=latency_mode, mode=RetrievalMode.TABLE, llm_model=model
+        )
         meta = dict(out.get("meta") or {})
         meta["retrieval_mode"] = RetrievalMode.BOTH.value
         meta["dual_retrieval_enabled"] = False
@@ -751,7 +775,7 @@ def run_rag_query(
         out["meta"] = meta
         return out
 
-    out = _run_single_rag(question, latency_mode=latency_mode, mode=mode)
+    out = _run_single_rag(question, latency_mode=latency_mode, mode=mode, llm_model=model)
     meta = dict(out.get("meta") or {})
     meta.setdefault("dual_retrieval_enabled", dual_on)
     out["meta"] = meta

@@ -104,10 +104,11 @@ models/layout/yolov10m_doclaynet.pt
 
 ## 빠른 실행
 
-이미 `full_corpus_715_v1`과 `kr_tables_v2` 인덱스가 준비되어 있다면 다음 명령으로 UI를 실행합니다.
+이미 `full_corpus_715_v1`과 표 인덱스가 준비되어 있다면 저장소 루트에서 통합 UI를 실행합니다.
 
 ```powershell
-streamlit run scripts/15_rag_ui.py
+cd ..
+python app.py
 ```
 
 UI는 기본적으로 다음 리소스를 사용합니다.
@@ -115,9 +116,8 @@ UI는 기본적으로 다음 리소스를 사용합니다.
 - Chroma 인덱스: `data/processed/index/`
 - 청크: `data/processed/chunks/`
 - 일반 검색 collection: `full_corpus_715_v1`
-- 표 검색 collection: `kr_tables_v2`
-- 표 원문 청크: `data/processed/chunks_v2/`
-- Ollama 모델: `llama3.1:8b`
+- 표 검색 collection: `full_corpus_715_tables_precise_v1` (또는 설정상의 표 컬렉션)
+- Ollama 모델: UI에서 `llama3.1:8b` / `gemma4:12b` / `mistral-nemo:12b` 선택
 
 ## 전처리와 인덱스 구축
 

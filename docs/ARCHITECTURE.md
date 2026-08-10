@@ -353,9 +353,8 @@ Git에 안 올리는 것(일반적): 원본 PDF, 모델 가중치, Chroma 바이
 
 ## 7. 평가
 
-- 혼합 스위트: `data/eval/suite_100_mixed.json`
-- 러너: `scripts/run_eval_suite_100.py`
-- 결과: `data/processed/logs/suite_100_mixed_results.json`
+- 품질 스모크: `python scripts/run_quality_30.py`
+- 카테고리 스모크: `python scripts/run_smoke_categories.py`
 - 라우터만: `python tests/run_router_eval.py`
 
 `route_mismatch`면 단서/라우터 쪽을 보고, ops `weak`면 DB·툴, rag `weak`면 검색·커버리지를 본다.

@@ -130,6 +130,7 @@ python app.py
 ```
 
 브라우저: http://127.0.0.1:7860  
+UI에서 답변 모델(`llama3.1:8b` / `gemma4:12b` / `mistral-nemo:12b`)을 고를 수 있습니다.  
 확인 절차는 [docs/사용매뉴얼.md](docs/사용매뉴얼.md).
 
 ## 라우팅
@@ -146,6 +147,7 @@ python app.py
 - hybrid는 “둘 다 / 비교”처럼 명시될 때만.
 - 짧은 후속 질문은 이전 경로·주제를 이어 붙인 뒤 다시 분류한다.
 - UI에서 경로 강제, `운항만/문서만/둘 다로 다시` 가능.
+- UI에서 Ollama 답변 모델 3종 선택 가능.
 - 라우터 평가: `python tests/run_router_eval.py`
 
 ## 데이터
@@ -180,5 +182,5 @@ powershell -ExecutionPolicy Bypass -File ..\scripts\build_rag_index.ps1
 
 ## 개별 앱
 
+- 통합 UI: `python app.py` (권장)
 - 운항만: `python ops/app_standalone.py`
-- 문서만: `cd rag` 후 `streamlit run scripts/15_rag_ui.py`

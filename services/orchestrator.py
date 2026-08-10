@@ -23,8 +23,12 @@ def handle_question(
     rag_latency_mode: str = "fast",
     last_route: str | None = None,
     dialogue_state: DialogueState | dict | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
+    from services.llm_models import normalize_llm_model
+
     q = (question or "").strip()
+    model = normalize_llm_model(llm_model)
     state = parse_dialogue_state(dialogue_state, last_route)
     if not q:
         return {
@@ -37,6 +41,7 @@ def handle_question(
             "related_tables": [],
             "last_route": state.last_route,
             "dialogue_state": state.to_dict(),
+            "llm_model": model,
         }
 
     forced = None if force_route == "auto" else force_route
@@ -53,7 +58,7 @@ def handle_question(
     if decision.route == "chat":
         result = run_chat_query(q, history, chat_mode=decision.chat_mode)
     elif decision.route == "ops":
-        result = run_ops_query(effective_q, history)
+        result = run_ops_query(effective_q, history, llm_model=model)
     elif decision.route == "hybrid":
         rag_mode = classify_retrieval_mode(decision.rag_query or effective_q)
         result = run_hybrid_query(
@@ -63,6 +68,7 @@ def handle_question(
             retrieval_mode=rag_mode,
             ops_query=decision.ops_query,
             rag_query=decision.rag_query,
+            llm_model=model,
         )
     else:
         rag_mode = classify_retrieval_mode(effective_q)
@@ -70,6 +76,7 @@ def handle_question(
             effective_q,
             latency_mode=rag_latency_mode,
             retrieval_mode=rag_mode,
+            llm_model=model,
         )
         result.setdefault(
             "history",
@@ -99,4 +106,5 @@ def handle_question(
         "meta": meta or result.get("meta"),
         "last_route": next_state.get("last_route"),
         "dialogue_state": next_state,
+        "llm_model": model,
     }

@@ -86,7 +86,12 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
     return None
 
 
-def run_ops_query(question: str, history: list | None = None) -> dict[str, Any]:
+def run_ops_query(
+    question: str,
+    history: list | None = None,
+    *,
+    llm_model: str | None = None,
+) -> dict[str, Any]:
     """
     Returns:
       answer, history, files, show_map, map_html
@@ -106,6 +111,9 @@ def run_ops_query(question: str, history: list | None = None) -> dict[str, Any]:
 
     from agent.maritime_agent import run_agent_sync
     from agent.tools import render_voyage_map
+    from services.llm_models import normalize_llm_model
+
+    model = normalize_llm_model(llm_model)
 
     deterministic = _try_deterministic_ops(question)
     if deterministic and deterministic.get("answer"):
@@ -123,9 +131,12 @@ def run_ops_query(question: str, history: list | None = None) -> dict[str, Any]:
             "source": "ops",
             "reports_dir": str(REPORTS_DIR),
             "deterministic_tool": deterministic.get("tool"),
+            "llm_model": model,
         }
 
-    answer, new_history, files, show_map = run_agent_sync(question, list(history or []))
+    answer, new_history, files, show_map = run_agent_sync(
+        question, list(history or []), model=model
+    )
     map_html = ""
     if show_map:
         try:
@@ -141,4 +152,5 @@ def run_ops_query(question: str, history: list | None = None) -> dict[str, Any]:
         "map_html": map_html,
         "source": "ops",
         "reports_dir": str(REPORTS_DIR),
+        "llm_model": model,
     }

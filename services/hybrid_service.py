@@ -30,15 +30,17 @@ def run_hybrid_query(
     retrieval_mode: RetrievalMode | str | None = None,
     ops_query: str | None = None,
     rag_query: str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     ops_q = (ops_query or question).strip()
     rag_q = (rag_query or question).strip()
-    ops_result = run_ops_query(ops_q, history)
+    ops_result = run_ops_query(ops_q, history, llm_model=llm_model)
     rag_result = run_rag_query(
         rag_q,
         latency_mode=rag_latency_mode,
         table_qa=table_qa,
         retrieval_mode=retrieval_mode,
+        llm_model=llm_model,
     )
     answer = merge_hybrid_answers(
         str(ops_result.get("answer") or ""),

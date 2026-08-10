@@ -20,6 +20,7 @@ from markdown_it import MarkdownIt
 
 from project_paths import DEFAULT_RAG_COLLECTION, DEFAULT_TABLE_COLLECTION, OPS_DB_PATH, RAW_PDFS_DIR
 from services.answer_ui import render_evidence_table_html, render_related_tables_html
+from services.llm_models import AVAILABLE_LLM_MODELS, DEFAULT_LLM_MODEL
 from services.ops_service import ops_db_ready
 from services.orchestrator import handle_question
 from services.rag_service import (
@@ -96,7 +97,7 @@ def _status_line() -> str:
     )
 
 
-def _route_banner(route: dict | None) -> str:
+def _route_banner(route: dict | None, llm_model: str | None = None) -> str:
     if not route:
         return ""
     labels = {
@@ -106,9 +107,10 @@ def _route_banner(route: dict | None) -> str:
         "hybrid": "운항+문서 (hybrid)",
     }
     kind = labels.get(str(route.get("route") or ""), str(route.get("route") or ""))
+    model_bit = f" | 모델 {llm_model}" if llm_model else ""
     return (
         f"[경로: {kind} | 신뢰도 {float(route.get('confidence') or 0):.0%} "
-        f"| {route.get('method')}] {route.get('reason') or ''}"
+        f"| {route.get('method')}{model_bit}] {route.get('reason') or ''}"
     )
 
 
@@ -127,7 +129,9 @@ def _pack_answer(user_msg: str, result: dict) -> str:
         user_msg,
         result.get("answer", ""),
         result.get("map_html") or "",
-        route_banner=_route_banner(result.get("route")),
+        route_banner=_route_banner(
+            result.get("route"), result.get("llm_model")
+        ),
         evidence_table=result.get("evidence_table") or [],
         related_tables=result.get("related_tables") or [],
     )
@@ -139,6 +143,7 @@ def chat_fn(
     dialogue_state: dict | None,
     route_mode: str,
     use_llm_router: bool,
+    llm_model: str,
 ):
     empty = build_answer_html("", "")
     if not (user_msg or "").strip():
@@ -151,6 +156,7 @@ def chat_fn(
         use_llm_router=bool(use_llm_router),
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
+        llm_model=llm_model,
     )
     files = [f for f in (result.get("files") or []) if Path(f).exists()]
     return (
@@ -168,6 +174,7 @@ def retry_fn(
     dialogue_state: dict | None,
     last_question: str,
     use_llm_router: bool,
+    llm_model: str,
 ):
     empty = build_answer_html("", "")
     q = (last_question or "").strip()
@@ -183,6 +190,7 @@ def retry_fn(
         use_llm_router=bool(use_llm_router),
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
+        llm_model=llm_model,
     )
     files = [f for f in (result.get("files") or []) if Path(f).exists()]
     return (
@@ -285,6 +293,12 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
             value="자동 라우팅",
             label="데이터 경로",
         )
+        llm_model = gr.Dropdown(
+            choices=list(AVAILABLE_LLM_MODELS),
+            value=DEFAULT_LLM_MODEL,
+            label="답변 모델 (Ollama)",
+            scale=1,
+        )
         use_llm_router = gr.Checkbox(
             value=False,
             label="애매한 질문은 LLM으로 재분류 (느림)",
@@ -341,29 +355,67 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
 
     send_btn.click(
         chat_fn,
-        inputs=[user_input, history_state, dialogue_state, route_mode, use_llm_router],
+        inputs=[
+            user_input,
+            history_state,
+            dialogue_state,
+            route_mode,
+            use_llm_router,
+            llm_model,
+        ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     ).then(lambda: "", outputs=user_input)
 
     user_input.submit(
         chat_fn,
-        inputs=[user_input, history_state, dialogue_state, route_mode, use_llm_router],
+        inputs=[
+            user_input,
+            history_state,
+            dialogue_state,
+            route_mode,
+            use_llm_router,
+            llm_model,
+        ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     ).then(lambda: "", outputs=user_input)
 
     retry_ops.click(
-        lambda hist, st, last_q, llm: retry_fn("ops", hist, st, last_q, llm),
-        inputs=[history_state, dialogue_state, last_question_state, use_llm_router],
+        lambda hist, st, last_q, router, model: retry_fn(
+            "ops", hist, st, last_q, router, model
+        ),
+        inputs=[
+            history_state,
+            dialogue_state,
+            last_question_state,
+            use_llm_router,
+            llm_model,
+        ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     )
     retry_rag.click(
-        lambda hist, st, last_q, llm: retry_fn("rag", hist, st, last_q, llm),
-        inputs=[history_state, dialogue_state, last_question_state, use_llm_router],
+        lambda hist, st, last_q, router, model: retry_fn(
+            "rag", hist, st, last_q, router, model
+        ),
+        inputs=[
+            history_state,
+            dialogue_state,
+            last_question_state,
+            use_llm_router,
+            llm_model,
+        ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     )
     retry_hyb.click(
-        lambda hist, st, last_q, llm: retry_fn("hybrid", hist, st, last_q, llm),
-        inputs=[history_state, dialogue_state, last_question_state, use_llm_router],
+        lambda hist, st, last_q, router, model: retry_fn(
+            "hybrid", hist, st, last_q, router, model
+        ),
+        inputs=[
+            history_state,
+            dialogue_state,
+            last_question_state,
+            use_llm_router,
+            llm_model,
+        ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     )
 

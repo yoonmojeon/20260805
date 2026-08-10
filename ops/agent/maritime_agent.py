@@ -38,11 +38,17 @@ SYSTEM_PROMPT = build_ops_system_prompt(
 )
 
 
-def run_agent_sync(user_message: str, history: list) -> tuple[str, list, list, bool]:
+def run_agent_sync(
+    user_message: str,
+    history: list,
+    *,
+    model: str | None = None,
+) -> tuple[str, list, list, bool]:
     """
     동기 에이전트 — Ollama 공식 Agent Loop 패턴
     Returns: (answer, updated_history, generated_file_paths, show_map)
     """
+    llm_model = (model or MODEL_NAME).strip() or MODEL_NAME
     if not _llm_available:
         answer = _fallback_response(user_message)
         return answer, history + [
@@ -62,7 +68,7 @@ def run_agent_sync(user_message: str, history: list) -> tuple[str, list, list, b
     for iteration in range(MAX_ITERATIONS):
         try:
             response = _client.chat.completions.create(
-                model=MODEL_NAME,
+                model=llm_model,
                 messages=messages,
                 tools=TOOL_SCHEMAS,
                 tool_choice="auto",

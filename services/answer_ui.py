@@ -1,9 +1,9 @@
 """HTML fragments for Gradio answer panel (Evidence Table + related table crops).
 
-Mirrors MaritimeRAG Streamlit `15_rag_ui.py`:
+Gradio answer panel (formerly mirrored from MaritimeRAG Streamlit UI):
 - answer body with [n] citations
 - Evidence Table (각주 → 문서·페이지·청크)
-- table QA: PDF crop images via ``st.image(crop_path)`` equivalent
+- table QA: PDF crop images via image embeds
 """
 from __future__ import annotations
 
