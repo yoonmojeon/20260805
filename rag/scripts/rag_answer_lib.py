@@ -520,7 +520,15 @@ def retrieve_for_question(
                 timing.mark("t_context_build_end")
             return out
 
-        if category == "rule_lookup" and use_hybrid is not False:
+        # The old global rule BM25 scans the entire corpus and bypasses the
+        # document→clause hierarchy.  Keep it as an opt-in comparison/fallback;
+        # normal Rule questions now continue to the scoped hierarchical search.
+        import os as _os
+
+        use_legacy_rule_bm25 = _os.environ.get(
+            "MARITIME_RULE_GLOBAL_BM25", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if category == "rule_lookup" and use_hybrid is not False and use_legacy_rule_bm25:
             from pathlib import Path as _Path
 
             from hybrid_retrieval import get_bm25_index, hybrid_rule_lookup_search
@@ -569,6 +577,8 @@ def retrieve_for_question(
             doc_id=filter_doc_id,
             timing=timing,
         )
+        if raw.get("document_route"):
+            row["_text_document_route"] = raw["document_route"]
 
         if is_table_question(question):
             table_by_type = query_table_chunks(
@@ -617,6 +627,8 @@ def retrieve_for_question(
             fetch_k=max(n_fetch * 15, 100),
             timing=timing,
         )
+        if raw_all.get("document_route"):
+            row["_text_document_route"] = raw_all["document_route"]
         ids = raw_all["ids"][0]
         metas = raw_all["metadatas"][0]
         dists = raw_all["distances"][0]

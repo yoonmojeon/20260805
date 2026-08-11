@@ -649,6 +649,40 @@ def _decision_from_llm(
     )
 
 
+def _guard_overbroad_hybrid(
+    decision: RouteDecision,
+    *,
+    question: str,
+    ops_score: float,
+    rag_score: float,
+) -> RouteDecision:
+    """Collapse an unsupported hybrid decision back to the clear OPS source.
+
+    CII vocabulary is shared by live vessel analytics and IMO documents.  A
+    zero-temperature local model can still occasionally request both sources
+    for a plain attained/required ship scorecard.  If no document cue, compare
+    frame, or explicit dual marker exists, the extra RAG call is unsupported and
+    needlessly slow.
+    """
+    if (
+        decision.route == "hybrid"
+        and ops_score >= 2.5
+        and rag_score == 0.0
+        and not has_dual_mark(question)
+        and not has_compare_frame(question)
+    ):
+        decision.route = "ops"
+        decision.need_ops = True
+        decision.need_documents = False
+        decision.rag_query = None
+        decision.method = "llm_guarded"
+        decision.reason = (
+            "LLM이 두 소스를 요청했지만 문서 단서가 없는 명확한 선박 운항 질의라 "
+            "불필요한 문서 검색을 생략합니다."
+        )
+    return decision
+
+
 def _deterministic_fallback(
     question: str,
     *,
@@ -776,6 +810,12 @@ def route_question(
                     expanded=expanded,
                     slots=slots,
                     active_model=model,
+                )
+                decision = _guard_overbroad_hybrid(
+                    decision,
+                    question=expanded,
+                    ops_score=ops,
+                    rag_score=rag,
                 )
                 _fill_hybrid_queries(decision, expanded, state)
                 return _attach_state(

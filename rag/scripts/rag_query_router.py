@@ -14,6 +14,7 @@ from question_classifier import CATEGORY_LABELS_KO, classify_question_category, 
 from retrieval_query_analysis import (
     analyze_query,
     detect_class_society_hint,
+    detect_meeting_source_hint,
     detect_table_source_hint,
 )
 from retrieval_question_profile import build_retrieval_profile
@@ -71,6 +72,11 @@ def is_rule_guidance_lookup(
         return True
     if TOP_LEVEL_LABELS_KO.get(top) == "Rule/Guidance 조회":
         return True
+    # Environmental/meeting questions often contain generic words such as
+    # "요건" or "요구사항".  Those words describe the requested content; they
+    # do not turn an IMO CII/GHG summary into a class-Rule lookup.
+    if cat in {"trend_summary", "meeting_outcome", "env_regulation", "autonomous"}:
+        return False
     return _question_has_rule_guidance_terms(question)
 
 
@@ -113,8 +119,18 @@ def resolve_pipeline_route(
     rprof = build_retrieval_profile(question, work)
     mprof = build_meeting_retrieval_profile(question, work, legacy_category=cat)
     top = resolve_top_level_category(cat)
-    society = str(row.get("class_society_hint") or detect_class_society_hint(question))
     signals = analyze_query(question)
+    society = str(
+        row.get("class_society_hint")
+        or detect_class_society_hint(question)
+        or detect_meeting_source_hint(question)
+    )
+    if not society and cat == "env_regulation" and signals.topics.intersection(
+        {"cii", "ghg", "marpol", "alt_fuel"}
+    ):
+        society = "MEPC"
+    elif not society and cat == "autonomous" and "mass" in signals.topics:
+        society = "MSC"
     rule_guidance = is_rule_guidance_lookup(
         question,
         work,

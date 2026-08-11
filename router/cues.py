@@ -126,7 +126,7 @@ SWITCH_HYBRID_PATTERN = re.compile(
     r"둘\s*다|같이\s*(봐|알려|정리)|양쪽|hybrid",
     flags=re.IGNORECASE,
 )
-DUAL_MARK_PATTERN = re.compile(r"같이|둘\s*다|동시에|양쪽")
+DUAL_MARK_PATTERN = re.compile(r"둘\s*다|동시에|양쪽")
 COMPARE_PATTERN = re.compile(
     r"기준으로\s*(우리|이\s*선박|우리\s*배)|규정\s*기준으로|"
     r"우리\s*(배|선박).{0,12}(규정|규제|기준|준수)|"
@@ -277,7 +277,31 @@ def adjust_overlap(question: str, ops: float, rag: float) -> tuple[float, float]
 
 
 def has_dual_mark(question: str) -> bool:
-    return bool(DUAL_MARK_PATTERN.search(question or ""))
+    q = question or ""
+    if DUAL_MARK_PATTERN.search(q):
+        return True
+    # '같이' often joins two values from one source (e.g. attained와 required도
+    # 같이) rather than two data sources.  Treat it as a dual-source marker only
+    # when both an onboard/ship frame and an explicit document frame are present.
+    if "같이" not in q:
+        return False
+    has_ops_source = bool(
+        re.search(
+            r"우리|이\s*선박|운항|항차|온보드|Noon|MRV|현재\s*선박|"
+            r"올해.{0,12}(?:CII|탄소집약|등급)|(?:attained|required)",
+            q,
+            re.I,
+        )
+    )
+    has_document_source = bool(
+        re.search(
+            r"문서|규정|규제|요건|지침|선급|회의|MEPC|MSC|MARPOL|마르폴|"
+            r"SEEMP|Rule|Guidance|IMO",
+            q,
+            re.I,
+        )
+    )
+    return has_ops_source and has_document_source
 
 
 def has_compare_frame(question: str) -> bool:

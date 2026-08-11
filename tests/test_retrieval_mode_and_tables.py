@@ -65,6 +65,25 @@ def test_retrieval_mode_definition_stays_text():
     assert mode == RetrievalMode.TEXT
 
 
+def test_retrieval_mode_rule_symbol_definition_stays_text():
+    mode = classify_retrieval_mode("구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?")
+    assert mode == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_cii_requirements_summary_stays_text():
+    mode = classify_retrieval_mode(
+        "IMO 문서 기준으로 선박 탄소집약도 등급을 관리하는 요구사항을 요약해줘."
+    )
+    assert mode == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_named_society_guidance_summary_stays_text():
+    mode = classify_retrieval_mode(
+        "DNV의 자율운항선박 관련 지침이 강조하는 핵심 안전 원칙을 찾아줘."
+    )
+    assert mode == RetrievalMode.TEXT
+
+
 def test_table_rows_ordered_and_columns_preserved():
     pairs = [
         (

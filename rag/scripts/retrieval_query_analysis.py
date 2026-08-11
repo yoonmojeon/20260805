@@ -33,14 +33,23 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     "mass": ("mass", "mass code", "자율운항", "maritime autonomous", "autonomous surface"),
     "ghg": ("ghg", "greenhouse", "온실가스", "reduction of ghg", "배출"),
     "alt_fuel": ("대체연료", "alternative fuel", "low-flashpoint", "low flashpoint", "lng", "ammonia", "methanol", "암모니아"),
-    "cii": ("cii", "carbon intensity", "data collection", "보고"),
+    "cii": (
+        "cii",
+        "carbon intensity",
+        "탄소집약도",
+        "탄소 집약도",
+        "탄소강도",
+        "탄소 강도",
+        "data collection",
+        "보고",
+    ),
     "marpol": ("marpol", "annex vi", "regulation 12"),
     "igc": ("igc code", "igc", "gas carrier"),
 }
 
 MEETING_OUTCOME_INTENT_RE = re.compile(
     r"주요\s*결과|\b결과\b|\boutcome\b|\bsummary\b|key\s*outcomes?|\badopted\b|\bapproved\b|\bdecision\b|"
-    r"결정\s*사항|채택|승인|요약해|정리해",
+    r"결정\s*사항|채택|승인|요약해|정리(?:해|됐|되었|된)|논의|개정",
     re.IGNORECASE,
 )
 
@@ -105,6 +114,8 @@ def is_meeting_outcome_question(question: str, row: dict | None = None) -> bool:
         has_session = "mepc" in lower or "msc" in lower
     has_outcome = bool(MEETING_OUTCOME_INTENT_RE.search(q))
     if has_session and has_outcome:
+        return True
+    if has_session and re.search(r"의제|안건|agenda|provisional", q, re.IGNORECASE):
         return True
     if has_session and any(k in lower for k in ("주요", "핵심", "highlight", "key ")):
         return True
@@ -195,6 +206,12 @@ def analyze_query(query: str) -> QuerySignals:
         if pattern.search(q):
             signals.rule_doc_hints.append(hint)
 
+    # Generalize exact DNV document routing beyond the original CG-0264 case.
+    for match in re.finditer(r"\bDNV\s*[-–]?\s*(CG|RP|RU)\s*[-–]?\s*([A-Z0-9-]+)\b", q, re.I):
+        code = f"DNV-{match.group(1).upper()}-{match.group(2).upper()}"
+        if code not in signals.rule_doc_hints:
+            signals.rule_doc_hints.append(code)
+
     from meeting_outcome_retrieval import expand_meeting_outcome_queries
 
     signals.meeting_outcome_question = is_meeting_outcome_question(q)
@@ -233,7 +250,27 @@ def _build_expanded_terms(signals: QuerySignals, query: str) -> list[str]:
     if "alt_fuel" in signals.topics:
         terms.extend(["low-flashpoint", "alternative fuel", "Section 15", "engines supplied"])
     if "cii" in signals.topics:
-        terms.extend(["CII", "carbon intensity", "fuel oil consumption"])
+        terms.extend(
+            [
+                "CII",
+                "carbon intensity indicator",
+                "carbon intensity",
+                "operational carbon intensity rating",
+                "fuel oil consumption",
+            ]
+        )
+    if re.search(r"\btc\s*orr\b|\bt_corr\b", query, re.I):
+        # The symbol is often repeated in worked formulae.  Definition phrases
+        # pull the document-scoped reranker toward the defining clause instead.
+        terms.extend(
+            [
+                "국부 부식추가",
+                "부식추가",
+                "corrosion addition",
+                "6장 3.2",
+                "정의",
+            ]
+        )
     if "DNV-CG-0264" in signals.rule_doc_hints:
         terms.extend(["DNV-CG-0264", "autonomous", "remotely operated"])
     if signals.class_society_hint == "DNV":

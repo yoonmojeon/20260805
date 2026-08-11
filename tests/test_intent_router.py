@@ -254,6 +254,34 @@ def test_llm_primary_derives_route_from_source_needs():
     assert seen["model"] == "gemma4:12b"
 
 
+def test_llm_hybrid_is_guarded_when_plain_ops_question_has_no_document_cue():
+    from router import intent_router as ir
+
+    def fake_llm(*_a, **_kwargs):
+        return {
+            "need_ops": True,
+            "need_documents": True,
+            "confidence": 0.93,
+            "reason": "CII 용어가 있어 두 소스가 필요하다고 추정",
+            "ops_query": "2026년 누적 CII attained required",
+            "rag_query": "CII 규정 검색",
+        }
+
+    original = ir._llm_classify
+    ir._llm_classify = fake_llm  # type: ignore[assignment]
+    try:
+        d = ir.route_question(
+            "2026년 누적 탄소집약도 성적표를 보여줘. attained와 required도 같이.",
+            use_llm_fallback=True,
+        )
+    finally:
+        ir._llm_classify = original  # type: ignore[assignment]
+    assert d.route == "ops"
+    assert d.method == "llm_guarded"
+    assert d.need_ops is True and d.need_documents is False
+    assert d.rag_query is None
+
+
 def test_invalid_boolean_uses_deterministic_fallback():
     from router import intent_router as ir
 

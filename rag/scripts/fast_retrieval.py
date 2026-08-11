@@ -355,6 +355,52 @@ def select_rule_slots(
     out: list[FastEvidence] = []
     hints = extract_clause_hints(question)
 
+    # Definition asks need the defining paragraph, not simply the first chunk
+    # carrying any clause number.  This is especially important for short
+    # symbols such as tcorr that occur in hundreds of later formulae.
+    definition_ask = bool(
+        re.search(
+            r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|(?<!규)정의)",
+            question,
+            re.I,
+        )
+    )
+    if definition_ask:
+        from retrieval_search import extract_exact_identifiers
+
+        identifiers = [value.lower() for value in extract_exact_identifiers(question)]
+
+        def definition_match(c: RetrievedChunk) -> bool:
+            blob = _norm(c.text)
+            identifier_ok = not identifiers or any(value in blob for value in identifiers)
+            definition_ok = bool(
+                re.search(
+                    r"정의(?:된|한다|는)|means|is\s+defined\s+as|"
+                    r"국부\s*부식추가.{0,40}tc\s*orr|tc\s*orr\s*[:=：]",
+                    blob,
+                    re.I,
+                )
+            )
+            return identifier_ok and definition_ok
+
+        def definition_rank(c: RetrievedChunk) -> float:
+            blob = _norm(c.text)
+            if re.search(
+                r"국부\s*부식추가.{0,40}tc\s*orr|tc\s*orr\s*[:=：]",
+                blob,
+                re.I,
+            ):
+                return 0.0
+            if re.search(r"정의(?:된|한다|는)|is\s+defined\s+as", blob, re.I):
+                return 1.0
+            return 2.0
+
+        definition = _pick_first(
+            pool, definition_match, used=used, prefer=definition_rank
+        )
+        if definition:
+            out.append(FastEvidence(definition, "scope_definition"))
+
     def clause_match(c: RetrievedChunk) -> bool:
         if hints and c.clause_number in hints:
             return True

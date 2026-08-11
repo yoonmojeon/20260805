@@ -91,6 +91,12 @@ def classify_fast_question_type(question: str, row: dict | None = None) -> FastQ
     if MEPC_ES_SESSION_RE.search(q) and _has_whole_session_markers(q):
         return "meeting_summary"
 
+    # Top-level retrieval has already separated prose Rule lookup from table
+    # lookup.  Do not let legacy ``is_table_question`` reclassify symbol
+    # definitions merely because they contain words such as tcorr/두께.
+    if str(row.get("category") or "") == "rule_lookup" and not row.get("_table_qa"):
+        return "rule_question"
+
     if is_table_question(q) or any(k in q for k in TABLE_FAST_EXTRA):
         return "table_question"
 

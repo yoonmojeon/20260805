@@ -1,6 +1,8 @@
 """Clause-aware hybrid retrieval (dense + lexical + metadata boost)."""
 from __future__ import annotations
 
+import math
+import os
 import re
 from typing import Any
 
@@ -34,6 +36,29 @@ EXPANDED_TERM_BOOST = 0.06
 SUBCOMM_PENALTY = 0.14
 DOC_CODE_CROSSREF_RE = re.compile(r"document\s+code.*title", re.I)
 DNV_RULE_CODE_RE = re.compile(r"^DNV-(?:CG|RP|RU)-[A-Z0-9-]+$", re.I)
+EXACT_IDENTIFIER_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"t(?:corr|c\s*[12])|"
+    r"AC-[A-Z0-9+.-]+|"
+    r"CII|EEXI|SEEMP|MARPOL|"
+    r"DNV-(?:CG|RP|RU|OS|CP|SI)-[A-Z0-9-]+|"
+    r"(?:MEPC|MSC)\s*\d{1,3}(?:\s*[/.-]\s*[A-Z0-9]+)+"
+    r")(?![A-Za-z0-9])|\d+\s*장\s*\d+\s*절",
+    re.I,
+)
+SPARSE_TOKEN_RE = re.compile(
+    r"[A-Za-z]+(?:[A-Za-z0-9]*)(?:[-./][A-Za-z0-9]+)*|\d+(?:\.\d+)?|[가-힣]{2,}",
+    re.UNICODE,
+)
+SPARSE_STOPWORDS = {
+    "관련", "기준", "문서", "규정", "주요", "어떤", "무엇", "알려줘", "찾아줘",
+    "에서", "으로", "대한", "the", "and", "for", "with", "what", "which",
+}
+DOCUMENT_ROUTE_MAX_DOCS = 4
+DOCUMENT_ROUTE_MAX_DOCS_BROAD = 6
+DOCUMENT_ROUTE_STAGE2_FETCH = 72
+DOCUMENT_ROUTE_BOOSTS = (0.20, 0.13, 0.08, 0.04, 0.02, 0.01)
+SCOPED_SPARSE_MAX_ROWS = 6000
 
 
 def _priority_rule_file_names(signals: QuerySignals) -> list[str]:
@@ -77,6 +102,309 @@ def _resolve_priority_rule_doc_ids(collection, signals: QuerySignals) -> list[st
         if doc_id and doc_id not in doc_ids:
             doc_ids.append(doc_id)
     return doc_ids
+
+
+def _hierarchical_text_enabled() -> bool:
+    return os.environ.get("MARITIME_TEXT_HIERARCHICAL", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def extract_exact_identifiers(query: str) -> list[str]:
+    """Extract terms for which literal retrieval is safer than embeddings."""
+    out: list[str] = []
+    for match in EXACT_IDENTIFIER_RE.finditer(query or ""):
+        value = re.sub(r"\s*([/.-])\s*", r"\1", match.group(0).strip())
+        value = re.sub(r"\s+", " ", value)
+        if value and value.lower() not in {item.lower() for item in out}:
+            out.append(value)
+    return out[:4]
+
+
+def _literal_variants(identifier: str) -> list[str]:
+    variants = [identifier]
+    if re.match(r"^(?:MEPC|MSC)\s*\d", identifier, re.I):
+        variants.extend(
+            [
+                identifier.replace("/", "-"),
+                identifier.replace("-", "/"),
+                re.sub(r"\s+", " ", identifier),
+            ]
+        )
+    if re.match(r"^t(?:corr|c\s*[12])$", identifier, re.I):
+        variants.extend([identifier.lower(), identifier.upper()])
+    return list(dict.fromkeys(v for v in variants if v))[:4]
+
+
+def _identifier_matches_filename(identifier: str, file_name: str) -> bool:
+    """Match document codes while tolerating IMO slash/hyphen filename forms."""
+    imo_identifier = re.fullmatch(
+        r"\s*(MEPC|MSC)\s*(\d{1,3})(?:\s*[/.-]\s*([A-Z0-9]+))+(?:\s*)",
+        identifier or "",
+        re.I,
+    )
+    if imo_identifier:
+        ident_parts = re.findall(r"[A-Za-z]+|\d+", identifier or "")
+        if not re.match(r"\s*(MEPC|MSC)\b", file_name or "", re.I):
+            return False
+        file_parts = re.findall(r"[A-Za-z]+|\d+", (file_name or "")[:100])
+        return [part.lower() for part in ident_parts] == [
+            part.lower() for part in file_parts[: len(ident_parts)]
+        ]
+    dnv_identifier = re.fullmatch(
+        r"DNV-(?:CG|RP|RU|OS|CP|SI)-[A-Z0-9-]+", identifier or "", re.I
+    )
+    if dnv_identifier:
+        prefix = re.match(
+            r"\s*(DNV-(?:CG|RP|RU|OS|CP|SI)-[A-Z0-9-]+)", file_name or "", re.I
+        )
+        return bool(prefix and prefix.group(1).lower() == identifier.lower())
+    ident = re.sub(r"[^a-z0-9]+", "", (identifier or "").lower())
+    name = re.sub(r"[^a-z0-9]+", "", (file_name or "").lower())
+    return bool(ident and len(ident) >= 3 and ident in name)
+
+
+def _query_exact_identifier_hits(
+    collection,
+    query: str,
+    *,
+    where: dict | None,
+    limit_per_term: int = 40,
+) -> tuple[dict[str, Any], dict[str, float], list[str]]:
+    """Use Chroma's existing documents for cheap exact-code recall.
+
+    This is deliberately limited to distinctive identifiers.  It avoids the
+    271k-row global BM25 path and does not create or modify any embedding.
+    """
+    identifiers = extract_exact_identifiers(query)
+    out: dict[str, list[list]] = {
+        "ids": [[]], "distances": [[]], "metadatas": [[]], "documents": [[]]
+    }
+    scores: dict[str, float] = {}
+    seen: set[str] = set()
+    positions: dict[str, int] = {}
+    for identifier in identifiers:
+        variants = _literal_variants(identifier)
+        if re.fullmatch(r"tc\s*orr", identifier, re.I) and re.search(
+            r"(?:기호.{0,12}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|정의)",
+            query,
+            re.I,
+        ):
+            variants = list(
+                dict.fromkeys(
+                    variants
+                    + [
+                        "국부 부식추가 tcorr",
+                        "국부 부식추가",
+                        "tcorr :",
+                    ]
+                )
+            )
+        for variant in variants:
+            try:
+                kwargs: dict[str, Any] = {
+                    "where_document": {"$contains": variant},
+                    "limit": limit_per_term,
+                    "include": ["metadatas", "documents"],
+                }
+                if where:
+                    kwargs["where"] = where
+                raw = collection.get(**kwargs)
+            except Exception:
+                continue
+            for cid, meta, document in zip(
+                raw.get("ids") or [],
+                raw.get("metadatas") or [],
+                raw.get("documents") or [],
+            ):
+                text = str(document or "")
+                exact = variant.lower() in text.lower()
+                file_match = _identifier_matches_filename(
+                    identifier, str((meta or {}).get("file_name") or "")
+                )
+                literal_score = 1.8 if file_match else (1.0 if exact else 0.7)
+                scores[cid] = max(scores.get(cid, 0.0), literal_score)
+                literal_distance = 0.08 if file_match else (0.22 if exact else 0.35)
+                if cid in seen:
+                    pos = positions[cid]
+                    out["distances"][0][pos] = min(
+                        float(out["distances"][0][pos]), literal_distance
+                    )
+                    continue
+                seen.add(cid)
+                positions[cid] = len(out["ids"][0])
+                out["ids"][0].append(cid)
+                # Synthetic distance only seeds the candidate pool; final order
+                # is recalculated with metadata, document and sparse scores.
+                out["distances"][0].append(literal_distance)
+                out["metadatas"][0].append(meta or {})
+                out["documents"][0].append(text)
+    return out, scores, identifiers
+
+
+def _document_route_candidates(
+    *,
+    query: str,
+    ids: list[str],
+    distances: dict[str, float],
+    metadatas: dict[str, dict],
+    documents: dict[str, str],
+    signals: QuerySignals,
+    clause_hints: list[str],
+    priority_doc_ids: set[str],
+    exact_scores: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Aggregate chunk evidence into a ranked document shortlist."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for global_rank, cid in enumerate(ids, 1):
+        meta = metadatas.get(cid) or {}
+        doc_id = str(meta.get("doc_id") or "").strip()
+        if not doc_id:
+            continue
+        adjusted = adjusted_distance(
+            distances[cid],
+            query=query,
+            document=documents.get(cid, ""),
+            meta=meta,
+            clause_hints=clause_hints,
+            signals=signals,
+            priority_doc_ids=priority_doc_ids,
+        )
+        item = grouped.setdefault(
+            doc_id,
+            {
+                "doc_id": doc_id,
+                "file_name": str(meta.get("file_name") or ""),
+                "source": str(meta.get("source") or ""),
+                "best_distance": adjusted,
+                "raw_best_distance": float(distances[cid]),
+                "first_rank": global_rank,
+                "hit_count": 0,
+                "exact_hit_score": 0.0,
+            },
+        )
+        item["hit_count"] += 1
+        item["exact_hit_score"] = max(
+            float(item["exact_hit_score"]),
+            float((exact_scores or {}).get(cid, 0.0)),
+        )
+        item["best_distance"] = min(float(item["best_distance"]), adjusted)
+        item["raw_best_distance"] = min(
+            float(item["raw_best_distance"]), float(distances[cid])
+        )
+        item["first_rank"] = min(int(item["first_rank"]), global_rank)
+
+    ranked: list[dict[str, Any]] = []
+    for item in grouped.values():
+        file_overlap = lexical_overlap(
+            query,
+            f"{item['file_name']} {item['doc_id']}",
+            signals.expanded_terms,
+        )
+        support = min(0.10, math.log1p(int(item["hit_count"])) * 0.025)
+        priority = item["doc_id"] in priority_doc_ids
+        identifier_file_match = any(
+            _identifier_matches_filename(identifier, str(item["file_name"]))
+            for identifier in extract_exact_identifiers(query)
+        )
+        route_score = (
+            float(item["best_distance"])
+            - support
+            - file_overlap * 0.28
+            - (0.22 if priority else 0.0)
+            - min(0.75, float(item["exact_hit_score"]) * 0.70)
+            - (0.45 if identifier_file_match else 0.0)
+        )
+        item.update(
+            {
+                "score": route_score,
+                "file_overlap": file_overlap,
+                "priority": priority,
+                "identifier_file_match": identifier_file_match,
+            }
+        )
+        ranked.append(item)
+    ranked.sort(key=lambda item: (float(item["score"]), int(item["first_rank"])))
+    return ranked
+
+
+def _sparse_query_terms(query: str, signals: QuerySignals) -> list[tuple[str, float]]:
+    weighted: dict[str, float] = {}
+    exact = {value.lower() for value in extract_exact_identifiers(query)}
+    for raw in SPARSE_TOKEN_RE.findall(query or ""):
+        term = raw.lower().strip()
+        if len(term) < 2 or term in SPARSE_STOPWORDS:
+            continue
+        weight = 8.0 if term in exact else (3.2 if re.search(r"\d|[-./]", term) else 1.0)
+        if raw.isupper() and len(raw) >= 3:
+            weight = max(weight, 2.0)
+        elif len(term) >= 5:
+            weight = max(weight, 1.25)
+        weighted[term] = max(weighted.get(term, 0.0), weight)
+    for raw in signals.expanded_terms[:16]:
+        term = str(raw or "").lower().strip()
+        if len(term) >= 3:
+            weighted[term] = max(weighted.get(term, 0.0), 0.55)
+    return list(weighted.items())[:32]
+
+
+def rank_scoped_sparse_rows(
+    query: str,
+    signals: QuerySignals,
+    ids: list[str],
+    metadatas: list[dict],
+    documents: list[str],
+    *,
+    top_k: int = 18,
+) -> list[tuple[float, str, dict, str]]:
+    """Rank chunks inside routed documents using lightweight exact terms."""
+    terms = _sparse_query_terms(query, signals)
+    if not terms:
+        return []
+    scored: list[tuple[float, str, dict, str]] = []
+    for cid, meta, document in zip(ids, metadatas, documents):
+        text = f"{(meta or {}).get('file_name', '')} {document or ''}".lower()
+        score = 0.0
+        hits = 0
+        for term, weight in terms:
+            if term in text:
+                hits += 1
+                score += weight
+                if " " in term or re.search(r"\d|[-./]", term):
+                    score += weight * 0.35
+        if hits:
+            score += min(0.8, hits * 0.08)
+            scored.append((score, cid, meta or {}, document or ""))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[:top_k]
+
+
+def _load_scoped_sparse_rows(
+    collection,
+    doc_ids: list[str],
+    *,
+    base_where: dict | None,
+) -> tuple[list[str], list[dict], list[str]]:
+    if not doc_ids:
+        return [], [], []
+    ids: list[str] = []
+    metadatas: list[dict] = []
+    documents: list[str] = []
+    per_doc_limit = max(700, SCOPED_SPARSE_MAX_ROWS // max(1, len(doc_ids)))
+    for doc_id in doc_ids:
+        where = _merge_where(base_where, {"doc_id": doc_id})
+        try:
+            raw = collection.get(
+                where=where,
+                limit=per_doc_limit,
+                include=["metadatas", "documents"],
+            )
+        except Exception:
+            continue
+        ids.extend(raw.get("ids") or [])
+        metadatas.extend(raw.get("metadatas") or [])
+        documents.extend(raw.get("documents") or [])
+    return ids, metadatas, documents
 
 
 def extract_clause_hints(query: str) -> list[str]:
@@ -255,7 +583,29 @@ def adjusted_distance(
     score -= meta_boost
     score += meta_penalty
     score -= LEXICAL_BOOST_SCALE * lexical_overlap(query, document, sig.expanded_terms)
+    score -= _definition_clause_boost(query, document)
     return score
+
+
+def _definition_clause_boost(query: str, document: str) -> float:
+    """Prefer defining clauses over later formula references for symbol asks."""
+    q = str(query or "")
+    if not re.search(
+        r"(?:기호.{0,12}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|정의|what.{0,12}mean)",
+        q,
+        re.I,
+    ):
+        return 0.0
+    body = str(document or "")
+    boost = 0.0
+    if re.search(r"(?:정의(?:된|한다|는)|means|is\s+defined\s+as)", body, re.I):
+        boost += 0.10
+    if re.search(r"\btc\s*orr\b|\bt_corr\b", q, re.I):
+        if re.search(r"국부\s*부식추가.{0,40}tc\s*orr|tc\s*orr.{0,40}국부\s*부식추가", body, re.I):
+            boost += 0.30
+        elif re.search(r"tc\s*orr\s*[:=：]", body, re.I):
+            boost += 0.20
+    return min(0.40, boost)
 
 
 def _merge_where(*clauses: dict | None) -> dict | None:
@@ -359,7 +709,13 @@ def query_with_hybrid_ranking(
     doc_id: str | None = None,
     timing=None,
 ) -> dict[str, Any]:
-    """Over-fetch vector hits, inject priority IMO docs, rerank with metadata boosts."""
+    """Hierarchical text retrieval over the existing Chroma embeddings.
+
+    Stage 1 retrieves broad chunks and aggregates them to documents. Stage 2
+    searches only the routed documents and optionally injects exact identifier
+    hits plus a lightweight document-scoped sparse rerank. No index rebuild is
+    performed.
+    """
     clause_hints = extract_clause_hints(query)
     signals = analyze_query(query)
     priority_ids = priority_doc_ids_for_signals(signals)
@@ -378,6 +734,8 @@ def query_with_hybrid_ranking(
     merged_dist: dict[str, float] = {}
     merged_meta: dict[str, dict] = {}
     merged_doc: dict[str, str] = {}
+    exact_scores: dict[str, float] = {}
+    scoped_sparse_scores: dict[str, float] = {}
 
     def absorb(raw: dict) -> None:
         if not raw.get("ids") or not raw["ids"][0]:
@@ -406,6 +764,17 @@ def query_with_hybrid_ranking(
         where=base_where,
     )
     absorb(raw_vector)
+
+    hierarchy_enabled = _hierarchical_text_enabled()
+    if hierarchy_enabled:
+        exact_raw, exact_scores, exact_identifiers = _query_exact_identifier_hits(
+            collection,
+            query,
+            where=base_where,
+        )
+        absorb(exact_raw)
+    else:
+        exact_identifiers = []
 
     if timing is not None and hasattr(timing, "mark"):
         timing.mark("t_vector_search_end")
@@ -453,13 +822,127 @@ def query_with_hybrid_ranking(
             except Exception:
                 pass
 
+    document_route: dict[str, Any] = {
+        "enabled": False,
+        "selected_doc_ids": [],
+        "candidates": [],
+        "confidence": 0.0,
+        "exact_identifiers": exact_identifiers,
+        "scoped_sparse_used": False,
+    }
+    selected_doc_ids: list[str] = []
+    if hierarchy_enabled and not doc_id and merged_ids:
+        doc_candidates = _document_route_candidates(
+            query=query,
+            ids=merged_ids,
+            distances=merged_dist,
+            metadatas=merged_meta,
+            documents=merged_doc,
+            signals=signals,
+            clause_hints=clause_hints,
+            priority_doc_ids=priority_set,
+            exact_scores=exact_scores,
+        )
+        max_docs = (
+            DOCUMENT_ROUTE_MAX_DOCS_BROAD
+            if signals.wants_summary or signals.wants_outcome or signals.meeting_outcome_question
+            else DOCUMENT_ROUTE_MAX_DOCS
+        )
+        selected_doc_ids = [str(item["doc_id"]) for item in doc_candidates[:max_docs]]
+        if selected_doc_ids:
+            stage2 = safe_chroma_query(
+                collection,
+                query_embeddings=[query_vector],
+                n_results=min(
+                    max(DOCUMENT_ROUTE_STAGE2_FETCH, top_k * 10),
+                    120,
+                ),
+                where=_merge_where(
+                    base_where,
+                    {"doc_id": {"$in": selected_doc_ids}},
+                ),
+            )
+            absorb(stage2)
+
+            # Only pay the scoped lexical cost for exact-code/clause or rule
+            # questions, where dense embeddings are known to miss literal terms.
+            use_scoped_sparse = bool(
+                exact_identifiers or clause_hints or signals.wants_rule_lookup
+            )
+            if use_scoped_sparse:
+                sparse_ids, sparse_metas, sparse_docs = _load_scoped_sparse_rows(
+                    collection,
+                    selected_doc_ids,
+                    base_where=base_where,
+                )
+                sparse_ranked = rank_scoped_sparse_rows(
+                    query,
+                    signals,
+                    sparse_ids,
+                    sparse_metas,
+                    sparse_docs,
+                    top_k=max(18, top_k * 3),
+                )
+                best_by_doc = {
+                    str(item["doc_id"]): float(item["raw_best_distance"])
+                    for item in doc_candidates
+                }
+                for sparse_score, cid, meta, document in sparse_ranked:
+                    routed_doc = str((meta or {}).get("doc_id") or "")
+                    synthetic_distance = max(
+                        0.0,
+                        best_by_doc.get(routed_doc, 0.58)
+                        + 0.05
+                        - min(0.20, sparse_score * 0.025),
+                    )
+                    scoped_sparse_scores[cid] = sparse_score
+                    if cid not in merged_dist:
+                        absorb(
+                            {
+                                "ids": [[cid]],
+                                "distances": [[synthetic_distance]],
+                                "metadatas": [[meta]],
+                                "documents": [[document]],
+                            }
+                        )
+                document_route["scoped_sparse_used"] = bool(sparse_ranked)
+
+        margin = (
+            float(doc_candidates[1]["score"]) - float(doc_candidates[0]["score"])
+            if len(doc_candidates) > 1
+            else 0.25
+        )
+        first_priority = bool(doc_candidates and doc_candidates[0].get("priority"))
+        confidence = min(1.0, 0.42 + max(0.0, min(0.30, margin)) + (0.22 if first_priority else 0.0))
+        document_route.update(
+            {
+                "enabled": True,
+                "selected_doc_ids": selected_doc_ids,
+                "confidence": round(confidence, 3),
+                "candidates": [
+                    {
+                        "doc_id": item["doc_id"],
+                        "file_name": item["file_name"],
+                        "source": item["source"],
+                        "score": round(float(item["score"]), 4),
+                        "hit_count": int(item["hit_count"]),
+                        "priority": bool(item["priority"]),
+                        "exact_hit_score": round(float(item["exact_hit_score"]), 3),
+                        "identifier_file_match": bool(item["identifier_file_match"]),
+                    }
+                    for item in doc_candidates[:max_docs]
+                ],
+            }
+        )
+
     if timing is not None and hasattr(timing, "mark"):
         timing.mark("t_metadata_filter_end")
         timing.mark("t_rerank_start")
 
-    ranked = sorted(
-        merged_ids,
-        key=lambda cid: adjusted_distance(
+    doc_route_rank = {value: rank for rank, value in enumerate(selected_doc_ids)}
+
+    def final_distance(cid: str) -> float:
+        score = adjusted_distance(
             merged_dist[cid],
             query=query,
             document=merged_doc[cid],
@@ -467,8 +950,16 @@ def query_with_hybrid_ranking(
             clause_hints=clause_hints,
             signals=signals,
             priority_doc_ids=priority_set,
-        ),
-    )[:top_k]
+        )
+        routed_doc = str((merged_meta.get(cid) or {}).get("doc_id") or "")
+        rank = doc_route_rank.get(routed_doc)
+        if rank is not None and rank < len(DOCUMENT_ROUTE_BOOSTS):
+            score -= DOCUMENT_ROUTE_BOOSTS[rank]
+        score -= min(0.60, exact_scores.get(cid, 0.0) * 0.38)
+        score -= min(0.24, scoped_sparse_scores.get(cid, 0.0) * 0.025)
+        return score
+
+    ranked = sorted(merged_ids, key=final_distance)[:top_k]
 
     if timing is not None and hasattr(timing, "mark"):
         timing.mark("t_rerank_end")
@@ -481,6 +972,8 @@ def query_with_hybrid_ranking(
         "clause_hints": clause_hints,
         "query_signals": signals,
         "priority_doc_ids": priority_ids,
+        "document_route": document_route,
+        "final_scores": [[final_distance(cid) for cid in ranked]],
     }
 
 

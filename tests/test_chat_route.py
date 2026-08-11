@@ -18,6 +18,14 @@ def test_unknown_clarifies_instead_of_rejecting():
     assert "문서" in result["answer"]
 
 
+def test_clarify_directly_states_both_capabilities_are_available():
+    text = render_chat_answer(
+        "운항 정보와 규정 문서를 둘 다 찾아볼 수 있는 서비스야?",
+        chat_mode="clarify",
+    )
+    assert "둘 다 찾아볼 수 있습니다" in text
+
+
 def test_router_question_explains_paths():
     result = handle_question("라우터가 뭘로 구분되어있어?", use_llm_router=False)
     assert result["route"]["route"] == "chat"

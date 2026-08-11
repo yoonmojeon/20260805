@@ -225,6 +225,14 @@ def analyze_requirements(question: str, row: dict | None = None) -> QuestionRequ
     # Row metadata can scope retrieval, but never supplies an answer.
     if not organization:
         source = str(row.get("source") or row.get("society") or "").upper()
+        if not source:
+            scoped_sources = [
+                str(value).upper()
+                for value in (row.get("retrieval_sources") or [])
+                if str(value).strip()
+            ]
+            if len(scoped_sources) == 1:
+                source = scoped_sources[0]
         if source in {"MSC", "MEPC", "DNV", "LR", "ABS", "KR"}:
             organization = source
 

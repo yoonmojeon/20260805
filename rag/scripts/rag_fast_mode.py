@@ -96,6 +96,16 @@ FAST_LLM = {
     "temperature": 0.1,
 }
 
+
+def _is_definition_lookup(question: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|(?<!규)정의)",
+            str(question or ""),
+            re.I,
+        )
+    )
+
 # Legacy prompts (fallback when use_typed_slots=False)
 FAST_SYSTEM_PROMPT = (
     "너는 해사 규정 문서 기반 RAG assistant다. "
@@ -335,7 +345,9 @@ def run_fast_retrieval_only(
         gold_doc_filter=gold_filter,
         timing=timing,
     )
-    if meeting_q or rule_guidance:
+    if meeting_q or (
+        rule_guidance and not _is_definition_lookup(str(row.get("question") or ""))
+    ):
         from evidence_planner import complete_evidence_slots
 
         pool, evidence_completion = complete_evidence_slots(collection, pool, row)
@@ -438,6 +450,7 @@ def run_fast_retrieval_only(
         "pool_unique_doc_count": len({c.doc_id for c in pool}),
         "fast_evidence_slots": fast_meta.get("fast_evidence_slots"),
         "evidence_completion": fast_meta.get("evidence_completion") or {},
+        "text_document_route": row.get("_text_document_route") or {},
     }
     from retrieval_verification import meeting_routing_fields_from_row
 
@@ -465,6 +478,7 @@ def run_fast_retrieval_only(
         "verification_summary": summary,
         "fast_meta": fast_meta,
         "table_retrieval_debug": row.get("_table_retrieval_debug"),
+        "text_document_route": row.get("_text_document_route") or {},
         "pool_before_society_filter": pool_before_filter,
     }
 
@@ -535,7 +549,7 @@ def generate_fast_answer(
         completion = row.get("_evidence_completion") or {}
         direct_clause_found = bool(
             (completion.get("slot_hits") or {}).get("specific_clause")
-        )
+        ) or _is_definition_lookup(str(row.get("question") or ""))
         if direct_clause_found:
             from rule_guidance_accurate import generate_rule_guidance_accurate_answer
 
@@ -620,6 +634,7 @@ def generate_fast_answer(
             row, full_table_pool, debug=debug
         )
         if deterministic:
+            meta["cell_verification"] = row.get("_cell_verification") or {}
             meta["answer_mode"] = "table_qa"
             meta["answer_source"] = "table_deterministic"
             meta["llm_skipped"] = True
@@ -640,6 +655,7 @@ def generate_fast_answer(
             return deterministic, meta
         if should_refuse_ungrounded_table(row, evidence, hints=hints, debug=debug):
             refuse = build_table_refuse_answer()
+            meta["cell_verification"] = row.get("_cell_verification") or {}
             meta["answer_mode"] = "table_qa"
             meta["answer_source"] = "table_refuse"
             meta["llm_skipped"] = True

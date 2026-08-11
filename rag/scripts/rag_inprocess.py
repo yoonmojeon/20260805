@@ -633,21 +633,26 @@ def run_answer_inprocess(
     # Specialized generators may still extract domain facts, but they no
     # longer decide which generic/weak claims reach the UI.
     evidence_completion = (config_dict or {}).get("fast_meta", {}).get("evidence_completion") or {}
+    answer_source = (prompt_meta.get("answer_generation") or {}).get("answer_source")
     direct_clause_evidence = bool(
         (evidence_completion.get("slot_hits") or {}).get("specific_clause")
-    )
+    ) or answer_source == "direct_definition_extractive"
     direct_clause_answer = (
-        (prompt_meta.get("answer_generation") or {}).get("answer_source")
+        answer_source
         in {"direct_clause_extractive_fallback", "llm_grounded_summary", "llm_verified_claim_subset"}
         and direct_clause_evidence
-    )
+    ) or answer_source == "direct_definition_extractive"
     grounded_dynamic_answer = bool(row.get("_grounded_dynamic_answer"))
     verified_structured_answer = bool(row.get("_verified_structured_answer"))
+    structured_meeting_answer = bool(
+        provider == "structured_meeting" or row.get("_meeting_answer_meta")
+    )
     if (
         not is_table_qa_row(row)
         and not direct_clause_answer
         and not grounded_dynamic_answer
         and not verified_structured_answer
+        and not structured_meeting_answer
     ):
         from semantic_answer_pipeline import refine_answer
 
@@ -688,6 +693,11 @@ def run_answer_inprocess(
         row["_answer_scope_status"] = "verified_structured"
         row.setdefault("warning_flags", []).append(
             "semantic_refine_bypassed_verified_structured"
+        )
+    elif structured_meeting_answer:
+        row["_answer_scope_status"] = "structured_meeting"
+        row.setdefault("warning_flags", []).append(
+            "semantic_refine_bypassed_structured_meeting"
         )
 
     from answer_contract import apply_answer_contract
@@ -804,6 +814,39 @@ def run_answer_inprocess(
                     )
                 ),
                 cited_ids=structured_ids,
+                valid=True,
+            )
+    elif (
+        (provider == "structured_meeting" or row.get("_meeting_answer_meta"))
+        and pre_contract_answer
+        and all(
+            re.search(rf"(?m)^##\s*{number}\)", pre_contract_answer)
+            for number in range(1, 5)
+        )
+    ):
+        # The meeting builder selects each claim from its cited chunk before
+        # translating/summarizing it in Korean.  The shared lexical contract
+        # can otherwise remove a valid Korean sentence backed by an English
+        # source.  Preserve the checked draft, but only when every citation is
+        # still inside the exact chunk list used by the builder.
+        from answer_contract import AnswerContractResult, build_cited_evidence_table
+
+        meeting_ids: list[int] = []
+        for marker in re.findall(r"\[(\d+)\]", pre_contract_answer):
+            value = int(marker)
+            if 1 <= value <= len(citation_chunks) and value not in meeting_ids:
+                meeting_ids.append(value)
+        if meeting_ids:
+            answer = pre_contract_answer
+            contract = AnswerContractResult(
+                answer=answer,
+                evidence_table=build_cited_evidence_table(answer, citation_chunks),
+                warnings=list(
+                    dict.fromkeys(
+                        contract.warnings + ["structured_meeting_contract_preserved"]
+                    )
+                ),
+                cited_ids=meeting_ids,
                 valid=True,
             )
     # Structured meeting drafts are already citation-checked. If the contract

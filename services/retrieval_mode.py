@@ -69,6 +69,18 @@ _NUMERIC_RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 _VALUE_ASK_RE = re.compile(r"얼마|몇\s*(?:mm|m|년)?|값은|해당\s*값|요구되는|최소|최대")
+_EXPLICIT_TABLE_FRAME_RE = re.compile(
+    r"표\s*(?:에서|에|의|번호|제목)?|\brow\b|\bcell\b|행\s*(?:에서|번호)?|열\s*\d+|"
+    r"구조화\s*표|페이지\s*\d+|\d+\s*(?:페이지|쪽)",
+    re.IGNORECASE,
+)
+_NARRATIVE_RULE_RE = re.compile(
+    r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|(?<!규)정의(?:는|를|해)?)|"
+    r"(?:(?:CII|탄소\s*(?:집약도|강도)).{0,30}(?:요구사항|규제|관리|요약|설명))|"
+    r"(?:(?:DNV|KR|ABS|LR).{0,50}(?:지침|guidance|규칙|원칙|요건).{0,50}"
+    r"(?:강조|핵심|안전|찾아|설명|요약))",
+    re.IGNORECASE,
+)
 
 
 def _hit(patterns: list[str], q: str) -> bool:
@@ -202,6 +214,13 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     table_score, _detail = table_shape_score(q)
     prose_score = prose_shape_score(q)
     bridge = _hit(_BOTH_BRIDGE_PATTERNS, q)
+
+    # The generic table parser can mistake short rule symbols (tcorr) or CII's
+    # Latin letters for material/chemistry columns.  A narrative definition or
+    # regulatory-summary ask belongs to prose unless the user explicitly says
+    # table/page/row/column.
+    if _NARRATIVE_RULE_RE.search(q) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
+        return RetrievalMode.TEXT
 
     # Glossary-style cell asks over structural terms stay on the table index.
     if _GLOSSARY_TABLE_ASK_RE.search(q) and (

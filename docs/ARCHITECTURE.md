@@ -204,6 +204,10 @@ preprocess / prepare
 표 단서가 애매하면 BOTH로 간다. UI에는 Evidence Table과 `crop_path` 이미지를 붙인다
 (`services/answer_ui.py`, `services/table_render.py`). 모델이 표 셀을 새로 그리지 않는다.
 
+**TEXT 계층 검색:** 기존 E5/Chroma 임베딩을 다시 만들지 않고 `source → document → clause/page → paragraph` 순서로 좁힌다. 첫 dense 후보를 문서별로 집계한 뒤 선택 문서 안에서 2차 dense 검색을 하고, `tcorr`, `AC-SD`, IMO 문서번호, DNV 문서코드 같은 exact identifier가 있으면 literal 후보와 문서 내부 sparse 점수를 합친다. 전역 Rule BM25는 기본 OFF이며 비교용 `MARITIME_RULE_GLOBAL_BM25=1`에서만 사용한다. 계층 검색 비교용 off switch는 `MARITIME_TEXT_HIERARCHICAL=0`이다.
+
+**TABLE 셀 검증:** 먼저 한 `table_id`를 고정하고 row anchor와 column/attribute가 같은 셀에서 교차하는지 확인한다. 병합된 그룹 헤더는 `상위 헤더 → 항복/좌굴 같은 하위 헤더 → 열N 값` 경로를 복원한다. 교차점이나 점수 간격이 불충분하면 LLM이 값을 추측하지 않고 확인 불가 응답을 낸다.
+
 진단:
 
 ```powershell
@@ -263,6 +267,7 @@ fallback 단서·점수: `router/cues.py`
   - “MEPC CII 규제” → rag
   - “우리 배 CII가 MEPC 기준에 맞나” → hybrid
 - 능력 질문(“운항이랑 문서 둘 다 가능해?”)은 **chat** (내용 요청이 아님).
+- LLM이 문서 단서가 전혀 없는 고신뢰 OPS 질문을 hybrid로 넓힌 경우에는 `llm_guarded`가 RAG 호출만 제거한다. `같이`는 선박/운항 단서와 규정/문서 단서가 함께 있을 때만 dual-source 표지로 본다.
 - RAG 안의 `TEXT / TABLE / BOTH` 선택은 이 변경 대상이 아니며 기존 parser/rule을 유지한다.
 
 ### 4.3 대략적인 결정 순서
@@ -272,7 +277,8 @@ fallback 단서·점수: `router/cues.py`
 3. `expand_question()`으로 현재 질문과 대화 상태를 결합
 4. 선택 모델에 source-needs JSON 요청 (`temperature=0`, `stream=false`, `think=false` 우선)
 5. confidence 0.65 이상인 정상 결과를 route로 변환
-6. timeout, unavailable, invalid/empty JSON, 필드·boolean 오류, 저신뢰면 기존 rule score → prototype → technical shape → safe chat 순으로 fallback
+6. 근거 없는 hybrid 과대분류는 고신뢰 OPS로 축소
+7. timeout, unavailable, invalid/empty JSON, 필드·boolean 오류, 저신뢰면 기존 rule score → prototype → technical shape → safe chat 순으로 fallback
 
 기존 `OPS_PATTERNS`, `RAG_PATTERNS`, `score_question()`, `prototype_vote()`는 삭제하지 않고 fallback/diagnostic으로만 남깁니다. `RouteDecision`에는 모델, source booleans, LLM 성공/실패, fallback 이유, latency가 기록됩니다.
 
@@ -377,6 +383,12 @@ Git에 안 올리는 것(일반적): 원본 PDF, 모델 가중치, Chroma 바이
 | mistral-nemo:12b | 94.4% | 100% | 90% | 22/30 | 4 | 0 | 843 ms | 6.0 s |
 
 rules-only는 전체 192/195(98.5%)였지만 semantic held-out은 20/23(87.0%)였고, LLM-primary 세 모델은 held-out 23/23(100%)였습니다. E2E quality 우선 규칙에 따라 `gemma4:12b`를 기본값으로 선택했습니다. 상세 JSON은 `data/eval/model_comparison.json`입니다.
+
+계층 검색·표 셀·회의 주제 보강용 신규 20문항에서는 Gemma LLM-primary가 보강 전 13/20(65%)에서 보강 후 20/20(100%)로 개선됐습니다. 평균 응답 8.98초, route mismatch·빈 답변·실행 실패는 0건입니다. 질문과 결과는 `data/eval/hierarchical_retrieval_20.jsonl`, `data/eval/hierarchical_retrieval_20_gemma4_12b_after.json`에 있습니다.
+
+범용 표 질문을 많이 섞은 50문항 스트레스 테스트에서는 route 50/50, 빈 답변·실행 실패 0건이었지만 엄격 QA는 25/50이었습니다. 비범용표 유형과 파일/페이지가 특정된 표 질문은 17/17, 파일/페이지 없는 `table_open`은 8 PASS / 3 WEAK / 21 FAIL, `table_reporting`은 0/1이었습니다. 이는 source router보다 `table_id → row → column/cell` 후보 선택이 현재의 주 병목임을 보여 줍니다. 결과는 `data/eval/quality_50_open_mix_gemma4_12b_current.json`에 있습니다.
+
+최종 답변을 생성하지 않고 경로만 보는 100문항 세트에서는 Gemma LLM-primary가 100/100(평균 1.42초, fallback 0건), Rules-only가 99/100(평균 0.24ms)이었습니다. Rules-only는 `소개해줘` 한 건을 `rag`로 오분류했습니다. 재현 실행기는 `scripts/run_route_suite.py`, 결과는 `data/eval/suite_100_mixed_gemma4_12b_current.json`과 `data/eval/suite_100_mixed_rules_current.json`입니다.
 
 `route_mismatch`면 단서/라우터 쪽을 보고, ops `weak`면 DB·툴, rag `weak`면 검색·커버리지를 본다.
 

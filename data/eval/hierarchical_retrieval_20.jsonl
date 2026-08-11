@@ -1,0 +1,20 @@
+{"id":"fresh_chat_01","type":"chat","route":"chat","question":"처음 왔는데 어떤 시스템인지 소개해 줄래?","gold":"MaritimeOpsRAG 소개와 운항·문서 기능 안내","needles":["Maritime|RAG|운항|문서"]}
+{"id":"fresh_chat_02","type":"chat","route":"chat","question":"운항 정보와 규정 문서를 둘 다 찾아볼 수 있는 서비스야?","gold":"운항 수치와 규정·회의 문서를 모두 다룰 수 있다고 기능 범위를 직접 안내하되, 실제 조회 결과를 만들지는 않음","needles":["운항","문서|규정","가능|둘 다|모두|제공|찾을 수"]}
+{"id":"fresh_ops_01","type":"ops_current","route":"ops","question":"우리 선박의 현재 항해 현황을 한 번에 브리핑해줘.","gold":"현재 H2521 Ballast 항차와 운항 상태","needles":["H2521","Ballast|항차|운항","거리|속도|위치|속력|노트|해리"]}
+{"id":"fresh_ops_02","type":"ops_cii","route":"ops","question":"2026년 누적 탄소집약도 성적표를 보여줘. attained와 required도 같이.","gold":"잠정 E 등급, attained 약 6.40, required 약 3.73","needles":["E","6\\.39|6\\.40|6\\.4","3\\.73"]}
+{"id":"fresh_ops_03","type":"ops_previous","route":"ops","question":"바로 전 적재 운항에서 이동거리와 CO2 배출 실적이 어떻게 됐어?","gold":"직전 Laden/V20, 약 5470nm, CO2 약 4663MT","needles":["Laden|V20|직전 적재|이전 적재","5,?470|5,?471","4,?662|4,?663"]}
+{"id":"fresh_ops_05","type":"ops_colloquial","route":"ops","question":"지금 대지속력은 몇 노트로 찍혀?","gold":"현재 SOG 약 18.6kn","needles":["18\\.6|18","SOG|대지속력|노트|kn"]}
+{"id":"fresh_meet_01","type":"rag_meeting","route":"rag","question":"MSC 111 회의에서 비강제 MASS Code에 관해 최종적으로 어떤 결정을 내렸나?","gold":"MSC 111의 non-mandatory MASS Code 결정","needles":["MSC","MASS","비강제|non-mandatory|채택|Code"]}
+{"id":"fresh_meet_02","type":"rag_meeting","route":"rag","question":"MEPC 84가 다룰 예정이었던 주요 의제 항목을 문서 근거로 정리해줘.","gold":"MEPC 84 provisional agenda 항목","needles":["MEPC","84","의제|agenda|안건"]}
+{"id":"fresh_meet_03","type":"rag_meeting","route":"rag","question":"MSC 111 문서에서 IGC Code 개정 논의가 어떻게 정리됐는지 알려줘.","gold":"MSC 111 IGC Code amendments","needles":["MSC","IGC","개정|amend|변경"]}
+{"id":"fresh_def_01","type":"rag_definition","route":"rag","question":"선급 문서에서 substantial corrosion이라고 판정하는 상태를 풀어서 설명해줘.","gold":"허용 부식여유의 75% 등을 초과하는 substantial corrosion 정의","needles":["corrosion|부식","두께|여유|허용|75%|70%|쇠모"]}
+{"id":"fresh_def_02","type":"rag_definition","route":"rag","question":"구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?","gold":"부식 추가 또는 부식 두께 관련 정의","needles":["tcorr|부식","두께|추가|addition|mm"]}
+{"id":"fresh_rule_01","type":"rag_rule","route":"rag","question":"IMO 문서 기준으로 선박 탄소집약도 등급을 관리하는 요구사항을 요약해줘.","gold":"IMO/MEPC CII 규제와 등급 관리 요구","needles":["IMO|MEPC","CII|탄소집약","등급|rating|attained|required"]}
+{"id":"fresh_rule_02","type":"rag_rule","route":"rag","question":"DNV의 자율운항선박 관련 지침이 강조하는 핵심 안전 원칙을 찾아줘.","gold":"DNV autonomous/MASS guidance","needles":["DNV","자율|autonom|MASS","안전|safety|guidance|지침"]}
+{"id":"fresh_table_01","type":"table_cell","route":"rag","question":"2편_2025.pdf 206페이지 표에서 RD·RY·RW·RU 308L 용접재료 시험에 대응하는 강종은?","gold":"RSTS 304L","needles":["RSTS","304L"]}
+{"id":"fresh_table_02","type":"table_cell","route":"rag","question":"2편_2025.pdf 78쪽 표를 보면 복잡한 형상이거나 단품 중량이 10톤을 넘는 주강품은 제품별 시험재가 몇 개인가?","gold":"제품마다 2개","needles":["2개|2 개|두 개"]}
+{"id":"fresh_table_03","type":"table_cell","route":"rag","question":"13편_2025.pdf 48페이지 표에 정의된 기관실 격벽의 위치는 어디인가?","gold":"기관실 전방 또는 후방의 횡격벽","needles":["기관실","전방","후방","횡격벽"]}
+{"id":"fresh_table_04","type":"table_cell","route":"rag","question":"14편_2025.pdf 19쪽 표에서 AC-S·AC-SD·AC-A·AC-T 판과 국부 지지부재의 허용응력은 어느 절을 따르나?","gold":"6장 4절 및 6장 5절","needles":["6장","4절","5절"]}
+{"id":"fresh_table_08","type":"table_caption","route":"rag","question":"2편_2025.pdf 10페이지에 있는 구조화 표의 제목을 원문 기준으로 알려줘.","gold":"시험편의 모양","needles":["시험편","모양|형상"]}
+{"id":"fresh_hybrid_01","type":"hybrid","route":"hybrid","question":"현재 우리 선박의 CII 성적이 IMO·MEPC 관리 요구에 부합하는지 실제 수치와 규정을 함께 비교해줘.","gold":"현재 CII 등급 E, attained 약 6.396, required 약 3.731을 IMO·MEPC 문서 요구와 비교","needles":["CII","E(?:\\s*등급|등급은|'E'|\\*\\*)|등급.{0,15}E","6\\.39|6\\.40","3\\.73","IMO|MEPC"]}
+{"id":"fresh_oos_01","type":"oos","route":"chat","question":"오늘 원달러 환율이 얼마인지 알려줘.","gold":"시스템 범위 밖 안내","needles":["범위|운항|문서|지원|해당|밖"]}

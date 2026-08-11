@@ -35,6 +35,107 @@ DIRECT_CLAUSE_NUM_PREDICT = 520
 ACCURATE_TEMPERATURE = 0.0
 KEEP_ALIVE = "24h"
 
+
+def _is_definition_lookup(question: str) -> bool:
+    """Return True for a symbol/term definition request.
+
+    Definition questions are direct-clause lookups even when the evidence
+    planner was intentionally skipped on the low-latency path.
+    """
+    return bool(
+        re.search(
+            r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|"
+            r"(?<!규)정의|means|meaning|defined\s+as)",
+            question or "",
+            re.I,
+        )
+    )
+
+
+def _build_definition_extractive_answer(
+    question: str,
+    chunks: list[Any],
+    society: str,
+) -> tuple[str, Any | None]:
+    """Build a short answer from an explicit symbol-definition line."""
+    ignored = {
+        "rule", "rules", "guidance", "what", "which", "means", "meaning",
+        "definition", "define", "defined", "symbol", "term", "thickness",
+    }
+    identifiers = [
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", question or "")
+        if token.lower() not in ignored
+    ]
+    if not identifiers:
+        return "", None
+    anchor = identifiers[0]
+    ranked: list[tuple[int, int, Any, str]] = []
+    for order, chunk in enumerate(chunks):
+        body = strip_metadata_prefix(str(getattr(chunk, "text", "") or "")).strip()
+        if not re.search(rf"\b{re.escape(anchor)}\b", body, re.I):
+            continue
+        score = 0
+        if re.search(
+            rf"(?im)^\s*{re.escape(anchor)}\s*[:：]", body
+        ):
+            score += 8
+        if re.search(
+            r"정의(?:된|한다|는)|의미|뜻|means|defined\s+as|corrosion\s+addition|부식추가",
+            body,
+            re.I,
+        ):
+            score += 5
+        if re.search(r"\bmm\b|두께", body, re.I):
+            score += 2
+        ranked.append((score, -order, chunk, body))
+    if not ranked:
+        return "", None
+
+    _score, _order, chunk, body = max(ranked, key=lambda item: (item[0], item[1]))
+    value_match = re.search(
+        rf"(?im)^\s*{re.escape(anchor)}\s*[:：]\s*([^\r\n]{{2,180}})",
+        body,
+    )
+    if value_match:
+        value = re.sub(r"\s+", " ", value_match.group(1)).strip(" .")
+        fact = f"`{anchor}`는 {value}를 뜻합니다."
+    else:
+        lines = [re.sub(r"\s+", " ", line).strip() for line in body.splitlines()]
+        direct = next(
+            (
+                line
+                for line in lines
+                if re.search(rf"\b{re.escape(anchor)}\b", line, re.I)
+                and re.search(r"정의|의미|뜻|부식추가|corrosion\s+addition", line, re.I)
+            ),
+            "",
+        )
+        if not direct:
+            return "", None
+        fact = direct.rstrip(" .") + "."
+
+    doc = str(
+        getattr(chunk, "file_name", "")
+        or getattr(chunk, "doc_id", "")
+        or society
+        or "검색 문서"
+    )
+    page = getattr(chunk, "page_number", "?")
+    clause = str(getattr(chunk, "clause_number", "") or "").strip()
+    reference = f"{doc}, p.{page}" + (f", clause {clause}" if clause else "")
+    answer = (
+        "## 1) 핵심 요약\n\n"
+        f"- {fact} [1]\n\n"
+        "## 2) 선박 운항/업무 영향\n\n"
+        "- 이 정의만으로 특정 구조부재의 적용값까지 정해지는 것은 아닙니다. [1]\n\n"
+        "## 3) 추후 확인 필요사항\n\n"
+        "- 실제 적용값은 정의가 가리키는 조항의 표와 적용조건을 함께 확인해야 합니다. [1]\n\n"
+        "## 4) 관련 선급 Rule / Guidance\n\n"
+        f"- **{reference}**: 질문의 기호 정의를 직접 명시한 근거입니다. [1]"
+    )
+    return answer, chunk
+
 RULE_GUIDANCE_SYSTEM_PROMPT = """해사 선급 규정 검색 보조자다. 제공된 chunks만 사용한다.
 질문의 조직·주제·범위를 직접 충족하는 구체적 조항만 선택한다.
 문서 목적만 반복하지 말고 적용범위, 의무·승인·검증 요건, 안전통제를 우선한다.
@@ -1029,7 +1130,7 @@ def generate_rule_guidance_accurate_answer(
     gen_meta["evidence_slot_coverage"] = coverage_meta
     direct_clause_found = bool(
         (coverage_meta.get("slot_coverage") or {}).get("specific_clause")
-    )
+    ) or _is_definition_lookup(question)
     if direct_clause_found:
         direct_chunks = select_specific_clause_chunks(
             row, retrieved or [], pool or []
@@ -1048,6 +1149,28 @@ def generate_rule_guidance_accurate_answer(
         answer = fallback_no_evidence_answer(society)
         row["_answer_generation"] = gen_meta
         return answer, "rule_guidance_lookup", "none", gen_meta
+
+    if _is_definition_lookup(question):
+        definition_answer, definition_chunk = _build_definition_extractive_answer(
+            question,
+            [*evidence_chunks, *(retrieved or []), *(pool or [])],
+            society,
+        )
+        if definition_answer and definition_chunk is not None:
+            row["_rule_guidance_llm_chunks"] = [definition_chunk]
+            row["_answer_citation_chunks"] = [definition_chunk]
+            gen_meta.update(
+                {
+                    "answer_source": "direct_definition_extractive",
+                    "llm_used": False,
+                    "llm_context_chunks": 1,
+                    "llm_output_chars": len(definition_answer),
+                    "llm_grounded_check_pass": True,
+                    "fallback_reason": None,
+                }
+            )
+            row["_answer_generation"] = gen_meta
+            return definition_answer, "rule_guidance_lookup", "extractive", gen_meta
 
     markers = _fabricated_query_markers(question)
     if _markers_absent_from_chunks(markers, evidence_chunks):

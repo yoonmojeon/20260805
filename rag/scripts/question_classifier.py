@@ -27,6 +27,7 @@ ENV_PATTERNS = [
     r"규제\s*보고",
     r"선박\s*운항.*영향",
     r"GHG|CII|SEEMP|GFI|EEXI|Net-?Zero|MARPOL",
+    r"탄소\s*(?:집약도|강도)(?:\s*(?:지수|등급))?",
     r"배출|에너지효율",
     r"운항\s*및\s*규제",
 ]
@@ -46,6 +47,11 @@ RULE_PATTERNS = [
     r"Notice\s*No",
     r"CG-\d+",
     r"Smart\s*Vessel|디지털\s*트윈",
+    # Short symbols and class-rule load-case codes are poor semantic-embedding
+    # targets.  Route them to the narrow rule path before the generic trend
+    # fallback; table questions are still caught by ``_table_qa`` above.
+    r"\btc\s*(?:orr|1|2)\b|\bAC-(?:S|SD|A|T)\b",
+    r"(?:구조|선급|강선)\s*규칙.{0,30}(?:기호|정의|뜻)",
 ]
 
 MEPC_BROAD_KEYWORDS = [

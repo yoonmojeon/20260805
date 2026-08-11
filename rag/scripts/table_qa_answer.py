@@ -123,7 +123,8 @@ _META_KEY_RE = re.compile(
 _ALLOWANCE_CODE_RE = re.compile(r"^[A-Z]{1,3}-[A-Z0-9]{1,4}$", re.I)
 
 
-def _cell_assignments(text: str) -> dict[str, str]:
+def _cell_assignment_rows(text: str) -> list[tuple[str, dict[str, str]]]:
+    rows: list[tuple[str, dict[str, str]]] = []
     for line in str(text or "").splitlines():
         stripped = line.strip()
         if stripped.startswith("셀:"):
@@ -149,8 +150,13 @@ def _cell_assignments(text: str) -> dict[str, str]:
                 value = cell.strip() or value
             out[key] = value
         if out:
-            return out
-    return {}
+            rows.append((stripped, out))
+    return rows
+
+
+def _cell_assignments(text: str) -> dict[str, str]:
+    rows = _cell_assignment_rows(text)
+    return rows[0][1] if rows else {}
 
 
 def _display_cell_key(
@@ -572,6 +578,387 @@ def build_caption_table_answer(
     )
 
 
+def _indexed_table_cells(text: str) -> dict[int, str]:
+    """Return raw ``열N=value`` cells without flattening multi-row headers."""
+    out: dict[int, str] = {}
+    for match in re.finditer(
+        r"열(\d+)\s*=\s*([^|]*)",
+        str(text or ""),
+    ):
+        value = match.group(2).strip()
+        if value and value != "(빈 셀)":
+            out[int(match.group(1))] = value
+    return out
+
+
+def _verify_labeled_row_intersection(
+    row: dict,
+    evidence: list[Any],
+    *,
+    debug: dict | None,
+) -> dict[str, Any] | None:
+    """Resolve ordinary ``열N=라벨: 값`` rows, including summary chunks.
+
+    A table summary can contain several flattened rows in one chunk.  Evaluating
+    only its first line returns a header or a neighbouring row even when the
+    requested row is present verbatim later in the same evidence chunk.
+    """
+    parsed = (debug or {}).get("parsed_query") or {}
+    question = str(row.get("question") or parsed.get("raw_question") or "")
+    row_entities = [
+        str(value) for value in parsed.get("row_entities") or [] if str(value).strip()
+    ]
+    column_entities = [
+        str(value) for value in parsed.get("column_entities") or [] if str(value).strip()
+    ]
+    attributes = [
+        str(value)
+        for value in parsed.get("attribute_candidates") or column_entities
+        if str(value).strip()
+    ]
+    anchors = _row_anchor_keys(question, row_entities)
+    selected_table = str((debug or {}).get("selected_table_id") or "")
+    candidates: list[tuple[float, Any, str, str, float, float]] = []
+
+    for chunk in evidence:
+        table_id = str(getattr(chunk, "table_id", "") or "")
+        if selected_table and table_id != selected_table:
+            continue
+        text = str(getattr(chunk, "text", "") or "")
+        for row_text, assignments in _cell_assignment_rows(text):
+            if len(assignments) < 2:
+                continue
+            coverage = _row_anchor_coverage(row_text, anchors, question)
+            entity_match = max(
+                (_char_similarity(entity, row_text) for entity in row_entities),
+                default=coverage,
+            )
+            if anchors and coverage < 0.34:
+                continue
+            for position, (key, value) in enumerate(assignments.items()):
+                if position == 0:
+                    continue
+                key_match = max(
+                    (_char_similarity(key, entity) for entity in column_entities + attributes),
+                    default=0.0,
+                )
+                semantic = 0.0
+                if re.search(r"몇\s*개|개수|시험재", question) and re.search(
+                    r"수|개수|시험재", key
+                ):
+                    semantic += 2.5
+                if re.search(r"위치|어디", question) and key in {"정의", "내용", "위치"}:
+                    if re.search(
+                        r"전방|후방|상부|하부|내부|외부|횡격벽|종격벽", value
+                    ):
+                        semantic += 2.5
+                if not (key_match >= 0.35 or semantic > 0.0):
+                    continue
+                if not _is_plausible_cell_value(
+                    value, question=question, selected_key=key
+                ):
+                    continue
+                score = coverage * 5.0 + entity_match * 2.0 + key_match * 3.0 + semantic
+                candidates.append((score, chunk, key, value, coverage, key_match))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    top = candidates[0]
+    if len(candidates) > 1:
+        margin = float(top[0]) - float(candidates[1][0])
+        if margin < 0.75 and _norm(top[3]) != _norm(candidates[1][3]):
+            return None
+    selected = top[:4]
+    return {
+        "passes": True,
+        "reason": "verified_labeled_row_intersection",
+        "method": "labeled_row",
+        "selected_table_id": selected_table,
+        "table_id": str(getattr(top[1], "table_id", "") or ""),
+        "candidate_count": len(candidates),
+        "row_coverage": round(float(top[4]), 3),
+        "column_match": round(float(top[5]), 3),
+        "score_margin": (
+            round(float(top[0]) - float(candidates[1][0]), 3)
+            if len(candidates) > 1
+            else None
+        ),
+        "cell_key": top[2],
+        "cell_value": top[3],
+        "selected": selected,
+        "ranked": [item[:4] for item in candidates],
+        "support_chunks": [top[1]],
+    }
+
+
+def _verify_multilevel_header_intersection(
+    row: dict,
+    evidence: list[Any],
+    *,
+    debug: dict | None,
+) -> dict[str, Any] | None:
+    """Resolve a grouped header → subcolumn → data-cell intersection.
+
+    Some extracted KR tables store three merged group headers in ``열2..열4``
+    but their six physical subcolumns in ``열2..열7``.  Treating each row in
+    isolation selects the last group's value.  This verifier reconstructs the
+    two-level header path from rows of the *same* table before choosing a cell.
+    """
+    question = str(row.get("question") or "")
+    parsed = (debug or {}).get("parsed_query") or {}
+    subject_queries = [
+        str(value)
+        for key in ("subject_candidates", "column_entities", "row_entities")
+        for value in (parsed.get(key) or [])
+        if str(value).strip()
+    ] + [question]
+    selected_table = str((debug or {}).get("selected_table_id") or "")
+    if not selected_table:
+        return None
+    same_table = [
+        chunk
+        for chunk in evidence
+        if str(getattr(chunk, "table_id", "") or "") == selected_table
+        and str(getattr(chunk, "chunk_type", "") or "") in {"table_row", "table_row_aux"}
+    ]
+    indexed = [(chunk, _indexed_table_cells(str(getattr(chunk, "text", "") or ""))) for chunk in same_table]
+    indexed = [(chunk, cells) for chunk, cells in indexed if cells]
+    if len(indexed) < 2:
+        return None
+
+    # A merged group-header row has several subject-like values, but fewer
+    # columns than the widest data row in the same table.
+    max_column = max((max(cells) for _chunk, cells in indexed), default=0)
+    header_matches: list[tuple[float, Any, list[tuple[int, str]], int]] = []
+    for chunk, cells in indexed:
+        groups = [(col, value) for col, value in sorted(cells.items()) if col >= 2]
+        if not (2 <= len(groups) <= 6) or max(cells) >= max_column:
+            continue
+        for group_index, (_col, value) in enumerate(groups):
+            def group_norm(text: str) -> str:
+                base = re.sub(r"\(\d+\)", "", str(text or ""))
+                return _norm(base).replace("및", "").replace("과", "").replace("와", "")
+
+            value_norm = group_norm(value)
+            similarity = max(
+                (
+                    1.0
+                    if value_norm and value_norm in group_norm(candidate)
+                    else _char_similarity(value, candidate)
+                    for candidate in subject_queries
+                ),
+                default=0.0,
+            )
+            if similarity >= 0.48:
+                header_matches.append((similarity, chunk, groups, group_index))
+    if not header_matches:
+        return None
+    header_matches.sort(key=lambda item: item[0], reverse=True)
+    header_similarity, header_chunk, groups, group_index = header_matches[0]
+
+    first_data_col = 2
+    physical_count = max_column - first_data_col + 1
+    if physical_count < len(groups) or physical_count % len(groups) != 0:
+        return None
+    group_width = physical_count // len(groups)
+    if group_width < 1 or group_width > 4:
+        return None
+    subcolumn_offset = 1 if "좌굴" in question else 0
+    if subcolumn_offset >= group_width:
+        return None
+    target_column = first_data_col + group_index * group_width + subcolumn_offset
+    header_label = groups[group_index][1]
+    subcolumn_label = "좌굴" if subcolumn_offset else ("허용응력" if "허용응력" in question else "항복")
+
+    candidates: list[tuple[float, Any, str]] = []
+    for chunk, cells in indexed:
+        if chunk is header_chunk or target_column not in cells:
+            continue
+        value = str(cells[target_column]).strip()
+        if value in {"항복", "좌굴", "N/A", "-"}:
+            continue
+        score = _char_similarity(value, question) * 2.0
+        if "허용응력" in question and "허용응력" in value:
+            score += 3.0
+        if "좌굴" in question and "좌굴" in value:
+            score += 2.0
+        if re.search(r"\d+\s*장|\d+\s*절", value):
+            score += 1.5
+        chunk_text = str(getattr(chunk, "text", "") or "")
+        if "AC-I" in chunk_text and "AC-I" not in question:
+            score -= 2.5
+        candidates.append((score, chunk, value))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    score, value_chunk, value = candidates[0]
+    if score < 2.0:
+        return None
+    value = re.sub(r"^(?:항복|좌굴)\s*:\s*", "", value).strip()
+    key = f"{header_label} / {subcolumn_label}"
+    selected = (12.0 + score, value_chunk, key, value)
+    return {
+        "passes": True,
+        "reason": "verified_multilevel_header_intersection",
+        "method": "multilevel_header",
+        "selected_table_id": selected_table,
+        "table_id": selected_table,
+        "candidate_count": len(candidates),
+        "row_coverage": round(header_similarity, 3),
+        "column_match": 1.0,
+        "score_margin": (
+            round(score - candidates[1][0], 3) if len(candidates) > 1 else None
+        ),
+        "target_column": f"열{target_column}",
+        "header_path": [header_label, subcolumn_label],
+        "cell_key": key,
+        "cell_value": value,
+        "selected": selected,
+        "ranked": [selected],
+        "support_chunks": [header_chunk, value_chunk],
+    }
+
+
+def verify_row_column_intersection(
+    row: dict,
+    evidence: list[Any],
+    *,
+    debug: dict | None = None,
+) -> dict[str, Any]:
+    """Verify that table, row and column resolve to one concrete cell.
+
+    Retrieval rank is only a candidate signal.  This verifier independently
+    requires the selected table family, row anchors and column key to agree on
+    the same structured row before a deterministic value may be asserted.
+    """
+    multilevel = _verify_multilevel_header_intersection(row, evidence, debug=debug)
+    if multilevel is not None:
+        return multilevel
+    labeled_row = _verify_labeled_row_intersection(row, evidence, debug=debug)
+    if labeled_row is not None:
+        return labeled_row
+
+    parsed = (debug or {}).get("parsed_query") or {}
+    question = str(row.get("question") or parsed.get("raw_question") or "")
+    row_entities = [str(v) for v in parsed.get("row_entities") or [] if str(v).strip()]
+    column_entities = [str(v) for v in parsed.get("column_entities") or [] if str(v).strip()]
+    attributes = [
+        str(v)
+        for v in parsed.get("attribute_candidates") or column_entities
+        if str(v).strip()
+    ]
+    query_type = str(parsed.get("query_type") or "")
+    anchors = _row_anchor_keys(question, row_entities)
+    ranked = _rank_structured_cells(row, evidence, debug=debug)
+    selected_table = str((debug or {}).get("selected_table_id") or "")
+
+    result: dict[str, Any] = {
+        "passes": False,
+        "reason": "no_structured_cell_candidates",
+        "query_type": query_type,
+        "selected_table_id": selected_table,
+        "candidate_count": len(ranked),
+        "row_coverage": 0.0,
+        "column_match": 0.0,
+        "score_margin": None,
+        "selected": None,
+        "ranked": ranked,
+    }
+    if not ranked:
+        return result
+
+    if selected_table:
+        same_table = [
+            item
+            for item in ranked
+            if str(getattr(item[1], "table_id", "") or "") == selected_table
+        ]
+        if not same_table:
+            result["reason"] = "selected_table_has_no_structured_row"
+            return result
+        ranked = same_table
+        result["ranked"] = ranked
+
+    verified: list[tuple[float, Any, str, str, float, float]] = []
+    for score, chunk, key, value in ranked:
+        text = str(getattr(chunk, "text", "") or "")
+        coverage = _row_anchor_coverage(text, anchors, question)
+        key_match = max(
+            (_char_similarity(key, entity) for entity in column_entities + attributes),
+            default=1.0 if not (column_entities or attributes) else 0.0,
+        )
+        explicit_key_match = any(
+            _norm(entity) and _norm(entity) in _norm(key)
+            for entity in column_entities + attributes
+        )
+        semantic_column_match = False
+        if any(term in question for term in ("허용기준", "판정기준", "기준은")):
+            semantic_column_match = bool(_ALLOWANCE_CODE_RE.match(str(value).strip()))
+        if any(term in question for term in ("부식추가", "tcorr", "tc1", "tc2")):
+            semantic_column_match = semantic_column_match or bool(
+                re.search(r"tc\s*[12]|tcorr|부식", key, re.I)
+            )
+        if re.search(r"몇\s*(?:mm|톤|개)|얼마|값은", question):
+            semantic_column_match = semantic_column_match or bool(
+                re.search(r"\d", str(value)) and coverage >= 0.67
+            )
+        if any(term in question for term in ("평가 방법", "평가하는가", "방법으로")):
+            semantic_column_match = semantic_column_match or bool(
+                re.match(r"^(SP|UP)-[A-Z]$", str(value).strip(), re.I)
+            )
+        if "방화" in question or "보존성" in question:
+            semantic_column_match = semantic_column_match or bool(
+                re.match(r"^L\d$", str(value).strip(), re.I)
+            )
+
+        row_ok = not anchors or coverage >= 0.34
+        column_ok = (
+            not (column_entities or attributes)
+            or key_match >= 0.35
+            or explicit_key_match
+            or semantic_column_match
+            or (_is_opaque_table_key(key) and semantic_column_match)
+        )
+        value_ok = _is_plausible_cell_value(
+            value,
+            question=question,
+            selected_key=key,
+        ) and not _is_opaque_table_key(value)
+        if score >= 3.5 and row_ok and column_ok and value_ok:
+            verified.append((score, chunk, key, value, coverage, key_match))
+
+    if not verified:
+        result["reason"] = "row_column_intersection_unverified"
+        return result
+
+    top = verified[0]
+    if len(verified) > 1:
+        margin = float(top[0]) - float(verified[1][0])
+        result["score_margin"] = round(margin, 3)
+        if (
+            margin < 0.75
+            and _norm(top[3]) != _norm(verified[1][3])
+            and top[4] < 0.67
+        ):
+            result["reason"] = "ambiguous_row_column_intersection"
+            return result
+
+    result.update(
+        {
+            "passes": True,
+            "reason": "verified",
+            "row_coverage": round(float(top[4]), 3),
+            "column_match": round(float(top[5]), 3),
+            "table_id": str(getattr(top[1], "table_id", "") or ""),
+            "cell_key": top[2],
+            "cell_value": top[3],
+            "selected": top[:4],
+        }
+    )
+    return result
+
+
 def build_deterministic_table_answer(
     row: dict,
     evidence: list[Any],
@@ -597,10 +984,28 @@ def build_deterministic_table_answer(
     ]
     if query_type not in {"cell_lookup", "row_lookup", "column_lookup", "condition_lookup"}:
         return None
-    candidates = _rank_structured_cells(row, evidence, debug=debug_data)
-    if not candidates:
+    verification = verify_row_column_intersection(row, evidence, debug=debug_data)
+    row["_cell_verification"] = {
+        key: value
+        for key, value in verification.items()
+        if key not in {"selected", "ranked", "support_chunks"}
+    }
+    if not verification.get("passes"):
         return None
+    candidates = list(verification.get("ranked") or [])
+    verified_selected = verification.get("selected")
+    if verified_selected:
+        candidates = [verified_selected] + [
+            item
+            for item in candidates
+            if not (
+                item[1] is verified_selected[1]
+                and item[2] == verified_selected[2]
+                and item[3] == verified_selected[3]
+            )
+        ]
     selected = None
+    cross_verified = verification.get("method") in {"multilevel_header", "labeled_row"}
     question = str(row.get("question") or "")
     anchors = _row_anchor_keys(question, row_entities)
     # Score margin: refuse to assert when top-2 are nearly tied on different values.
@@ -623,9 +1028,9 @@ def build_deterministic_table_answer(
         )
         # Prefer rows that actually mention the asked subject; weak coverage needs
         # a stronger score so wrong-cell lookalikes (e.g. Pin vs S+D) stay out.
-        if anchors and coverage < 0.34:
+        if not cross_verified and anchors and coverage < 0.34:
             continue
-        if anchors and coverage < 0.67 and _score < 5.0:
+        if not cross_verified and anchors and coverage < 0.67 and _score < 5.0:
             continue
         if _is_opaque_table_key(value):
             continue
@@ -675,6 +1080,16 @@ def build_deterministic_table_answer(
         corrosion_ok = any(
             term in question for term in ("부식추가", "tcorr", "tc1", "tc2")
         ) and bool(re.search(r"tc\s*[12]|tcorr|부식", selected_key, re.I))
+        count_ok = bool(
+            re.search(r"몇\s*개|개수|시험재", question)
+            and re.search(r"수|개수|시험재", selected_key)
+            and re.search(r"\d|한\s*개|두\s*개", str(value))
+        )
+        location_ok = bool(
+            re.search(r"위치|어디", question)
+            and selected_key in {"정의", "내용", "위치"}
+            and re.search(r"전방|후방|상부|하부|내부|외부|횡격벽|종격벽", str(value))
+        )
         # Strong row coverage + numeric cell can confirm even when the key label
         # is an internal code like "tc1 또는 tc2".
         numeric_ok = coverage >= 0.67 and bool(
@@ -682,7 +1097,14 @@ def build_deterministic_table_answer(
         )
         # Require the chosen key to be about the asked attribute — blocks
         # unrelated top-ranked noise like "단위 → m" on reporting questions.
-        if not allowance_ok and not corrosion_ok and not numeric_ok and not _is_opaque_table_key(selected_key):
+        if (
+            not allowance_ok
+            and not corrosion_ok
+            and not numeric_ok
+            and not count_ok
+            and not location_ok
+            and not _is_opaque_table_key(selected_key)
+        ):
             if key_anchor < 0.35 and key_in_question < 0.2:
                 if not any(
                     _norm(entity) and _norm(entity) in _norm(selected_key)
@@ -694,7 +1116,7 @@ def build_deterministic_table_answer(
     if selected is None:
         return None
     _score, chunk, selected_key, value = selected
-    citation_chunks = [chunk]
+    citation_chunks = list(verification.get("support_chunks") or [chunk])
     seen_chunks = {
         str(getattr(chunk, "chunk_id", "") or "")
         or f"{getattr(chunk, 'file_name', '')}:{getattr(chunk, 'page_number', '')}"
@@ -750,6 +1172,14 @@ def should_refuse_ungrounded_table(
     """Refuse LLM drafting when retrieved rows barely match the asked subject."""
     question = str(row.get("question") or "")
     parsed = (debug or {}).get("parsed_query") or {}
+    verification = row.get("_cell_verification") or {}
+    if (
+        str(parsed.get("query_type") or "")
+        in {"cell_lookup", "row_lookup", "column_lookup", "condition_lookup"}
+        and verification
+        and not verification.get("passes", False)
+    ):
+        return True
     row_entities = [str(v) for v in (parsed.get("row_entities") or []) if str(v).strip()]
     anchors = _row_anchor_keys(question, row_entities)
     if not evidence:

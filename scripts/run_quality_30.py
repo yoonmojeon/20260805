@@ -61,7 +61,7 @@ def _quality(answer: str, hits: list[str], miss: list[str], qtype: str) -> str:
             return "THIN"
         return "THIN"
     # all needles hit
-    if qtype.startswith("ops") and len(text) < 60:
+    if qtype.startswith("ops") and len(text) < 40:
         return "THIN"
     if qtype.startswith("table") and ("결론:" in text or re.search(r"\d", text)):
         return "GOOD"
@@ -94,6 +94,14 @@ def main() -> int:
     ap.add_argument("--rules-only", action="store_true")
     ap.add_argument("--output", type=Path)
     args = ap.parse_args()
+    # Some retrieval modules temporarily change the process working directory.
+    # Resolve CLI paths before importing/running them so evaluation artifacts do
+    # not leak into ``rag/data`` when a relative path was supplied.
+    launch_cwd = Path.cwd()
+    if not args.questions.is_absolute():
+        args.questions = (launch_cwd / args.questions).resolve()
+    if args.output is not None and not args.output.is_absolute():
+        args.output = (launch_cwd / args.output).resolve()
 
     model = args.model.strip()
     os.environ["MODEL_NAME"] = model

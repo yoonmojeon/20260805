@@ -97,10 +97,48 @@
 | **회의 주제 섞임 줄임** | IGC를 물었는데 MASS 이야기만 나오는 경우를 줄였습니다. |
 | **표 제목 질문** | “이 표 제목이 뭐야?”는 표 머리글에서 바로 답합니다. |
 
-최종 quality-30에서 공통으로 남은 실패는 주로 **파일·쪽 정보가 없는 표 질문**입니다. 특히 첫 정기검사 reporting 범위와 용접 각장 4.5mm 질의는 세 모델 모두 검색 근거를 확정하지 못했습니다.
+### 임베딩을 다시 만들지 않는 계층 검색
+
+본문·표 Chroma 컬렉션과 E5 임베딩은 그대로 두고, 질의 시 후보를 고르는 순서만 보강했습니다.
+
+```text
+TEXT: 질문 → source → 문서 집계·선택 → 선택 문서 안의 조항/쪽 → 문단
+       └─ tcorr, MEPC 84/7/14, DNV-CG-0264 같은 식별자는 literal 후보도 함께 주입
+       └─ 희소 검색은 전체 27만 청크가 아니라 선택 문서 안에서만 수행
+
+TABLE: 질문 → table_id 고정 → 행 anchor → 라벨 행/다단 header path → 열 → 실제 cell 교차검증
+       └─ 표·행·열이 한 셀에서 만나지 않으면 추측하지 않고 확인 불가로 답변
+```
+
+- 짧은 Rule 기호 정의는 전역 BM25를 거치지 않고 문서→조항 검색을 사용합니다. 비교가 필요하면 `MARITIME_RULE_GLOBAL_BM25=1`로 예전 전역 BM25를 잠시 켤 수 있습니다.
+- 계층 본문 검색은 기본 ON이며, 비교 실험에서만 `MARITIME_TEXT_HIERARCHICAL=0`으로 끌 수 있습니다.
+- `IMO 탄소집약도/CII`처럼 출처가 사실상 정해진 질문은 MEPC로 먼저 범위를 좁힙니다.
+- 병합 헤더 표는 `판 및 국부 지지부재 → 항복/허용응력 → 값`처럼 2단 헤더를 복원합니다. 서로 다른 `table_id`의 행과 열은 섞지 않습니다.
+
+따라서 이 변경에는 PDF 재처리, E5 재임베딩, Chroma 재빌드가 필요하지 않습니다. 기존 `full_corpus_715_v1`과 `full_corpus_715_tables_precise_v1`을 그대로 사용합니다.
+
+실제 회귀 확인 결과:
+
+| 질문 | 보강 후 결과 |
+|------|--------------|
+| `구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?` | 12편 117쪽을 찾아 `부식추가(corrosion addition), mm`로 답변 |
+| `IMO 문서 기준으로 탄소집약도 등급 관리 요구사항을 요약해줘` | MEPC 84/6/1·84/6/2·84/6/21 범위에서 보고·등급 관리 근거 검색 |
+| `14편 19쪽, 판과 국부 지지부재 허용응력은?` | 옆 열의 `5장 1절`이 아니라 `6장 4절 및 6장 5절` 선택 |
+
+추가한 라우팅·검색 집중 회귀테스트는 **251개 통과**했습니다. 전체 수집에서는 392개가 통과했고, 현재 변경과 무관한 레거시 정책 기대값 2건과 누락된 선택형 보조 스크립트 1건은 아래 제한사항에 남겨 두었습니다.
+
+새 20문항 회귀셋은 chat 2, OPS 4, 회의 3, 정의 2, 규정 2, 표 5, hybrid 1, 범위 밖 1개로 구성했습니다. Gemma LLM-primary의 엄격 QA는 보강 전 **13/20(65%)**에서 보강 후 **20/20(100%)**로 올라갔고, route mismatch·빈 답변·실행 실패는 모두 0건이었습니다. 평균 전체 응답은 8.98초, 평균 router 호출은 1.86초였습니다. 이 수치는 해당 20문항 회귀셋의 결과이며 모든 임의 질문에 대한 보장은 아닙니다.
+
+범위를 넓힌 50문항 실답변 스트레스 테스트에서는 route가 **50/50**으로 맞았고 빈 답변·실행 실패는 0건이었지만, 엄격 QA는 **25/50(50%)**였습니다. 채팅·OPS·본문·회의·hybrid와 파일/페이지가 특정된 표 질문은 **17/17**이었고, 파일/페이지를 생략한 `table_open`은 **8 PASS / 3 WEAK / 21 FAIL**, `table_reporting`은 0/1이었습니다. 평균 전체 응답은 10.76초, 평균 router 호출은 1.84초였습니다. 따라서 현재 가장 큰 병목은 최상위 라우팅이 아니라 **단서가 적은 범용 표 질문에서 올바른 table_id와 행·열을 찾는 단계**입니다.
+
+별도의 100문항 경로 분류 세트에서는 Gemma LLM-primary가 **100/100**(fallback 0건, 평균 1.42초), Rules-only가 **99/100**(평균 0.24ms)이었습니다. 이 평가는 최종 답변이 아니라 `chat / ops / rag / hybrid` 경로만 채점한 결과입니다. Rules-only의 오분류는 일반 소개 질문 `소개해줘`를 `rag`로 보낸 1건이었습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/run_quality_30.py --model gemma4:12b
+.\.venv\Scripts\python.exe scripts/run_quality_30.py --questions data\eval\hierarchical_retrieval_20.jsonl --model gemma4:12b --output data\eval\hierarchical_retrieval_20_gemma4_12b_after.json
+.\.venv\Scripts\python.exe scripts/run_quality_30.py --questions data\eval\quality_50_open_mix.jsonl --model gemma4:12b --output data\eval\quality_50_open_mix_gemma4_12b_current.json
+.\.venv\Scripts\python.exe scripts/run_route_suite.py --questions data\eval\suite_100_mixed.json --model gemma4:12b --output data\eval\suite_100_mixed_gemma4_12b_current.json
+.\.venv\Scripts\python.exe scripts/run_route_suite.py --questions data\eval\suite_100_mixed.json --model gemma4:12b --rules-only --output data\eval\suite_100_mixed_rules_current.json
 ```
 
 ## 질문이 실제로 어떻게 흐르나
@@ -160,18 +198,18 @@ python scripts/inspect_rag_indexes.py --full
 
 ## 현재 잘 안되는 부분과 해결 방향
 
-신규 30문항은 라우팅과 최종 답변을 함께 채점했습니다. 현재 Gemma의 라우팅은 30/30이지만 최종 QA는 20/30이므로, 앞으로는 라우터보다 아래 항목을 먼저 고치는 편이 효과가 큽니다.
+신규 30문항과 계층 검색 20문항, 범용 표 중심 50문항은 라우팅과 최종 답변을 함께 채점했습니다. 20문항 회귀셋은 20/20이지만 50문항 스트레스 테스트는 25/50이므로, 아래 항목은 계속 관리해야 합니다.
 
 | 현재 문제 | 확인된 예 | 해결 방향 |
 |-----------|-----------|-----------|
-| 회의 문서의 정확한 안건·주제 검색 | MEPC 84 의제, MSC 111 IGC 개정, 암모니아 연료 논의 | 질문별 기대 문서·페이지를 gold로 만들고 문서명/agenda item metadata boost를 추가합니다. |
-| 규칙·정의 검색이 다른 문서로 샘 | `tcorr`, IMO CII 요구, DNV 자율운항 guidance | 선급·IMO·문서종류를 hard filter하고 direct-clause가 없으면 답을 확정하지 않도록 합니다. |
-| 표에서 옆 행·열을 선택 | 시험편 2개, 기관실 격벽 위치, 허용응력 절 번호 | 파일·쪽·table_id를 먼저 고정하고 header path + row key가 동시에 맞는 셀만 답하도록 합니다. |
+| 파일·페이지 없는 범용 표 검색 | 정확한 파일·페이지가 있으면 3/3, 생략하면 `table_open` 8/32 | 전역 table catalog에서 질문의 행·열 literal/별칭을 먼저 찾고, table_id를 고정한 뒤 그 표 안에서 cell을 재검색합니다. 이 개선도 기존 table embedding을 재사용할 수 있습니다. |
+| 회귀셋 밖 회의·규칙 표현 | 다른 회의차수, 긴 기호 목록, 서로 비슷한 KR 편 다수 | 질문별 기대 문서·페이지를 gold로 계속 추가하고 낮은 문서 신뢰도에서는 범위를 확인합니다. |
+| 새로운 복합 표 형태 | 다중 행 요약, 병합 헤더, 정의형 위치 셀 외의 미확인 레이아웃 | table_id·라벨 행·다단 header·cell 교차검증을 새 표 유형으로 확대합니다. |
 | OPS 모델이 도구 수치를 바꿈 | Mistral이 직전 항차 거리·CO2를 다른 값으로 생성 | 숫자 답변은 tool JSON을 검증한 뒤 템플릿으로 출력하거나 deterministic shortcut을 사용합니다. |
-| 기능 질문 답변이 간접적임 | “운항과 규정 문서를 둘 다 찾나?”에 되묻기 | capability chat mode에 직접적인 예/아니오 답변 템플릿을 추가합니다. |
 | 선택형 정밀 표 corpus 보조 스크립트 누락 | `49_vlm_table_pilot.py`, `53_snap_tatr_to_pdf.py` | 과거 원본을 복구하거나 `70_build_precise_table_corpus.py`가 현재 파이프라인만 사용하도록 정리합니다. |
+| 레거시 전체테스트 정책 불일치 | table include 정책 1건, 4-section answer contract 1건 | 현재 인덱싱·답변 정책을 기준으로 테스트 기대값을 합의한 뒤 정리합니다. |
 
-권장 개선 순서는 **표 셀 정합 → 문서/페이지 gold 회귀셋 → OPS 숫자 검증 → capability 답변 → 보조 corpus 스크립트 정리**입니다. 라우팅 프롬프트를 더 복잡하게 만드는 것보다 이 순서가 최종 정답률에 직접적인 효과가 있습니다.
+권장 개선 순서는 **범용 table catalog 검색 → 문서/페이지 gold 회귀셋 확대 → 새 표 레이아웃 추가 → OPS 숫자 검증 → 보조 corpus 스크립트 정리**입니다.
 
 ## 응답속도를 빠르게 하는 방법
 
@@ -207,6 +245,8 @@ $env:MARITIME_RAG_DUAL="0"
 - **라우팅 cache:** 대화 상태와 무관한 동일 질문만 짧게 cache하면 반복 질문의 0.8~1.9초 router 비용을 줄일 수 있습니다.
 - **작은 전용 router 실험:** 답변은 Gemma를 유지하고 더 작은 모델로 source-needs만 판단하는 A/B 평가를 추가합니다.
 - **표 검색 후보 축소:** 파일·쪽·선급이 명시된 질문은 전체 벡터 검색 전에 metadata filter로 후보를 줄입니다.
+
+현재 Rule 기호·문서코드 질문은 선택 문서 내부의 희소 재정렬을 사용하므로 예전 전역 BM25보다 검색 대기시간이 작습니다. 다만 새 Python 프로세스의 첫 질문은 E5/Chroma 로드 때문에 느릴 수 있고, 같은 UI 프로세스의 이후 질문부터 캐시 효과가 적용됩니다.
 
 LLM-primary 자체가 항상 전체 응답을 크게 늦춘 것은 아닙니다. 같은 모델끼리 비교하면 Llama는 6.88→6.84초, Mistral은 7.89→7.58초였고 Gemma만 10.53→11.17초로 약 0.64초 늘었습니다. 실제 병목은 답변 모델 생성과 RAG/표 검색 쪽이 더 큽니다.
 
@@ -306,6 +346,7 @@ python app.py
 
 - UI 강제 경로와 확실한 인사·감사·정체성·기능·메타 질문만 hard guard로 처리한다.
 - 나머지 일반 질문은 선택 모델이 `need_ops`, `need_documents`를 의미적으로 판단한다.
+- LLM이 문서 단서 없는 명확한 OPS 질문을 과도하게 hybrid로 분류하면 불필요한 RAG 호출만 제거한다. `attained와 required도 같이`처럼 한 소스의 두 값을 요청하는 표현은 dual-source 표지가 아니다.
 - 두 source가 모두 필요하면 hybrid이며, 생성 query가 비거나 부정확하면 `split_hybrid_queries()`로 복구한다.
 - 짧은 후속 질문은 이전 경로·주제를 펼친 `Expanded question`과 대화 상태를 모델에 전달한다.
 - 기존 rule/prototype은 LLM 실패·저신뢰 fallback 및 진단용이다.

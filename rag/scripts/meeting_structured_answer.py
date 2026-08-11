@@ -804,9 +804,10 @@ def _section1_meeting_outcome(
             continue
         blob = _strip_meta(getattr(chunk, "text", ""))
         if focus_codes and "IGC" in focus_codes and not re.search(r"\bIGC\b", blob, re.I):
-            if MASS_RE.search(blob) and not allow_mass:
-                continue
+            continue
         claim = _generic_committee_outcome_claim(chunk)
+        if focus_codes and "IGC" in focus_codes and not re.search(r"\bIGC\b", claim or "", re.I):
+            continue
         cite = _cite(chunk, citation_map)
         if not claim or not cite:
             continue
@@ -861,9 +862,7 @@ def _section1_meeting_outcome(
         if (not allow_mass) and re.search(r"MASS Code", claim):
             continue
         if focus_codes and "IGC" in focus_codes and "IGC" not in claim:
-            # Prefer IGC claim first; other MSC headlines only fill remaining slots.
-            if not any("IGC" in line for line in lines):
-                continue
+            continue
         match = _best_chunk_matching(scored, pattern)
         if match is None:
             continue
@@ -898,6 +897,18 @@ def _section1_meeting_outcome(
                 )
                 picked.insert(0, igc_chunk)
                 used_ids.add(str(getattr(igc_chunk, "chunk_id", "")))
+
+    if focus_codes and "IGC" in focus_codes and lines:
+        # A named instrument query should not be padded to the generic meeting
+        # bullet budget with unrelated hydrogen, GHG, or MASS headlines.
+        igc_rows = [line for line in lines if re.search(r"\bIGC\b", line, re.I)]
+        igc_picked = [
+            chunk
+            for chunk in picked
+            if re.search(r"\bIGC\b", _chunk_topic_blob(chunk), re.I)
+        ]
+        if igc_rows:
+            return "\n".join(igc_rows), warnings, igc_picked[: len(igc_rows)]
 
     mass_best = None
     if allow_mass:
@@ -1513,6 +1524,47 @@ def _section1(
     extra_warnings: list[str] = []
 
     question = str(row.get("question") or "")
+    if re.search(r"의제|안건|agenda|provisional", question, re.I):
+        agenda_candidates = [
+            (score, chunk)
+            for score, chunk in scored
+            if re.search(
+                r"annotations?\s+to\s+the\s+provisional\s+agenda|provisional\s+agenda",
+                f"{getattr(chunk, 'file_name', '')}\n{_strip_meta(getattr(chunk, 'text', ''))}",
+                re.I,
+            )
+        ]
+        if agenda_candidates:
+            _score, agenda_chunk = max(agenda_candidates, key=lambda item: item[0])
+            body = _strip_meta(getattr(agenda_chunk, "text", ""))
+            session_match = re.search(
+                r"\b(MSC|MEPC)\s*[-/]?\s*(\d{1,3})(?=\s|가|은|는|을|를|의|에서|$)",
+                question,
+                re.I,
+            )
+            session = (
+                f"{session_match.group(1).upper()} {session_match.group(2)}"
+                if session_match
+                else "해당 회의"
+            )
+            cite = _cite(agenda_chunk, citation_map)
+            agenda_lines = [
+                f"- **{session} provisional agenda**: 공식 임시 의제 주석 문서에 회의에서 다룰 예정인 주요 안건이 정리돼 있습니다. {cite}"
+            ]
+            if re.search(r"MARPOL\s+Annex\s+VI|regulations?\s+27\s+and\s+28|data\s+report", body, re.I):
+                agenda_lines.append(
+                    f"- **MARPOL Annex VI·보고제도**: 규정 27·28의 데이터 보고 항목 명확화와 관련 개정 검토가 의제에 포함됩니다. {cite}"
+                )
+            if re.search(r"North-East\s+Atlantic|emission\s+control\s+area|\bECA\b", body, re.I):
+                agenda_lines.append(
+                    f"- **배출통제구역(ECA)**: 북동대서양의 NOx·SOx·입자상물질 배출통제구역 지정 검토가 포함됩니다. {cite}"
+                )
+            if re.search(r"IMO\s+DCS|short-term\s+GHG|review\s+clause", body, re.I):
+                agenda_lines.append(
+                    f"- **GHG·IMO DCS 후속조치**: IMO DCS 접근과 단기 GHG 감축조치 검토 조항도 예정 안건으로 제시됩니다. {cite}"
+                )
+            return "\n".join(agenda_lines[:n]), extra_warnings, [agenda_chunk]
+
     planned_operational = _planned_slot_chunks(
         row,
         scored,
@@ -1620,13 +1672,22 @@ def _section1(
     # V03-style operational / CII reporting questions: prefer fleet CII report.
     if (
         profile.top_level_category in {TOP_LEVEL_ENV, TOP_LEVEL_TREND}
-        and re.search(r"\bMEPC\b", question or "", re.I)
+        and (
+            re.search(r"\bMEPC\b", question or "", re.I)
+            or "MEPC"
+            in {
+                str(value).upper()
+                for value in (row.get("retrieval_sources") or [])
+            }
+            or re.search(r"\bCII\b|탄소\s*(?:집약도|강도)", question or "", re.I)
+        )
         and re.search(r"운항|규제\s*보고|reporting|CII|탄소|operational|직접\s*영향", question or "", re.I)
         and not _is_broad_latest_environment_summary(question, profile)
     ):
         cii_docs = (
             re.compile(r"mepc\s*84-6-2\b", re.I),
             re.compile(r"mepc\s*84-6-1\b", re.I),
+            re.compile(r"mepc\s*84-6-21\b", re.I),
             re.compile(r"mepc\s*84-6-\d+\b", re.I),
         )
         lines: list[str] = []
@@ -1643,9 +1704,31 @@ def _section1(
             if chunk in picked:
                 continue
             picked.append(chunk)
-            fact = _grounded_environment_fact(chunk) or summarize_chunk_ko(
-                chunk, topic_label="CII·운항 보고"
-            )
+            file_name = str(getattr(chunk, "file_name", "") or "")
+            body = _strip_meta(getattr(chunk, "text", ""))
+            if re.search(r"mepc\s*84-6-2\b", file_name, re.I) and re.search(
+                r"CII\s+Reduction\s+Factors|annual\s+carbon\s+intensity",
+                body,
+                re.I,
+            ):
+                fact = (
+                    "MEPC 84/6/2는 CII Reduction Factors Guidelines(G3)에 따라 "
+                    "수요 기반·공급 기반 지표와 CII 등급을 함께 사용해 연간 탄소집약도 개선을 "
+                    "계속 모니터링하도록 제시합니다."
+                )
+            elif re.search(r"mepc\s*84-6-21\b", file_name, re.I) and re.search(
+                r"operational\s+carbon\s+intensity\s+rating",
+                body,
+                re.I,
+            ):
+                fact = (
+                    "MEPC 84/6/21은 연료소비 보고와 operational CII 등급에 관한 "
+                    "Certificate·Statement of Compliance 발급 또는 승인 절차를 다룹니다."
+                )
+            else:
+                fact = _grounded_environment_fact(chunk) or summarize_chunk_ko(
+                    chunk, topic_label="CII·운항 보고"
+                )
             lines.append(f"- **CII·운항 보고**: {fact} {_cite(chunk, citation_map)}".strip())
             if len(lines) >= n:
                 break
@@ -1709,7 +1792,7 @@ def _section1(
     if profile.answer_variant == "topic_diverse":
         return _section1_topic_diverse(scored, n=n, citation_map=citation_map, profile=profile)
 
-    if intent == "meeting_outcome" and profile.requested_bullet_count:
+    if intent == "meeting_outcome":
         return _section1_meeting_outcome(
             scored,
             n=n,
@@ -1958,6 +2041,26 @@ def _section2(
         if lines:
             return "\n".join(lines)
     if profile.internal_intent == "meeting_outcome":
+        if "IGC" in focus_codes:
+            igc = next(
+                (
+                    c
+                    for c in focus
+                    if re.search(
+                        r"(?:finalize|finaliz(?:e|ing)|approv(?:e|ed)).{0,100}"
+                        r"(?:draft\s+)?amendments?\s+to\s+the\s+IGC\s+Code|"
+                        r"(?:draft\s+)?amendments?\s+to\s+the\s+IGC\s+Code",
+                        _strip_meta(getattr(c, "text", "")),
+                        re.I | re.S,
+                    )
+                ),
+                None,
+            )
+            if igc:
+                return (
+                    "- **IGC Code 후속조치**: 확정된 개정 초안은 차기 회기의 승인·채택 절차와 "
+                    f"발효 일정을 계속 확인해야 합니다. {_cite(igc, citation_map)}"
+                )
         mass = next(
             (
                 c

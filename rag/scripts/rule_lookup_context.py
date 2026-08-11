@@ -256,7 +256,14 @@ def enrich_rule_lookup_chunks(
         any("dnv-cg-0264" in str(getattr(c, "file_name", "")).lower() for c in retrieved)
         and bool(re.search(r"자율|autonomous|remote|smart\s*vessel|mass", ql, re.I))
     )
-    if chunks_dir is not None and retrieved and (
+    definition_lookup = bool(
+        re.search(
+            r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|(?<!규)정의)",
+            str(row.get("question") or ""),
+            re.I,
+        )
+    )
+    if chunks_dir is not None and retrieved and not definition_lookup and (
         len(original_substantive) < min(2, len(retrieved))
         or len(substantive) < min(2, len(retrieved))
         or broad_dnv_autonomous

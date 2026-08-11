@@ -145,6 +145,11 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
     from question_requirements import analyze_requirements
 
     requirements = analyze_requirements(q, row)
+    if not org and requirements.organization:
+        org = requirements.organization
+        number = requirements.session_number
+        plan.session_org = org
+        plan.session_number = number
     plan.document_identifiers = requirements.document_identifiers
     row["_question_requirements"] = requirements.to_dict()
 
@@ -467,9 +472,17 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
         # an incidental matching paragraph (for example ROC status on p.88).
         # Only create the clause slot when the parsed request asks for a
         # substantive facet beyond document identification.
+        definition_lookup = bool(
+            re.search(
+                r"(?:기호.{0,16}(?:뜻|의미)|무엇을\s*뜻|무슨\s*뜻|"
+                r"(?<!규)정의|means|meaning|defined\s+as)",
+                q,
+                re.I,
+            )
+        )
         asks_for_specific_clause = any(
             facet != "document" for facet in requirements.facets
-        )
+        ) or definition_lookup
         if direct_terms and asks_for_specific_clause:
             plan.slots.append(
                 EvidenceSlot(
