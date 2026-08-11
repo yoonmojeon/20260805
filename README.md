@@ -161,7 +161,7 @@ TABLE: 질문 → table_id 고정 → 행 anchor → 라벨 행/다단 header pa
 | [docs/사용매뉴얼.md](docs/사용매뉴얼.md) | UI 실행·확인 절차 |
 | [docs/TABLE_EMBEDDING_PIPELINE.md](docs/TABLE_EMBEDDING_PIPELINE.md) | 정밀 표 인덱스 만드는 법 |
 
-## 코퍼스 규모 (이 PC 기준)
+## 코퍼스 규모 (현재 인덱스 기준)
 
 | 구분 | 값 | 메모 |
 |------|-----|------|
@@ -172,6 +172,8 @@ TABLE: 질문 → table_id 고정 → 행 anchor → 라벨 행/다단 header pa
 | 쓸 만한 표 없음 | **179** | |
 | TOC만/격리 | **7** | KR TOC 6 + ABS quarantine 1 |
 | 표 추출 실패 | **0** | |
+
+원본 PDF는 Git에 포함되지 않습니다. 현재 `llmagent/data/raw_pdfs`에는 PDF가 없지만, 복사된 본문·표 인덱스와 표 crop, 운항 DB만으로 UI 검색과 위 평가를 실행할 수 있습니다. PDF 재처리·인덱스 재생성·원문 페이지 직접 열기가 필요할 때만 원래 작업공간의 PDF를 `data/raw_pdfs` 아래로 복사하면 됩니다. 앱 시작 배너는 실제 PDF 파일이 있을 때만 `raw_pdfs: 연결됨`으로 표시합니다.
 
 ```powershell
 python scripts/audit_text_coverage.py

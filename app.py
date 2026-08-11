@@ -95,7 +95,8 @@ def build_answer_html(
 def _status_line() -> str:
     ops = "OK" if ops_db_ready() else "미구축 (python ops/scripts/load_hodata.py)"
     rag = "OK" if rag_index_ready() else "미구축"
-    pdfs = "연결됨" if RAW_PDFS_DIR.exists() else "없음"
+    raw_pdf_available = RAW_PDFS_DIR.exists() and any(RAW_PDFS_DIR.rglob("*.pdf"))
+    pdfs = "연결됨" if raw_pdf_available else "없음(기존 인덱스 질의 가능)"
     return (
         f"운항DB: {ops} &nbsp;|&nbsp; 문서인덱스({DEFAULT_RAG_COLLECTION}): {rag} "
         f"&nbsp;|&nbsp; raw_pdfs: {pdfs}"
