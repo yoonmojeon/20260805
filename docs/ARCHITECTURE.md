@@ -30,7 +30,8 @@ UI 절차는 [사용매뉴얼.md](사용매뉴얼.md), 표 인덱스 빌드는
              PDF 본문  → 텍스트 청크 → Chroma (본문)
              PDF 표    → TATR 정밀 표 → Chroma (표)
 
-[질의 타임]  질문 → intent_router → chat | ops | rag | hybrid → 답
+[질의 타임]  질문 → minimal hard guard → selected LLM semantic router
+             → chat | ops | rag | hybrid → 검색/도구 → same selected LLM answer
 ```
 
 라우팅은 인덱스를 만드는 단계가 아닙니다. 이미 준비된 DB/Chroma 중
@@ -69,7 +70,7 @@ MSC 111 주요 결과 알려줘
 - “올해 우리 배 CII” → **ops** (온보드 계산)
 - “MEPC에서 CII 규제” → **rag** (문서)
 
-이 구분을 라우터가 단서·슬롯으로 수행합니다.
+이 구분을 UI에서 선택한 Ollama 모델이 질문 전체의 의미와 대화 문맥을 보고 수행합니다.
 
 ---
 
@@ -246,46 +247,49 @@ app.py (Gradio)
 - `prompts/chat.py` — 안내
 - `prompts/ops.py` — 운항 에이전트
 - `prompts/rag.py` — RAG 정체성
-- `prompts/router_prompt.py` — LLM 라우터용 (저신뢰 구간)
+- `prompts/router_prompt.py` — primary semantic source router
 
-단서·점수: `router/cues.py`  
+fallback 단서·점수: `router/cues.py`
 대화 상태: `router/dialogue.py`  
 질문 펼치기·hybrid 분해: `router/rewrite.py`
 
 ### 4.2 분류 원칙
 
-- 문장 전체를 외우지 않고 **단서·슬롯**만 본다.
-- 구어체도 ops/rag로 보낸다. (“지금 배 어디야”, “작년에 회의에서 CII…”)
-- 단서가 없으면 **chat에서 되묻기**. 추측으로 rag에 보내지 않는다.
-- 명시적 dual/비교만 **hybrid**. 점수만 비슷하면 chat.
-- CII/배출은 단어가 아니라 단서로 나눈다.
-  - 우리/올해/항차 → ops
-  - MEPC/규정/회의 → rag
+- Router call은 답을 만들지 않고 `need_ops`, `need_documents`, `confidence`, 짧은 이유와 source별 query만 JSON으로 반환한다.
+- Python이 두 boolean을 `chat / ops / rag / hybrid`로 deterministic하게 변환한다.
+- Router와 Answer는 **같은 active model**을 쓰되 반드시 별도 호출이다. 별도 `ROUTER_MODEL`은 없다.
+- CII/배출 같은 중첩 용어도 keyword 수가 아니라 source requirement로 나눈다.
+  - “올해 우리 배 CII” → ops
+  - “MEPC CII 규제” → rag
+  - “우리 배 CII가 MEPC 기준에 맞나” → hybrid
 - 능력 질문(“운항이랑 문서 둘 다 가능해?”)은 **chat** (내용 요청이 아님).
+- RAG 안의 `TEXT / TABLE / BOTH` 선택은 이 변경 대상이 아니며 기존 parser/rule을 유지한다.
 
 ### 4.3 대략적인 결정 순서
 
 1. 강제 경로 (UI에서 ops/rag/chat/hybrid 지정)
 2. 화행: 인사 / 감사 / 메타 / 능력·소개 → `chat`
-3. 대화 상태 기반 후속·전환 (짧은 “그럼/그거”, 경로 전환 표현)
-4. 키워드 점수 (`OPS_PATTERNS` / `RAG_PATTERNS` + overlap 보정)
-5. 프로토타입 투표
-6. (옵션) Ollama JSON 라우터
-7. 그래도 애매하면 `chat` clarify
+3. `expand_question()`으로 현재 질문과 대화 상태를 결합
+4. 선택 모델에 source-needs JSON 요청 (`temperature=0`, `stream=false`, `think=false` 우선)
+5. confidence 0.65 이상인 정상 결과를 route로 변환
+6. timeout, unavailable, invalid/empty JSON, 필드·boolean 오류, 저신뢰면 기존 rule score → prototype → technical shape → safe chat 순으로 fallback
+
+기존 `OPS_PATTERNS`, `RAG_PATTERNS`, `score_question()`, `prototype_vote()`는 삭제하지 않고 fallback/diagnostic으로만 남깁니다. `RouteDecision`에는 모델, source booleans, LLM 성공/실패, fallback 이유, latency가 기록됩니다.
 
 ### 4.4 Hybrid
 
 원문을 그대로 두 번 넣지 않습니다.
 
-1. `split_hybrid_queries`로 ops용·rag용 질의로 분해
-2. 각각 실행
-3. 출처를 라벨해 합침 (`services/hybrid_service.py`)
+1. Router가 정상적인 `ops_query`, `rag_query`를 주면 사용
+2. 비었거나 품질이 나쁘면 `split_hybrid_queries`로 복구
+3. SQLite와 RAG를 각각 실행
+4. 같은 active model의 별도 합성 호출로 두 근거를 결합하고, 실패 시 출처 라벨 merge로 복구
 
 ### 4.5 멀티턴
 
 `dialogue_state`에 최근 경로·주제·엔티티를 유지합니다.
-짧은 후속 질문은 이전 경로를 유지하거나, “문서 쪽으로 / 운항으로” 같은
-전환 단서로 경로를 바꿉니다.
+`current`, `expanded`, `last_route`, `last_topic`, `last_question`을 Router에게 전달합니다.
+짧은 후속 질문도 확장된 의미를 기준으로 source를 다시 판단합니다.
 
 ---
 
@@ -295,7 +299,10 @@ app.py (Gradio)
 flowchart TD
   U[사용자 질문] --> APP[app.py]
   APP --> ORCH[orchestrator.handle_question]
-  ORCH --> RT{intent_router}
+  ORCH --> HG{minimal hard guard}
+  HG -->|일반 질문| LLM[Selected Ollama Model<br/>Semantic Router Call]
+  HG -->|manual / speech act| RT{route}
+  LLM --> RT
   RT -->|chat| CH[chat 템플릿]
   RT -->|ops| OPS[maritime_agent + tools]
   OPS --> DB[(maritime.db)]
@@ -305,15 +312,18 @@ flowchart TD
   RT -->|hybrid| HY[ops_query + rag_query]
   HY --> OPS
   HY --> RAG
+  OPS --> ANS[Same Selected Model<br/>Answer Call]
+  RAG --> ANS
+  HY --> ANS
   CH --> OUT[답변 + route 메타 + dialogue_state]
-  OPS --> OUT
-  RAG --> OUT
+  ANS --> OUT
 ```
 
 개념상 응답에 실리는 것:
 
 - 답변 텍스트
-- `route` / 점수 / method (rules, multiturn, llm …)
+- `route`, `need_ops`, `need_documents`, confidence, method
+- active/router/answer model, router latency, fallback 여부·이유
 - (ops) 생성 파일, 지도 HTML
 - 다음 턴용 `dialogue_state`
 
@@ -355,7 +365,18 @@ Git에 안 올리는 것(일반적): 원본 PDF, 모델 가중치, Chroma 바이
 
 - 품질 스모크: `python scripts/run_quality_30.py`
 - 카테고리 스모크: `python scripts/run_smoke_categories.py`
-- 라우터만: `python tests/run_router_eval.py`
+- rules-only vs 3모델 라우터: `python tests/run_router_eval.py`
+- 3모델 router + E2E 전체: `python scripts/compare_models.py`
+
+2026-08-11 동일 조건 실측 결과:
+
+| 모델 | Router | Held-out | Multi-turn | E2E QA | mismatch | empty/failure | Router 평균 | E2E 평균 |
+|------|--------|----------|------------|--------|----------|---------------|-------------|----------|
+| llama3.1:8b | 91.8% | 100% | 90% | 25/30 | 0 | 0 | 652 ms | 5.9 s |
+| **gemma4:12b** | **96.9%** | **100%** | 90% | **27/30** | 0 | 0 | 1,529 ms | 9.1 s |
+| mistral-nemo:12b | 94.4% | 100% | 90% | 22/30 | 4 | 0 | 843 ms | 6.0 s |
+
+rules-only는 전체 192/195(98.5%)였지만 semantic held-out은 20/23(87.0%)였고, LLM-primary 세 모델은 held-out 23/23(100%)였습니다. E2E quality 우선 규칙에 따라 `gemma4:12b`를 기본값으로 선택했습니다. 상세 JSON은 `data/eval/model_comparison.json`입니다.
 
 `route_mismatch`면 단서/라우터 쪽을 보고, ops `weak`면 DB·툴, rag `weak`면 검색·커버리지를 본다.
 

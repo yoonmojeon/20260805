@@ -1,16 +1,52 @@
 # MaritimeOpsRAG
 
 운항 SQLite(`ship-data`)와 선급·IMO 문서 RAG(`MaritimeRAG`)를 한 Gradio UI에서 쓰는 프로젝트입니다.
-질문이 오면 라우터가 **안내 / 운항 DB / 문서 인덱스 / 둘 다** 중 어디로 보낼지 고릅니다.
+질문이 오면 UI에서 선택한 Ollama 모델이 질문 전체의 의미를 보고 **안내 / 운항 DB / 문서 인덱스 / 둘 다** 중 필요한 소스를 고릅니다. 같은 모델이 검색 이후의 답변도 생성하지만, routing과 answer는 서로 다른 호출입니다.
 
 ```
-질문 → intent_router → chat | ops | rag | hybrid
-                   ↘ Gradio UI (app.py)
+질문 → minimal hard guard → selected model semantic router
+     → chat | ops | rag | hybrid → DB/RAG 실행 → same selected model answer
 ```
 
 저장소: [github.com/yoonmojeon/20260805](https://github.com/yoonmojeon/20260805)
 
-## 최근 업데이트 (무엇이 나아졌나)
+## LLM-primary routing 업데이트
+
+기존의 `rule → prototype → 애매할 때 LLM`을 다음 흐름으로 바꿨습니다.
+
+```text
+manual/speech-act hard guard
+  → selected Ollama model (need_ops / need_documents)
+  → Python이 chat / ops / rag / hybrid 결정
+  → SQLite/Chroma 검색
+  → 같은 selected model이 근거 기반 답변
+```
+
+`OPS_PATTERNS`, `RAG_PATTERNS`, prototype, technical shape은 삭제하지 않았습니다. Ollama timeout, 잘못된/빈 JSON, 필드·boolean 오류, confidence 0.65 미만일 때만 fallback/diagnostic으로 사용합니다. RAG 내부 `TEXT / TABLE / BOTH`는 종전처럼 `services/retrieval_mode.py`의 parser/rule 구조를 유지합니다.
+
+### 실제 3모델 비교 (2026-08-11)
+
+동일 router prompt, DB, Chroma/BM25, 질문, retrieval/answer 설정으로 비교했습니다. 전체 원본은 `data/eval/model_comparison.json`에 있습니다.
+
+| 모델 | Router 전체 | Held-out | Multi-turn | E2E QA | Route mismatch | Empty/failure | 평균 Router | 평균 E2E |
+|------|-------------|----------|------------|--------|----------------|---------------|-------------|----------|
+| `llama3.1:8b` | 91.8% | 100.0% | 90.0% | 25/30 | 0 | 0 | 652 ms | 5.9 s |
+| **`gemma4:12b`** | **96.9%** | **100.0%** | 90.0% | **27/30** | 0 | 0 | 1,529 ms | 9.1 s |
+| `mistral-nemo:12b` | 94.4% | 100.0% | 90.0% | 22/30 | 4 | 0 | 843 ms | 6.0 s |
+
+선정 규칙은 E2E QA → held-out → overall router → failure → multi-turn → latency 순입니다. Gemma가 QA에서 차점보다 2건 앞서고 router 정확도도 가장 높아 기본 모델을 **`gemma4:12b`**로 변경했습니다. UI에서는 세 모델을 계속 선택할 수 있습니다.
+
+구조 비교에서는 rules-only가 기존 규칙 중심 golden에서 98.5%였지만 semantic held-out은 87.0%였습니다. 세 LLM-primary 모델은 같은 held-out에서 모두 100%였습니다. 즉 기존 표현에는 rules가 강하고, 새로운 의미 표현·hybrid 판단에는 semantic router가 더 잘 일반화했습니다.
+
+```powershell
+# rules-only vs LLM-primary + 3모델 router/E2E 전체 비교
+.\.venv\Scripts\python.exe scripts\compare_models.py
+
+# 완료된 router 결과를 재사용해 E2E만 다시 실행
+.\.venv\Scripts\python.exe scripts\compare_models.py --router-results data\eval\router_comparison.json
+```
+
+## 기존 RAG 품질 개선
 
 질문 하나하나를 임시로 고친 게 아니라, **자주 틀리던 패턴**을 막았습니다.
 
@@ -22,18 +58,10 @@
 | **회의 주제 섞임 줄임** | IGC를 물었는데 MASS 이야기만 나오는 경우를 줄였습니다. |
 | **표 제목 질문** | “이 표 제목이 뭐야?”는 표 머리글에서 바로 답합니다. |
 
-30개 샘플 질문으로 맞춰 본 결과(키워드가 답에 들어갔는지):
-
-| 모델 | 맞음 | 틀림 | 메모 |
-|------|------|------|------|
-| `llama3.1:8b` | **27**/30 | 3 | 기본으로 쓰기 좋음(가장 빠름) |
-| `gemma4:12b` | **27**/30 | 3 | 문장이 조금 더 매끄러운 편 |
-| `mistral-nemo:12b` | **26**/30 | 4 | 비슷하고 조금 더 느림 |
-
-아직 틀리는 건 주로 **어느 파일인지 안 알려 준 표 질문** 몇 개입니다. (예: 평가 방법 SP-A, 용접 각장 4.5mm)
+최종 quality-30에서 공통으로 남은 실패는 주로 **파일·쪽 정보가 없는 표 질문**입니다. 특히 첫 정기검사 reporting 범위와 용접 각장 4.5mm 질의는 세 모델 모두 검색 근거를 확정하지 못했습니다.
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/run_quality_30.py --model llama3.1:8b
+.\.venv\Scripts\python.exe scripts/run_quality_30.py --model gemma4:12b
 ```
 
 ## 질문이 실제로 어떻게 흐르나
@@ -123,14 +151,14 @@ pip install -r requirements.txt
 
 python ops/scripts/load_hodata.py
 
-ollama pull llama3.1:8b
+ollama pull gemma4:12b
 ollama serve
 
 python app.py
 ```
 
 브라우저: http://127.0.0.1:7860  
-UI에서 답변 모델(`llama3.1:8b` / `gemma4:12b` / `mistral-nemo:12b`)을 고를 수 있습니다.  
+UI에서 라우팅+답변 모델(`gemma4:12b` / `llama3.1:8b` / `mistral-nemo:12b`)을 고를 수 있으며 기본값은 `gemma4:12b`입니다. 라우팅 방식은 `LLM-primary`가 기본·권장값이고, 결과 비교를 위해 `Rules-only`도 UI에서 선택할 수 있습니다. LLM-primary에서는 규칙 라우터가 모델 호출 실패 시 fallback으로 동작합니다.
 확인 절차는 [docs/사용매뉴얼.md](docs/사용매뉴얼.md).
 
 ## 라우팅
@@ -142,13 +170,15 @@ UI에서 답변 모델(`llama3.1:8b` / `gemma4:12b` / `mistral-nemo:12b`)을 고
 | rag | MEPC/MSC, 선급 Rule, 표 | Chroma + `prompts/rag.py` |
 | hybrid | 우리 CII랑 MEPC 규제 같이 | ops·rag를 나눠 돌린 뒤 합침 |
 
-- 문장 전체를 맞추지 않고 단서·슬롯만 본다.
-- 단서 없으면 chat에서 되묻는다. 문서 RAG로 추측 전송하지 않는다.
-- hybrid는 “둘 다 / 비교”처럼 명시될 때만.
-- 짧은 후속 질문은 이전 경로·주제를 이어 붙인 뒤 다시 분류한다.
+- UI 강제 경로와 확실한 인사·감사·정체성·기능·메타 질문만 hard guard로 처리한다.
+- 나머지 일반 질문은 선택 모델이 `need_ops`, `need_documents`를 의미적으로 판단한다.
+- 두 source가 모두 필요하면 hybrid이며, 생성 query가 비거나 부정확하면 `split_hybrid_queries()`로 복구한다.
+- 짧은 후속 질문은 이전 경로·주제를 펼친 `Expanded question`과 대화 상태를 모델에 전달한다.
+- 기존 rule/prototype은 LLM 실패·저신뢰 fallback 및 진단용이다.
 - UI에서 경로 강제, `운항만/문서만/둘 다로 다시` 가능.
-- UI에서 Ollama 답변 모델 3종 선택 가능.
+- UI에서 선택한 Ollama 모델이 별도 호출로 routing과 answer를 모두 담당한다. 별도 `ROUTER_MODEL`은 없다.
 - 라우터 평가: `python tests/run_router_eval.py`
+- 전체 모델 비교: `python scripts/compare_models.py`
 
 ## 데이터
 

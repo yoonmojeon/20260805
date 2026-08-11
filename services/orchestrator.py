@@ -1,6 +1,7 @@
 """Top-level question handler: route → chat / ops / rag / hybrid."""
 from __future__ import annotations
 
+import time
 from typing import Any, Literal
 
 from router.dialogue import DialogueState, parse_dialogue_state
@@ -27,6 +28,7 @@ def handle_question(
 ) -> dict[str, Any]:
     from services.llm_models import normalize_llm_model
 
+    started = time.perf_counter()
     q = (question or "").strip()
     model = normalize_llm_model(llm_model)
     state = parse_dialogue_state(dialogue_state, last_route)
@@ -51,6 +53,7 @@ def handle_question(
         force_route=forced,
         last_route=state.last_route,
         dialogue_state=state,
+        active_model=model,
     )
     next_state = decision.dialogue_state or state.to_dict()
     effective_q = (decision.expanded_question or q).strip()
@@ -93,9 +96,29 @@ def handle_question(
         meta["retrieval_mode"] = classify_retrieval_mode(
             (decision.rag_query if decision.route == "hybrid" else None) or effective_q
         ).value
+    answer = str(result.get("answer") or "")
+    meta.update(
+        {
+            "active_model": model,
+            "router_model": decision.router_model or model,
+            "answer_model": model,
+            "router_latency_ms": decision.router_latency_ms,
+            "router_fallback_used": decision.fallback_used,
+            "answer_empty": bool(meta.get("answer_empty"))
+            or bool(meta.get("hybrid_synthesis_empty"))
+            or not bool(answer.strip()),
+            "answer_error": str(
+                result.get("error")
+                or meta.get("answer_error")
+                or meta.get("hybrid_synthesis_error")
+                or ""
+            ),
+            "end_to_end_latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
+    )
 
     return {
-        "answer": result.get("answer", ""),
+        "answer": answer,
         "route": decision.to_dict(),
         "history": result.get("history") or history or [],
         "files": result.get("files") or [],

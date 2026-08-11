@@ -48,13 +48,13 @@ from answer_depth_guidance import (
     category_bullet_budget,
 )
 
-# Default LLM for this PC. Override with MARITIME_OLLAMA_MODEL / MODEL_NAME.
-# Table-QA compare (10 Qs): llama3.1:8b beat gemma4:12b on grounded answers + latency.
+# Default LLM selected by the routing + quality-30 end-to-end comparison.
+# Override with MARITIME_OLLAMA_MODEL / MODEL_NAME.
 DEFAULT_OLLAMA_MODEL = (
     os.environ.get("MARITIME_OLLAMA_MODEL")
     or os.environ.get("MODEL_NAME")
-    or "llama3.1:8b"
-).strip() or "llama3.1:8b"
+    or "gemma4:12b"
+).strip() or "gemma4:12b"
 DEFAULT_OLLAMA_BASE = os.environ.get("MARITIME_OLLAMA_BASE", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_KEEP_ALIVE = os.environ.get("MARITIME_OLLAMA_KEEP_ALIVE", "24h").strip() or "24h"
 PILOT_REFERENCE_PATH = Path(__file__).resolve().parent.parent / "data/eval/pilot_validation_reference.jsonl"

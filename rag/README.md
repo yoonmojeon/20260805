@@ -49,7 +49,7 @@ Manifest와 평가 데이터는 Git에 포함되지만 PDF, 전처리 산출물,
 - NVIDIA GPU 권장
   - 레이아웃 탐지와 대규모 임베딩은 CPU에서도 가능하지만 오래 걸립니다.
 - Ollama
-  - 기본 답변 모델: `llama3.1:8b`
+  - 기본 라우팅+답변 모델: `gemma4:12b`
   - 기본 API 주소: `http://localhost:11434`
 - 레이아웃 모델
   - `models/layout/yolov10m_doclaynet.pt`
@@ -74,7 +74,7 @@ pip install -r requirements.txt
 Ollama 설치 후 기본 모델을 준비합니다.
 
 ```powershell
-ollama pull llama3.1:8b
+ollama pull gemma4:12b
 ollama serve
 ```
 
@@ -261,7 +261,7 @@ python scripts/test_rule_lookup_answer.py
 | 항목 | 기본값 |
 |---|---|
 | provider | Ollama |
-| model | `llama3.1:8b` |
+| model | `gemma4:12b` |
 | base URL | `http://localhost:11434` |
 | 빠른 모드 | 검색 및 응답 지연 최소화 |
 | 정확 모드 | 더 넓은 문맥과 근거 기반 LLM 합성 |

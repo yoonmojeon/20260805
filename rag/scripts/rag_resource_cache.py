@@ -16,6 +16,15 @@ from embedding_policy import (
 _UNIFIED_COLLECTION_CACHE: dict[str, tuple[str, Any, str, dict]] = {}
 
 
+def _resolve_chroma_path(root: Path, manifest: dict) -> Path:
+    """Prefer the Chroma directory beside the manifest after a project move/copy."""
+    local_path = root / "chroma"
+    if local_path.exists():
+        return local_path.resolve()
+    configured = Path(str(manifest.get("chroma_path") or local_path))
+    return configured.expanduser().resolve()
+
+
 def unified_index_fingerprint(unified_id: str, index_dir: Path) -> str:
     root = index_dir / f"unified_{unified_id}"
     manifest_path = root / "index_manifest.json"
@@ -24,7 +33,7 @@ def unified_index_fingerprint(unified_id: str, index_dir: Path) -> str:
     parts = [str(manifest_path.stat().st_mtime_ns)]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        chroma_path = Path(str(manifest["chroma_path"]))
+        chroma_path = _resolve_chroma_path(root, manifest)
         chroma_db = chroma_path / "chroma.sqlite3"
         if chroma_db.exists():
             parts.append(str(chroma_db.stat().st_mtime_ns))
@@ -98,8 +107,9 @@ def load_unified_collection(
 
     root = index_dir / f"unified_{unified_id}"
     manifest = json.loads((root / "index_manifest.json").read_text(encoding="utf-8"))
+    chroma_path = _resolve_chroma_path(root, manifest)
     client = chromadb.PersistentClient(
-        path=manifest["chroma_path"],
+        path=str(chroma_path),
         settings=Settings(anonymized_telemetry=False),
     )
     collection = client.get_collection(manifest["collection_name"])

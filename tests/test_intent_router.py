@@ -127,7 +127,14 @@ def test_shape_overrides_llm_chat_to_rag():
     from router import intent_router as ir
 
     def fake_llm(*_a, **_k):
-        return {"route": "chat", "ops_query": "", "rag_query": "", "confidence": 0.4}
+        return {
+            "need_ops": False,
+            "need_documents": False,
+            "ops_query": "",
+            "rag_query": "",
+            "reason": "검색 불필요",
+            "confidence": 0.4,
+        }
 
     q = "요구되는 최소 판두께 값은?"
     original_score = ir.score_question
@@ -141,7 +148,8 @@ def test_shape_overrides_llm_chat_to_rag():
     try:
         d = ir.route_question(q, use_llm_fallback=True)
         assert d.route == "rag", (d.route, d.method, d.reason)
-        assert "shape" in (d.method or "")
+        assert d.fallback_used is True
+        assert "shape" in str((d.slots or {}).get("fallback_method") or "")
     finally:
         ir.score_question = original_score  # type: ignore[assignment]
         ir._llm_classify = original_llm  # type: ignore[assignment]
@@ -211,3 +219,60 @@ def test_force_route():
     d = route_question("아무 말", force_route="ops", use_llm_fallback=False)
     assert d.route == "ops"
     assert d.method == "manual"
+
+
+def test_llm_primary_derives_route_from_source_needs():
+    from router import intent_router as ir
+
+    seen = {}
+
+    def fake_llm(*_a, **kwargs):
+        seen["model"] = kwargs["model"]
+        return {
+            "need_ops": True,
+            "need_documents": True,
+            "confidence": 0.93,
+            "reason": "선박 수치와 규정이 모두 필요함",
+            "ops_query": "현재 우리 선박 탄소 성적 조회",
+            "rag_query": "국제 탄소집약도 기준 검색",
+        }
+
+    original = ir._llm_classify
+    ir._llm_classify = fake_llm  # type: ignore[assignment]
+    try:
+        d = ir.route_question(
+            "우리 배 탄소 성적이 국제 기준에 맞는지 봐줘",
+            use_llm_fallback=True,
+            active_model="gemma4:12b",
+        )
+    finally:
+        ir._llm_classify = original  # type: ignore[assignment]
+    assert d.route == "hybrid"
+    assert d.method == "llm"
+    assert d.need_ops is True and d.need_documents is True
+    assert d.model == d.router_model == "gemma4:12b"
+    assert seen["model"] == "gemma4:12b"
+
+
+def test_invalid_boolean_uses_deterministic_fallback():
+    from router import intent_router as ir
+
+    def fake_llm(*_a, **_kwargs):
+        return {
+            "need_ops": "true",
+            "need_documents": False,
+            "confidence": 0.99,
+            "reason": "invalid boolean",
+            "ops_query": "",
+            "rag_query": "",
+        }
+
+    original = ir._llm_classify
+    ir._llm_classify = fake_llm  # type: ignore[assignment]
+    try:
+        d = ir.route_question("지금 배 어디야?", use_llm_fallback=True)
+    finally:
+        ir._llm_classify = original  # type: ignore[assignment]
+    assert d.route == "ops"
+    assert d.method == "llm_fallback_rules"
+    assert d.fallback_used is True

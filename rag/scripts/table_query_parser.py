@@ -241,6 +241,30 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
     return _dedupe(rows), _dedupe(cols)
 
 
+def _short_domain_from_long_rows(rows: list[str]) -> list[str]:
+    """Pull short domain anchors out of long subject phrases for schema overlap."""
+    # Too-generic tails that match almost every tank/space table.
+    skip = {"탱크", "구역", "갑판", "격벽"}
+    extras: list[str] = []
+    for row in rows:
+        text = str(row or "")
+        if len(text) < 12:
+            continue
+        for term in ROW_DOMAIN_TERMS:
+            if term in skip:
+                continue
+            if term in text and term != text:
+                extras.append(term)
+        for m in re.finditer(
+            r"[가-힣A-Za-z0-9]{2,}(?:탱크|거더|갑판|구역|격벽|외판|웨브)",
+            text,
+        ):
+            tok = m.group(0)
+            if tok not in skip and len(tok) >= 4:
+                extras.append(tok)
+    return extras
+
+
 def _infer_row_entities(question: str) -> list[str]:
     rows: list[str] = []
     quoted = [normalize_token(v) for v in QUOTED_RE.findall(question)]
@@ -249,9 +273,16 @@ def _infer_row_entities(question: str) -> list[str]:
     for m in MATERIAL_GRADE_RE.finditer(question):
         rows.append(normalize_material_grade(m.group(0)))
         rows.append(normalize_token(m.group(0)))
-    for term in ROW_DOMAIN_TERMS:
-        if term in question:
-            rows.append(term)
+    # Prefer longest domain hits so bare "탱크" does not fire inside "호퍼탱크".
+    domain_hits = [term for term in ROW_DOMAIN_TERMS if term in question]
+    domain_hits.sort(key=len, reverse=True)
+    kept: list[str] = []
+    for term in domain_hits:
+        if any(term != other and term in other for other in domain_hits):
+            # Skip strict substring of a longer matched domain term.
+            continue
+        kept.append(term)
+    rows.extend(kept)
     return _dedupe(rows)
 
 
@@ -311,6 +342,7 @@ def parse_table_query(question: str) -> ParsedTableQuery:
     q = normalize_token(question)
     natural_rows, natural_cols = _natural_slots(q)
     row_entities = _dedupe(_infer_row_entities(q) + natural_rows)
+    row_entities = _dedupe(row_entities + _short_domain_from_long_rows(row_entities))
     column_entities = _dedupe(_infer_column_entities(q) + natural_cols)
     table_topic_candidates = _infer_table_topics(q, column_entities, row_entities)
     unit_candidates = extract_units(q)
