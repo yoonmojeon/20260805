@@ -85,6 +85,29 @@
 .\.venv\Scripts\python.exe tests\run_router_eval.py
 ```
 
+### 균형형 100문항 × 3모델 최종 비교 (2026-08-11)
+
+범위를 넓혀 **운항 DB 25, 텍스트 50, 표 15, 운항+문서 혼합 10**을 같은 순서로 각 모델에 한 번씩 실행했습니다. 측정 PC는 RTX 5080 16GB, Core Ultra 7 265KF, RAM 96GB이며, 아래 응답시간은 이 환경 기준입니다.
+
+| 모델 | 전체 엄격 QA | 운항 | 텍스트 | 표 | 혼합 | 평균 | P95 |
+|------|-------------:|-----:|-------:|---:|-----:|-----:|----:|
+| **Gemma 4 12B** | **63/100** | **21/25** | **25/50** | 7/15 | **10/10** | 10.89초 | 22.81초 |
+| Llama 3.1 8B | 51/100 | 20/25 | 17/50 | **8/15** | 6/10 | **5.84초** | 14.15초 |
+| Mistral Nemo 12B | 44/100 | 11/25 | 24/50 | 6/15 | 3/10 | 6.52초 | **13.58초** |
+
+Gemma는 가장 정확하고 특히 혼합 질문에 강했습니다. Llama는 Gemma보다 약 46% 빠르지만 전체 엄격 QA가 12%p 낮았습니다. 텍스트는 대표 회의·정의 질문은 잘하지만 KR 제1편 세부 정의·조항이 약했고, 세 모델 모두 파일·페이지 단서가 없는 표 전체검색에서 반복 실패했습니다. 따라서 기본 모델은 Gemma를 유지하고, 다음 개선 우선순위는 모델 교체보다 TEXT/TABLE 하위 분류와 문서·페이지 메타데이터 필터입니다.
+
+```powershell
+# 100문항 재생성 및 모델별 재실행
+.\.venv\Scripts\python.exe scripts\build_balanced_quality_100.py
+.\.venv\Scripts\python.exe scripts\run_quality_30.py --questions data\eval\balanced_quality_100.jsonl --model gemma4:12b --output data\eval\balanced_quality_100_gemma4_12b.json
+.\.venv\Scripts\python.exe scripts\run_quality_30.py --questions data\eval\balanced_quality_100.jsonl --model llama3.1:8b --output data\eval\balanced_quality_100_llama3.1_8b.json
+.\.venv\Scripts\python.exe scripts\run_quality_30.py --questions data\eval\balanced_quality_100.jsonl --model mistral-nemo:12b --output data\eval\balanced_quality_100_mistral-nemo_12b.json
+.\.venv\Scripts\python.exe scripts\summarize_balanced_quality_100.py
+```
+
+전체 문항·답변·시간과 3개 실제 답변 예시는 `data/eval/balanced_quality_100_report.md` 및 모델별 JSON에 있습니다. 자동 채점은 정답 핵심어 기반이므로 완전한 의미 정확도가 아닌 참고용 상한으로 해석합니다.
+
 ## 기존 RAG 품질 개선
 
 질문 하나하나를 임시로 고친 게 아니라, **자주 틀리던 패턴**을 막았습니다.

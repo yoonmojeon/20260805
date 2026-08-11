@@ -84,6 +84,13 @@ def _can_do(quality_counts: Counter, needle_pass: int, n: int) -> str:
 
 
 def main() -> int:
+    # Windows redirected stdout otherwise inherits a legacy locale such as
+    # CP949 and can crash mid-evaluation when a model emits uncommon Unicode.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--questions",
