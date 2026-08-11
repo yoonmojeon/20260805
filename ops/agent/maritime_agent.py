@@ -112,10 +112,14 @@ def run_agent_sync(
     else:
         answer = answer or "최대 반복 횟수에 도달했습니다."
 
-    # 브리핑/리포트 툴 호출 시 Python 포맷터로 줄글 답변 생성 (KPI 누락 방지)
+    # The selected model is the primary answer generator. Keep the deterministic
+    # formatter only as a safety fallback for empty/failed model generations.
     formatted = build_answer_from_tools(tool_results)
     if formatted:
-        answer, show_map = formatted
+        fallback_answer, formatted_show_map = formatted
+        show_map = show_map or formatted_show_map
+        if not answer.strip() or answer.startswith("[LLM 오류]"):
+            answer = fallback_answer
 
     new_history = history + [
         {"role": "user", "content": user_message},

@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 venv/
 .env
+.pytest_cache/
+.test-tmp*/
 
 # Ops sensor Excel / SQLite
 data/ho_data/*.xlsx

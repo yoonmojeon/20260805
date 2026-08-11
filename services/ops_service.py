@@ -1,6 +1,7 @@
 """Bridge to ship-data Maritime Ops Agent (SQLite KPI / CII / reports)."""
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -116,7 +117,13 @@ def run_ops_query(
     model = normalize_llm_model(llm_model)
 
     deterministic = _try_deterministic_ops(question)
-    if deterministic and deterministic.get("answer"):
+    shortcut_on = os.environ.get("MARITIME_OPS_DETERMINISTIC_SHORTCUTS", "0").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    if shortcut_on and deterministic and deterministic.get("answer"):
         answer = str(deterministic["answer"])
         new_history = list(history or []) + [
             {"role": "user", "content": question},
@@ -137,6 +144,16 @@ def run_ops_query(
     answer, new_history, files, show_map = run_agent_sync(
         question, list(history or []), model=model
     )
+    answer_fallback_used = False
+    if deterministic and deterministic.get("answer") and (
+        not str(answer or "").strip() or str(answer).startswith("[LLM 오류]")
+    ):
+        answer = str(deterministic["answer"])
+        new_history = list(history or []) + [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": answer},
+        ]
+        answer_fallback_used = True
     map_html = ""
     if show_map:
         try:
@@ -153,4 +170,5 @@ def run_ops_query(
         "source": "ops",
         "reports_dir": str(REPORTS_DIR),
         "llm_model": model,
+        "answer_fallback_used": answer_fallback_used,
     }

@@ -90,7 +90,9 @@ def main() -> int:
         type=Path,
         default=ROOT / "data" / "eval" / "quality_30_types.jsonl",
     )
-    ap.add_argument("--model", default=os.environ.get("MARITIME_OLLAMA_MODEL", "llama3.1:8b"))
+    ap.add_argument("--model", default=os.environ.get("MARITIME_OLLAMA_MODEL", "gemma4:12b"))
+    ap.add_argument("--rules-only", action="store_true")
+    ap.add_argument("--output", type=Path)
     args = ap.parse_args()
 
     model = args.model.strip()
@@ -115,23 +117,26 @@ def main() -> int:
         q = row["question"]
         t0 = time.perf_counter()
         try:
-            out = handle_question(q, use_llm_router=False)
+            out = handle_question(
+                q,
+                use_llm_router=not args.rules_only,
+                llm_model=model,
+            )
             ans = str((out or {}).get("answer") or "")
             route_obj = (out or {}).get("route")
             if isinstance(route_obj, dict):
                 route = str(route_obj.get("route") or "")
             else:
                 route = str((out or {}).get("source") or (out or {}).get("last_route") or "")
+                route_obj = {}
+            response_meta = dict((out or {}).get("meta") or {})
             err = ""
         except Exception as exc:
-            ans, route, err = "", "", f"{type(exc).__name__}: {exc}"
+            ans, route, err, route_obj, response_meta = "", "", f"{type(exc).__name__}: {exc}", {}, {}
         dt = time.perf_counter() - t0
         hits, miss = _needles(ans, row.get("needles") or [])
         expect = row.get("route")
-        # hybrid may surface as ops/rag depending on decomposition — accept hybrid/ops/rag if expect hybrid
-        if expect == "hybrid":
-            route_ok = route in {"hybrid", "ops", "rag"}
-        elif expect == "chat" and row.get("type") == "oos":
+        if expect == "chat" and row.get("type") == "oos":
             route_ok = route in {"chat", "oos"} or bool(hits)
         else:
             route_ok = (not expect) or route == expect
@@ -175,8 +180,19 @@ def main() -> int:
             "dt": round(dt, 2),
             "miss": miss,
             "hits": hits,
+            "answer": ans,
             "answer_preview": (ans or "")[:600],
             "error": err,
+            "router_latency_ms": float((route_obj or {}).get("router_latency_ms") or 0.0),
+            "router_fallback_used": bool((route_obj or {}).get("fallback_used")),
+            "router_error_kind": (route_obj or {}).get("llm_error_kind"),
+            "router_done_reason": (route_obj or {}).get("llm_done_reason"),
+            "router_eval_count": (route_obj or {}).get("llm_eval_count"),
+            "answer_empty": bool(response_meta.get("answer_empty")) or not bool(ans.strip()),
+            "answer_error": response_meta.get("answer_error"),
+            "answer_done_reason": response_meta.get("answer_done_reason")
+            or response_meta.get("hybrid_synthesis_done_reason"),
+            "answer_model": response_meta.get("answer_model") or model,
         }
         results.append(item)
         by_type[qtype].append(item)
@@ -207,19 +223,59 @@ def main() -> int:
 
     overall_q = Counter(i["quality"] for i in results)
     overall_n = Counter(i["needle"] for i in results)
+    qa_pass = sum(
+        1
+        for item in results
+        if item["route_ok"] and item["needle"] == "PASS" and item["quality"] != "BAD"
+    )
+    route_mismatch = sum(1 for item in results if not item["route_ok"])
+    invalid_empty = sum(1 for item in results if item["answer_empty"])
+    failures = sum(
+        1
+        for item in results
+        if item["error"]
+        or item["answer_error"]
+        or item["answer_empty"]
+        or str(item["answer_preview"]).startswith("[")
+    )
+    router_calls = sum(
+        1
+        for item in results
+        if item["router_latency_ms"] > 0 or item["router_error_kind"] is not None
+    )
+    router_fallbacks = sum(1 for item in results if item["router_fallback_used"])
     summary = {
         "model": model,
+        "routing_mode": "rules_only" if args.rules_only else "llm_primary",
         "n": len(results),
         "needle": dict(overall_n),
         "quality": dict(overall_q),
         "avg_dt": round(sum(i["dt"] for i in results) / max(1, len(results)), 2),
+        "qa_pass": qa_pass,
+        "qa_pass_rate": qa_pass / max(1, len(results)),
+        "route_mismatch_count": route_mismatch,
+        "invalid_empty_answer_count": invalid_empty,
+        "failure_count": failures,
+        "router_calls": router_calls,
+        "router_fallback_count": router_fallbacks,
+        "router_fallback_rate": router_fallbacks / max(1, router_calls),
+        "mean_router_latency_ms": round(
+            sum(i["router_latency_ms"] for i in results) / max(1, router_calls), 2
+        ),
         "can_do_yes": sum(1 for t in type_board if t["can_do"] == "YES"),
         "can_do_partial": sum(1 for t in type_board if t["can_do"] == "PARTIAL"),
         "can_do_no": sum(1 for t in type_board if t["can_do"] == "NO"),
         "types": type_board,
     }
     print("SUMMARY", json.dumps(summary, ensure_ascii=False), flush=True)
-    out = ROOT / "data" / "processed" / "logs" / "quality_30_last.json"
+    safe_model = re.sub(r"[^A-Za-z0-9_.-]+", "_", model)
+    out = args.output or (
+        ROOT
+        / "data"
+        / "processed"
+        / "logs"
+        / f"quality_30_{safe_model}_{summary['routing_mode']}.json"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=2),

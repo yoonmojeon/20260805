@@ -15,6 +15,22 @@ HELDOUT_SINGLE: list[tuple[str, str]] = [
     ("hybrid", "CII랑 규정 둘다 봐줘"),
 ]
 
+
+# Semantic generalization set. Do not mirror these sentences into cues.py.
+SEMANTIC_HELDOUT_SINGLE: list[tuple[str, str]] = [
+    ("ops", "우리 배 지금 탄소 성적 어때?"),
+    ("rag", "IMO에서는 탄소집약도를 어떻게 관리해?"),
+    ("hybrid", "우리 배 탄소 성적이 국제 기준에 맞는지 봐줘"),
+    ("ops", "직전 적재 항차에서 연료 얼마나 먹었지?"),
+    ("rag", "적재 상태일 때 적용되는 선급 검사 규정?"),
+    ("hybrid", "현재 우리 배 배출 수준이 MARPOL 기준에 괜찮아?"),
+    ("rag", "tcorr 설명해줘"),
+    ("chat", "너 tcorr 같은 것도 찾을 수 있어?"),
+    ("rag", "MSC에서 MASS 관련해서 무슨 얘기 나왔어?"),
+    ("ops", "이번 항차 CO2랑 연료 사용 정리해줘"),
+    ("hybrid", "현재 배 상태랑 적용되는 규정을 같이 확인해줘"),
+]
+
 MULTITURN_SCENARIOS: list[dict] = [
     {
         "id": "keep_ops_detail",

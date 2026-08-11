@@ -1,20 +1,20 @@
 """Selectable Ollama chat models for the Gradio UI / orchestrator."""
 from __future__ import annotations
 
-import os
-
 # Keep in sync with models used in local quality-30 runs.
 AVAILABLE_LLM_MODELS: tuple[str, ...] = (
-    "llama3.1:8b",
     "gemma4:12b",
+    "llama3.1:8b",
     "mistral-nemo:12b",
 )
 
-DEFAULT_LLM_MODEL = os.environ.get("MARITIME_OLLAMA_MODEL") or os.environ.get(
-    "MODEL_NAME", "llama3.1:8b"
+LLM_MODEL_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Gemma 4 12B (기본·권장)", "gemma4:12b"),
+    ("Llama 3.1 8B (빠른 응답)", "llama3.1:8b"),
+    ("Mistral Nemo 12B", "mistral-nemo:12b"),
 )
-if DEFAULT_LLM_MODEL not in AVAILABLE_LLM_MODELS:
-    DEFAULT_LLM_MODEL = "llama3.1:8b"
+
+DEFAULT_LLM_MODEL = "gemma4:12b"
 
 
 def normalize_llm_model(model: str | None) -> str:

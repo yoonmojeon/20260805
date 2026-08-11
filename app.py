@@ -20,9 +20,14 @@ from markdown_it import MarkdownIt
 
 from project_paths import DEFAULT_RAG_COLLECTION, DEFAULT_TABLE_COLLECTION, OPS_DB_PATH, RAW_PDFS_DIR
 from services.answer_ui import render_evidence_table_html, render_related_tables_html
-from services.llm_models import AVAILABLE_LLM_MODELS, DEFAULT_LLM_MODEL
+from services.llm_models import DEFAULT_LLM_MODEL, LLM_MODEL_CHOICES
 from services.ops_service import ops_db_ready
 from services.orchestrator import handle_question
+from services.routing_options import (
+    DEFAULT_ROUTING_MODE,
+    ROUTING_MODE_CHOICES,
+    use_llm_primary_router,
+)
 from services.rag_service import (
     rag_index_banner,
     rag_index_ready,
@@ -142,7 +147,7 @@ def chat_fn(
     history: list,
     dialogue_state: dict | None,
     route_mode: str,
-    use_llm_router: bool,
+    routing_strategy: str,
     llm_model: str,
 ):
     empty = build_answer_html("", "")
@@ -153,7 +158,7 @@ def chat_fn(
         user_msg,
         history,
         force_route=_force_from_mode(route_mode),  # type: ignore[arg-type]
-        use_llm_router=bool(use_llm_router),
+        use_llm_router=use_llm_primary_router(routing_strategy),
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
         llm_model=llm_model,
@@ -173,7 +178,7 @@ def retry_fn(
     history: list,
     dialogue_state: dict | None,
     last_question: str,
-    use_llm_router: bool,
+    routing_strategy: str,
     llm_model: str,
 ):
     empty = build_answer_html("", "")
@@ -187,7 +192,7 @@ def retry_fn(
         q,
         hist,
         force_route=force_route,  # type: ignore[arg-type]
-        use_llm_router=bool(use_llm_router),
+        use_llm_router=use_llm_primary_router(routing_strategy),
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
         llm_model=llm_model,
@@ -294,14 +299,17 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
             label="데이터 경로",
         )
         llm_model = gr.Dropdown(
-            choices=list(AVAILABLE_LLM_MODELS),
+            choices=list(LLM_MODEL_CHOICES),
             value=DEFAULT_LLM_MODEL,
-            label="답변 모델 (Ollama)",
+            label="라우터·답변 모델 (Ollama)",
+            info="기본값은 Gemma 4 12B이며 선택 모델을 라우팅과 답변에 함께 사용합니다.",
             scale=1,
         )
-        use_llm_router = gr.Checkbox(
-            value=False,
-            label="애매한 질문은 LLM으로 재분류 (느림)",
+        routing_strategy = gr.Radio(
+            choices=list(ROUTING_MODE_CHOICES),
+            value=DEFAULT_ROUTING_MODE,
+            label="라우팅 방식",
+            info="LLM-primary를 권장하며 Rules-only는 비교 실험용입니다.",
         )
 
     gr.Markdown(
@@ -360,7 +368,7 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
             history_state,
             dialogue_state,
             route_mode,
-            use_llm_router,
+            routing_strategy,
             llm_model,
         ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
@@ -373,47 +381,47 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
             history_state,
             dialogue_state,
             route_mode,
-            use_llm_router,
+            routing_strategy,
             llm_model,
         ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     ).then(lambda: "", outputs=user_input)
 
     retry_ops.click(
-        lambda hist, st, last_q, router, model: retry_fn(
-            "ops", hist, st, last_q, router, model
+        lambda hist, st, last_q, routing, model: retry_fn(
+            "ops", hist, st, last_q, routing, model
         ),
         inputs=[
             history_state,
             dialogue_state,
             last_question_state,
-            use_llm_router,
+            routing_strategy,
             llm_model,
         ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     )
     retry_rag.click(
-        lambda hist, st, last_q, router, model: retry_fn(
-            "rag", hist, st, last_q, router, model
+        lambda hist, st, last_q, routing, model: retry_fn(
+            "rag", hist, st, last_q, routing, model
         ),
         inputs=[
             history_state,
             dialogue_state,
             last_question_state,
-            use_llm_router,
+            routing_strategy,
             llm_model,
         ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
     )
     retry_hyb.click(
-        lambda hist, st, last_q, router, model: retry_fn(
-            "hybrid", hist, st, last_q, router, model
+        lambda hist, st, last_q, routing, model: retry_fn(
+            "hybrid", hist, st, last_q, routing, model
         ),
         inputs=[
             history_state,
             dialogue_state,
             last_question_state,
-            use_llm_router,
+            routing_strategy,
             llm_model,
         ],
         outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],

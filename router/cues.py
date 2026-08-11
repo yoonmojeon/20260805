@@ -59,7 +59,11 @@ RAG_PATTERNS: list[tuple[str, float]] = [
         r"N\s*/?\s*mm|표\s*\d+(?:\.\d+)*|"
         r"화물창|화물탱크|평형수탱크|reporting\s*요건|"
         r"안전사용하중|방화\s*보존|설계하중\s*시나리오|평가\s*방법|"
-        r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm)|SP-[A-Z]",
+        r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm|배|개)|SP-[A-Z]|"
+        r"허용\s*(?:바깥지름|기준|응력)|확관|시험재|주강품|강종|적용강종|"
+        r"바깥지름|CMS|통일명칭|손상\s*모드|순두께|Winterization|셀가이드|"
+        r"RSTH|RSTS|좌굴|격벽|부식\s*두께|재화중량|DWT|"
+        r"이중차단|배출밸브|적층제조|AM\s*최종|판정기준",
         2.6,
     ),
     (r"문서|PDF|회의록|circular|resolution|WP\.?\d", 1.5),
@@ -80,6 +84,7 @@ GREET_PATTERN = re.compile(r"^(안녕|헬로|hello|\bhi\b)[\s!?.]*$", flags=re.I
 # '둘 다 알려줘'(내용 요청)와 구분되도록 '가능/할 수' 단서를 요구한다.
 CAPABILITY_PATTERN = re.compile(
     r"(뭐|무엇)\s*할\s*수|할\s*수\s*있|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
+    r"찾(?:을|아\s*줄)\s*수\s*있|검색(?:할|해\s*줄)\s*수\s*있|"
     r"(운항|문서).{0,20}가능|둘\s*다.{0,10}가능|가능.{0,12}(운항|문서|둘)|"
     r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써|"
     r"어떤\s*데이터(?:를\s*)?보니|데이터를\s*보니",
@@ -145,8 +150,11 @@ TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
     r"yield|tensile|corrosion\s*addition|min(?:imum)?\s*thickness|"
     r"ship\s*length|ballast\s*tank|cargo\s*(?:hold|tank)|"
     r"안전사용하중|방화\s*보존|설계하중\s*시나리오|평가\s*방법|"
-    r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm)|SP-[A-Z]|"
+    r"용접\s*다리|호퍼탱크|이중선측|수평거더|몇\s*(?:톤|mm|배|개)|SP-[A-Z]|"
     r"재화중량|DWT|임시\s*안전|승정\s*구역|"
+    r"허용\s*(?:바깥지름|기준|응력)|확관|시험재|주강품|강종|적용강종|"
+    r"바깥지름|CMS|통일명칭|손상\s*모드|순두께|Winterization|셀가이드|"
+    r"RSTH|RSTS|좌굴|격벽|부식\s*두께|이중차단|배출밸브|판정기준|"
     # Definition / glossary shapes (class-rule terms, not ship ops).
     r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어|"
     r"substantial\s*corrosion|과도한\s*부식|허용\s*부식|부식\s*여유|"
@@ -197,7 +205,8 @@ TOPIC_PATTERNS: list[tuple[str, str]] = [
         "table",
         r"표|검사\s*주기|평형수|밸러스트|선령|정기검사|survey|개방검사|"
         r"최소\s*두께|판두께|선박\s*길이|부식추가|tcorr|화학성분|재료기호|"
-        r"안전사용하중|방화|설계하중|용접\s*다리|호퍼탱크|평가\s*방법",
+        r"안전사용하중|방화|설계하중|용접\s*다리|호퍼탱크|평가\s*방법|"
+        r"허용\s*(?:바깥지름|기준)|시험재|주강품|확관|강종|RSTH",
     ),
     ("seemp", r"SEEMP|EEXI|MARPOL|SOLAS"),
     ("report", r"Noon|MRV|보고서"),
@@ -308,7 +317,16 @@ def looks_like_technical_rag(question: str) -> bool:
         return False
     if META_PATTERN.search(q) or THANKS_PATTERN.search(q):
         return False
-    return bool(TECHNICAL_RAG_SHAPE_PATTERN.search(q))
+    if TECHNICAL_RAG_SHAPE_PATTERN.search(q):
+        return True
+    # Open table/cell asks often omit KR/MEPC words; use parser shape as backup.
+    try:
+        from services.retrieval_mode import table_shape_score
+
+        score, _detail = table_shape_score(q)
+        return score >= 0.45
+    except Exception:
+        return False
 
 
 def looks_like_technical_ops(question: str) -> bool:

@@ -225,6 +225,29 @@ def _extract_answer(out: dict[str, Any]) -> str:
     return str(answer or "").strip()
 
 
+def _generation_diagnostics(payload: Any, depth: int = 0) -> dict[str, Any]:
+    if depth > 4:
+        return {}
+    if isinstance(payload, dict):
+        found = {
+            target: payload.get(target)
+            for target in ("done_reason", "eval_count")
+            if payload.get(target) is not None
+        }
+        if found:
+            return found
+        for value in payload.values():
+            nested = _generation_diagnostics(value, depth + 1)
+            if nested:
+                return nested
+    elif isinstance(payload, list):
+        for value in payload[:8]:
+            nested = _generation_diagnostics(value, depth + 1)
+            if nested:
+                return nested
+    return {}
+
+
 def _tag_chunks(chunks: list[Any], *, source_kind: str) -> list[Any]:
     for chunk in chunks:
         try:
@@ -463,7 +486,10 @@ def _run_single_rag(
             auto_llm_warm=True,
             llm_model=model,
         )
-        answer = _extract_answer(out) or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        generated_answer = _extract_answer(out)
+        answer_empty = not bool(generated_answer)
+        answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        generation = _generation_diagnostics(out)
         files: list[str] = []
         related_tables: list[dict[str, Any]] = []
         evidence_table = _extract_evidence_table(out)
@@ -511,6 +537,10 @@ def _run_single_rag(
                 or (out.get("search_out") or {}).get("answer_mode"),
                 "timing_metrics": (out.get("timing_metrics") or {}),
                 "llm_model": model,
+                "answer_empty": answer_empty,
+                "answer_error": str(out.get("error") or ""),
+                "answer_done_reason": generation.get("done_reason"),
+                "answer_eval_count": generation.get("eval_count"),
             },
             "raw": {k: out[k] for k in out if k not in {"raw", "timing_log"}},
         }
@@ -595,13 +625,23 @@ def _run_both_fused(
 
     table_chunks = list(table_hit.get("retrieved") or [])
     text_chunks = list(text_hit.get("retrieved") or [])
+    text_cap = 2 if prefer == "table_primary" else 6
+    table_cap = 10 if prefer == "table_primary" else 8
     merged_chunks = fuse_evidence(
         text_hits=text_chunks,
         table_hits=table_chunks,
-        text_top_k=6,
-        table_top_k=8,
+        text_top_k=text_cap,
+        table_top_k=table_cap,
         prefer=prefer,
     )
+    # Cell/table-primary answers: keep table rows as the answer pool so prose
+    # text hits cannot displace deterministic cell extraction.
+    if prefer == "table_primary" and table_chunks:
+        answer_chunks = list(table_chunks[:table_cap])
+        if text_chunks:
+            answer_chunks.extend(list(text_chunks[:text_cap]))
+    else:
+        answer_chunks = merged_chunks
 
     if not merged_chunks:
         return {
@@ -634,8 +674,8 @@ def _run_both_fused(
         base_search = base_search or {}
         answer_out = run_answer_inprocess(
             row=row,
-            chunks=merged_chunks,
-            pool=merged_chunks,
+            chunks=answer_chunks,
+            pool=answer_chunks,
             config_dict=base_search.get("retrieval_config"),
             metrics=base_search.get("retrieval_metrics"),
             doc_groups=base_search.get("doc_groups"),
@@ -646,7 +686,10 @@ def _run_both_fused(
             auto_llm_warm=True,
             llm_model=model,
         )
-        answer = _extract_answer(answer_out) or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        generated_answer = _extract_answer(answer_out)
+        answer_empty = not bool(generated_answer)
+        answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        generation = _generation_diagnostics(answer_out)
         _related_md, images, related_tables = _related_tables_from_hits(
             question, table_chunks
         )
@@ -685,6 +728,10 @@ def _run_both_fused(
                     "answer": (answer_out.get("timing_metrics") or {}),
                 },
                 "llm_model": model,
+                "answer_empty": answer_empty,
+                "answer_error": str(answer_out.get("error") or ""),
+                "answer_done_reason": generation.get("done_reason"),
+                "answer_eval_count": generation.get("eval_count"),
             },
             "raw": {"answer_out": answer_out, "table_search": table_hit.get("search_out")},
         }
@@ -741,14 +788,21 @@ def run_rag_query(
     dual_on = dual_retrieval_enabled(dual)
 
     if mode == RetrievalMode.BOTH and both_ready and dual_on:
+        # Cell/open-table shape: keep table evidence first, text as support.
+        prefer = "balanced"
+        try:
+            from services.retrieval_mode import table_shape_score
+
+            t_score, _ = table_shape_score(question)
+            if t_score >= 0.35:
+                prefer = "table_primary"
+        except Exception:
+            prefer = "table_primary"
         return _run_both_fused(
-            question, latency_mode=latency_mode, prefer="balanced", llm_model=model
+            question, latency_mode=latency_mode, prefer=prefer, llm_model=model
         )
-    if mode == RetrievalMode.TABLE and both_ready and dual is True:
-        # Explicit dual=True even for TABLE → still fuse, table-primary
-        return _run_both_fused(
-            question, latency_mode=latency_mode, prefer="table_primary", llm_model=model
-        )
+    # Strong TABLE stays on the table index (schema 2-stage). Dual fuse is for
+    # BOTH/ambiguous asks — parallel text search can dilute cell extraction.
     if mode == RetrievalMode.BOTH and not both_ready:
         fallback = (
             RetrievalMode.TABLE

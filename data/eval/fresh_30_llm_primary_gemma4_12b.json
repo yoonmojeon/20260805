@@ -1,0 +1,1101 @@
+{
+  "summary": {
+    "model": "gemma4:12b",
+    "routing_mode": "llm_primary",
+    "n": 30,
+    "needle": {
+      "PASS": 20,
+      "WEAK": 3,
+      "FAIL": 7
+    },
+    "quality": {
+      "GOOD": 20,
+      "THIN": 3,
+      "BAD": 7
+    },
+    "avg_dt": 11.17,
+    "qa_pass": 20,
+    "qa_pass_rate": 0.6666666666666666,
+    "route_mismatch_count": 0,
+    "invalid_empty_answer_count": 0,
+    "failure_count": 0,
+    "router_calls": 30,
+    "router_fallback_count": 0,
+    "router_fallback_rate": 0.0,
+    "mean_router_latency_ms": 1879.54,
+    "can_do_yes": 9,
+    "can_do_partial": 1,
+    "can_do_no": 4,
+    "types": [
+      {
+        "type": "chat",
+        "n": 3,
+        "can_do": "PARTIAL",
+        "needle": {
+          "PASS": 2,
+          "WEAK": 1
+        },
+        "quality": {
+          "GOOD": 2,
+          "THIN": 1
+        },
+        "avg_dt": 1.5
+      },
+      {
+        "type": "hybrid",
+        "n": 3,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 3
+        },
+        "quality": {
+          "GOOD": 3
+        },
+        "avg_dt": 28.17
+      },
+      {
+        "type": "oos",
+        "n": 2,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 2
+        },
+        "quality": {
+          "GOOD": 2
+        },
+        "avg_dt": 1.58
+      },
+      {
+        "type": "ops_cii",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 10.66
+      },
+      {
+        "type": "ops_colloquial",
+        "n": 2,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 2
+        },
+        "quality": {
+          "GOOD": 2
+        },
+        "avg_dt": 8.0
+      },
+      {
+        "type": "ops_current",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 19.55
+      },
+      {
+        "type": "ops_previous",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 16.48
+      },
+      {
+        "type": "ops_report",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 9.08
+      },
+      {
+        "type": "rag_definition",
+        "n": 2,
+        "can_do": "NO",
+        "needle": {
+          "PASS": 1,
+          "FAIL": 1
+        },
+        "quality": {
+          "GOOD": 1,
+          "BAD": 1
+        },
+        "avg_dt": 14.76
+      },
+      {
+        "type": "rag_meeting",
+        "n": 4,
+        "can_do": "NO",
+        "needle": {
+          "PASS": 1,
+          "FAIL": 2,
+          "WEAK": 1
+        },
+        "quality": {
+          "GOOD": 1,
+          "BAD": 2,
+          "THIN": 1
+        },
+        "avg_dt": 2.31
+      },
+      {
+        "type": "rag_rule",
+        "n": 2,
+        "can_do": "NO",
+        "needle": {
+          "FAIL": 1,
+          "WEAK": 1
+        },
+        "quality": {
+          "BAD": 1,
+          "THIN": 1
+        },
+        "avg_dt": 16.5
+      },
+      {
+        "type": "table_caption",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 10.37
+      },
+      {
+        "type": "table_cell",
+        "n": 6,
+        "can_do": "NO",
+        "needle": {
+          "PASS": 3,
+          "FAIL": 3
+        },
+        "quality": {
+          "GOOD": 3,
+          "BAD": 3
+        },
+        "avg_dt": 13.03
+      },
+      {
+        "type": "table_reporting",
+        "n": 1,
+        "can_do": "YES",
+        "needle": {
+          "PASS": 1
+        },
+        "quality": {
+          "GOOD": 1
+        },
+        "avg_dt": 10.79
+      }
+    ],
+    "pipeline": "llm_primary+gemma4:12b",
+    "answer_model": "gemma4:12b"
+  },
+  "results": [
+    {
+      "id": "fresh_chat_01",
+      "type": "chat",
+      "question": "처음 왔는데 어떤 시스템인지 소개해 줄래?",
+      "gold": "MaritimeOpsRAG 소개와 운항·문서 기능 안내",
+      "expect_route": "chat",
+      "route": "chat",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 1.65,
+      "miss": [],
+      "hits": [
+        "Maritime|RAG|운항|문서"
+      ],
+      "answer": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "answer_preview": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "error": "",
+      "router_latency_ms": 1649.86,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 71,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_chat_02",
+      "type": "chat",
+      "question": "운항 정보와 규정 문서를 둘 다 찾아볼 수 있는 서비스야?",
+      "gold": "운항 수치와 규정·회의 문서를 모두 다룰 수 있다고 기능 범위를 직접 안내하되, 실제 조회 결과를 만들지는 않음",
+      "expect_route": "chat",
+      "route": "chat",
+      "route_ok": true,
+      "needle": "WEAK",
+      "quality": "THIN",
+      "dt": 1.47,
+      "miss": [
+        "가능|둘 다|모두|제공|찾을 수"
+      ],
+      "hits": [
+        "운항",
+        "문서|규정"
+      ],
+      "answer": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "answer_preview": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "error": "",
+      "router_latency_ms": 1470.75,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 75,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_chat_03",
+      "type": "chat",
+      "question": "반가워, 잘 부탁해.",
+      "gold": "짧은 인사와 질문 유도",
+      "expect_route": "chat",
+      "route": "chat",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 1.39,
+      "miss": [],
+      "hits": [
+        "안녕|반갑|Maritime|운항|문서|질문"
+      ],
+      "answer": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "answer_preview": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "error": "",
+      "router_latency_ms": 1394.36,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 71,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_01",
+      "type": "ops_current",
+      "question": "우리 선박의 현재 항해 현황을 한 번에 브리핑해줘.",
+      "gold": "현재 H2521 Ballast 항차와 운항 상태",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 19.55,
+      "miss": [],
+      "hits": [
+        "H2521",
+        "Ballast|항차|운항",
+        "거리|속도|위치"
+      ],
+      "answer": "현재 항차(H2521_V21_Ballast)는 2026년 6월 8일부터 시작되어 현재 시점인 2026년 6월 28일까지 총 20.2일 동안 운항 중이며, Ballast 상태로 약 5,847.4해리(nm)를 항해하였습니다. 현재 선박의 속도는 18.6노트(SOG)이며 평균 속도는 14.0노트입니다. 연료 소모량은 시간당 오일 0.1083톤, 가스 3.2426톤을 소비하고 있으며, 이로 인해 발생한 탄소 배출량은 항차 전체 기간 동안 CO2 약 2,751.67톤, CH4 약 53.09톤, 그리고 CO2e 약 4,238.2톤으로 집계되었습니다. 올해(2026년) 누적 데이터 기준 CII 등급은 현재 E등급(Attained: 6.3957)으로 산출되고 있으며, 이는 아직 연도가 종료되지 않아 공식 확정치가 아닌 잠정치임을 참고하시기 바랍니다.",
+      "answer_preview": "현재 항차(H2521_V21_Ballast)는 2026년 6월 8일부터 시작되어 현재 시점인 2026년 6월 28일까지 총 20.2일 동안 운항 중이며, Ballast 상태로 약 5,847.4해리(nm)를 항해하였습니다. 현재 선박의 속도는 18.6노트(SOG)이며 평균 속도는 14.0노트입니다. 연료 소모량은 시간당 오일 0.1083톤, 가스 3.2426톤을 소비하고 있으며, 이로 인해 발생한 탄소 배출량은 항차 전체 기간 동안 CO2 약 2,751.67톤, CH4 약 53.09톤, 그리고 CO2e 약 4,238.2톤으로 집계되었습니다. 올해(2026년) 누적 데이터 기준 CII 등급은 현재 E등급(Attained: 6.3957)으로 산출되고 있으며, 이는 아직 연도가 종료되지 않아 공식 확정치가 아닌 잠정치임을 참고하시기 바랍니다.",
+      "error": "",
+      "router_latency_ms": 1540.64,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 83,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_02",
+      "type": "ops_cii",
+      "question": "2026년 누적 탄소집약도 성적표를 보여줘. attained와 required도 같이.",
+      "gold": "잠정 E 등급, attained 약 6.40, required 약 3.73",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 10.66,
+      "miss": [],
+      "hits": [
+        "E",
+        "6\\.39|6\\.40|6\\.4",
+        "3\\.73"
+      ],
+      "answer": "2026년 현재까지의 누적 데이터를 바탕으로 산출된 탄소집약도(CII) 성적표를 안내해 드립니다. 올해 1월 1일부터 현재 시점인 2026년 6월 28일까지 집계된 데이터에 따르면, 선박의 실제 달성치(Attained CII)는 약 6.40 gCO2/(DWT·nm)이며, 규정상 요구되는 기준치(Required CII)는 약 3.73 gCO2/(DWT·nm)로 확인되었습니다. 현재 이 수치를 바탕으로 산출된 올해의 탄소집약도 등급은 E등급입니다. 다만, 현재가 아직 연도가 종료되지 않은 시점이므로 해당 결과는 공식 확정치가 아닌 현재까지의 운항 기록을 기반으로 한 잠정치(YTD)임을 참고해 주시기 바랍니다.",
+      "answer_preview": "2026년 현재까지의 누적 데이터를 바탕으로 산출된 탄소집약도(CII) 성적표를 안내해 드립니다. 올해 1월 1일부터 현재 시점인 2026년 6월 28일까지 집계된 데이터에 따르면, 선박의 실제 달성치(Attained CII)는 약 6.40 gCO2/(DWT·nm)이며, 규정상 요구되는 기준치(Required CII)는 약 3.73 gCO2/(DWT·nm)로 확인되었습니다. 현재 이 수치를 바탕으로 산출된 올해의 탄소집약도 등급은 E등급입니다. 다만, 현재가 아직 연도가 종료되지 않은 시점이므로 해당 결과는 공식 확정치가 아닌 현재까지의 운항 기록을 기반으로 한 잠정치(YTD)임을 참고해 주시기 바랍니다.",
+      "error": "",
+      "router_latency_ms": 2239.29,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 99,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_03",
+      "type": "ops_previous",
+      "question": "바로 전 적재 운항에서 이동거리와 CO2 배출 실적이 어떻게 됐어?",
+      "gold": "직전 Laden/V20, 약 5470nm, CO2 약 4663MT",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 16.48,
+      "miss": [],
+      "hits": [
+        "Laden|V20|직전 적재|이전 적재",
+        "5470|5471",
+        "4662|4663"
+      ],
+      "answer": "이전 항차(H2521_V20_Laden)의 운항 데이터를 분석한 결과, 해당 항차에서 기록된 총 이동 거리는 5470.5해리(nm)이며 이 과정에서 발생한 CO2 배출량은 4662.82톤(mt)으로 집계되었습니다.",
+      "answer_preview": "이전 항차(H2521_V20_Laden)의 운항 데이터를 분석한 결과, 해당 항차에서 기록된 총 이동 거리는 5470.5해리(nm)이며 이 과정에서 발생한 CO2 배출량은 4662.82톤(mt)으로 집계되었습니다.",
+      "error": "",
+      "router_latency_ms": 2119.65,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 91,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_04",
+      "type": "ops_colloquial",
+      "question": "현재 선박이 있는 위도와 경도를 알려줘.",
+      "gold": "현재 위치 위도 27.973, 경도 0.0(원본 결측 가능)",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 9.0,
+      "miss": [],
+      "hits": [
+        "27\\.973|27\\.97",
+        "0\\.0|결측|미제공|측정되지"
+      ],
+      "answer": "현재 선박의 위치 정보는 현재 항차(2026-06-08 ~ 2026-06-28)를 기준으로 위도 27.973, 경도 0.0으로 확인됩니다. 다만 원본 데이터상에 경도 값이 제공되지 않는 구간이 있어 시스템상에서 0.0으로 표시되고 있으며, 위도와 대지속력(SOG)은 실측된 데이터를 바탕으로 하고 있습니다.",
+      "answer_preview": "현재 선박의 위치 정보는 현재 항차(2026-06-08 ~ 2026-06-28)를 기준으로 위도 27.973, 경도 0.0으로 확인됩니다. 다만 원본 데이터상에 경도 값이 제공되지 않는 구간이 있어 시스템상에서 0.0으로 표시되고 있으며, 위도와 대지속력(SOG)은 실측된 데이터를 바탕으로 하고 있습니다.",
+      "error": "",
+      "router_latency_ms": 1832.33,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 73,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_05",
+      "type": "ops_colloquial",
+      "question": "지금 대지속력은 몇 노트로 찍혀?",
+      "gold": "현재 SOG 약 18.6kn",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 7.01,
+      "miss": [],
+      "hits": [
+        "18\\.6|18",
+        "SOG|대지속력|노트|kn"
+      ],
+      "answer": "현재 항차(H2521_V21_Ballast)를 기준으로 확인한 결과, 현재 대지속력은 18.6노트로 기록되고 있습니다.",
+      "answer_preview": "현재 항차(H2521_V21_Ballast)를 기준으로 확인한 결과, 현재 대지속력은 18.6노트로 기록되고 있습니다.",
+      "error": "",
+      "router_latency_ms": 1872.53,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 77,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_ops_06",
+      "type": "ops_report",
+      "question": "오늘 기준 Noon Report를 파일로 만들어줘.",
+      "gold": "운항 DB를 이용한 Noon Report 생성 결과",
+      "expect_route": "ops",
+      "route": "ops",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 9.08,
+      "miss": [],
+      "hits": [
+        "Noon|noon|정오",
+        "Report|보고서|파일|생성"
+      ],
+      "answer": "2026년 6월 28일 기준의 Noon Report 생성이 완료되었습니다. 해당 보고서는 오늘 날짜의 운항 데이터와 센서 실측치를 바탕으로 작성되었으며, 현재 위치 및 연료 소모량(Oil 0.611 MT, Gas 16.081 MT), 그리고 배출량과 같은 주요 지표들이 포함되어 있습니다. 생성된 파일은 시스템 내 지정된 경로에 저장되었습니다.",
+      "answer_preview": "2026년 6월 28일 기준의 Noon Report 생성이 완료되었습니다. 해당 보고서는 오늘 날짜의 운항 데이터와 센서 실측치를 바탕으로 작성되었으며, 현재 위치 및 연료 소모량(Oil 0.611 MT, Gas 16.081 MT), 그리고 배출량과 같은 주요 지표들이 포함되어 있습니다. 생성된 파일은 시스템 내 지정된 경로에 저장되었습니다.",
+      "error": "",
+      "router_latency_ms": 2059.81,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 89,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_meet_01",
+      "type": "rag_meeting",
+      "question": "MSC 111 회의에서 비강제 MASS Code에 관해 최종적으로 어떤 결정을 내렸나?",
+      "gold": "MSC 111의 non-mandatory MASS Code 결정",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 3.19,
+      "miss": [],
+      "hits": [
+        "MSC",
+        "MASS",
+        "비강제|non-mandatory|채택|Code"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 회의 결과 초안은 mandatory MASS Code를 2030년 채택 목표로 계속 추진한다고 기록합니다. [2]\n- 회의 기록은 비강제 MASS Code 채택 후 Experience-Building Phase(EBP) 프레임워크 개발이 MSC 111에서 시작된다고 명시합니다. [5]\n- 회의 결과 초안은 비강제·목표기반 MASS Code의 채택을 기록합니다. [1]\n- 회의 결과 초안에는 mandatory Code의 발효 목표가 2032년으로 제시됩니다. [3]\n- 다만 해당 목표가 야심적이어서 추후 재검토될 수 있다는 점도 기록돼 있습니다. [3]\n\n## 2) 선박 운항/업무 영향\n\n- **적용상 유의점**: 현재 확인되는 Code는 비강제 단계이므로 mandatory Code의 확정 의무나 발효일로 해석해서는 안 됩니다. [1]\n- **준비 방향**: 향후 경험축적단계에서 설계·운항·승인 경험을 축적할 수 있도록 적용 사례와 검증 자료를 관리할 필요가 있습니다. [5]\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 회의 결과 초안 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 회의 결과 초안은 mandatory MASS Code를 2030년 채택 목표로 계속 추진한다고 기록합니다. [2]\n- 회의 기록은 비강제 MASS Code 채택 후 Experience-Building Phase(EBP) 프레임워크 개발이 MSC 111에서 시작된다고 명시합니다. [5]\n- 회의 결과 초안은 비강제·목표기반 MASS Code의 채택을 기록합니다. [1]\n- 회의 결과 초안에는 mandatory Code의 발효 목표가 2032년으로 제시됩니다. [3]\n- 다만 해당 목표가 야심적이어서 추후 재검토될 수 있다는 점도 기록돼 있습니다. [3]\n\n## 2) 선박 운항/업무 영향\n\n- **적용상 유의점**: 현재 확인되는 Code는 비강제 단계이므로 mandatory Code의 확정 의무나 발효일로 해석해서는 안 됩니다. [1]\n- **준비 방향**: 향후 경험축적단계에서 설계·운항·승인 경험을 축적할 수 있도록 적용 사례와 검증 자료를 관리할 필요가 있습니다. [5]\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 회의 결과 초안 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [3",
+      "error": "",
+      "router_latency_ms": 1989.13,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 83,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_meet_02",
+      "type": "rag_meeting",
+      "question": "MEPC 84가 다룰 예정이었던 주요 의제 항목을 문서 근거로 정리해줘.",
+      "gold": "MEPC 84 provisional agenda 항목",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 2.55,
+      "miss": [
+        "MEPC",
+        "84",
+        "의제|agenda|안건"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 위원회 제출·보고 자료 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [10]",
+      "answer_preview": "## 1) 핵심 요약\n\n> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 위원회 제출·보고 자료 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [10]",
+      "error": "",
+      "router_latency_ms": 1614.67,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 91,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_meet_03",
+      "type": "rag_meeting",
+      "question": "MSC 111 문서에서 IGC Code 개정 논의가 어떻게 정리됐는지 알려줘.",
+      "gold": "MSC 111 IGC Code amendments",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 1.77,
+      "miss": [
+        "MSC",
+        "IGC",
+        "개정|amend|변경"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 위원회 제출·보고 자료 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [8]",
+      "answer_preview": "## 1) 핵심 요약\n\n> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 위원회 제출·보고 자료 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [8]",
+      "error": "",
+      "router_latency_ms": 1591.56,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 90,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_meet_04",
+      "type": "rag_meeting",
+      "question": "암모니아를 선박 연료로 쓰는 문제를 MSC 111에서 어떻게 논의했어?",
+      "gold": "MSC 111 ammonia fuel 논의",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "WEAK",
+      "quality": "THIN",
+      "dt": 1.73,
+      "miss": [
+        "암모니아|ammonia"
+      ],
+      "hits": [
+        "MSC",
+        "연료|fuel"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 회의 결과 초안 기록상 GHG·대체연료 안전: MSC.1/Circ 승인 [6]\n\n## 2) 선박 운항/업무 영향\n\n- 검색된 회의자료에서는 질문과 직접 연결되는 선박 운항·업무 영향 문구를 확인하지 못했습니다. [4]\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 회의 결과 초안 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [9]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 회의 결과 초안 기록상 GHG·대체연료 안전: MSC.1/Circ 승인 [6]\n\n## 2) 선박 운항/업무 영향\n\n- 검색된 회의자료에서는 질문과 직접 연결되는 선박 운항·업무 영향 문구를 확인하지 못했습니다. [4]\n\n## 3) 추후 확인 필요사항\n\n- [미확정 규제] 회의 결과 초안 기록상 결정이며, 최종 발행 문서 확인 전 법적 효력과 발효일은 단정할 수 없습니다. [9]",
+      "error": "",
+      "router_latency_ms": 1579.32,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 88,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_def_01",
+      "type": "rag_definition",
+      "question": "선급 문서에서 substantial corrosion이라고 판정하는 상태를 풀어서 설명해줘.",
+      "gold": "허용 부식여유의 75% 등을 초과하는 substantial corrosion 정의",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 18.98,
+      "miss": [],
+      "hits": [
+        "corrosion|부식",
+        "두께|여유|허용|75%|70%|쇠모"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 과도한 부식(substantial corrosion)은 두께계측 결과에 따른 부식 유형 평가 시, 부식 정도가 선급이 정한 쇠모한도 이내에 있으나 그 한도의 75%를 초과하여 부식된 상태를 의미합니다. [1]\n- 국제선급연합회(IACS)의 공통구조규칙(Rule 11, 12 또는 13편)에 따라 건조된 선박의 경우, 계측된 두께가 $t_{min} + 0.5$ mm와 $t_{min}$ 사이에 있는 부식 상태를 과도한 부식으로 정의합니다. [1]\n- 여기서 신환두께($t_{min}$)는 구조부재가 신환되어야 하는 최소허용두께(mm)를 의미합니다. [1]\n- 검사원은 과도한 부식이 있거나 급격한 부식을 일으킬 가능성이 있다고 판단되는 지역을 의심지역로 인정할 수 있습니다. [2]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 과도한 부식(substantial corrosion)은 두께계측 결과에 따른 부식 유형 평가 시, 부식 정도가 선급이 정한 쇠모한도 이내에 있으나 그 한도의 75%를 초과하여 부식된 상태를 의미합니다. [1]\n- 국제선급연합회(IACS)의 공통구조규칙(Rule 11, 12 또는 13편)에 따라 건조된 선박의 경우, 계측된 두께가 $t_{min} + 0.5$ mm와 $t_{min}$ 사이에 있는 부식 상태를 과도한 부식으로 정의합니다. [1]\n- 여기서 신환두께($t_{min}$)는 구조부재가 신환되어야 하는 최소허용두께(mm)를 의미합니다. [1]\n- 검사원은 과도한 부식이 있거나 급격한 부식을 일으킬 가능성이 있다고 판단되는 지역을 의심지역로 인정할 수 있습니다. [2]",
+      "error": "",
+      "router_latency_ms": 1625.98,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 91,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_def_02",
+      "type": "rag_definition",
+      "question": "구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?",
+      "gold": "부식 추가 또는 부식 두께 관련 정의",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 10.54,
+      "miss": [
+        "tcorr|부식",
+        "두께|추가|addition|mm"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n- 표 근거에서 질문에 해당하는 셀을 확정하지 못했습니다. [1][2][3]\n- 행 키워드·열 이름·표 번호, 또는 가능하면 파일명·페이지를 알려주시면 더 정확히 찾을 수 있습니다. [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 표 근거에서 질문에 해당하는 셀을 확정하지 못했습니다. [1][2][3]\n- 행 키워드·열 이름·표 번호, 또는 가능하면 파일명·페이지를 알려주시면 더 정확히 찾을 수 있습니다. [1][2][3]",
+      "error": "",
+      "router_latency_ms": 2069.4,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 86,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_rule_01",
+      "type": "rag_rule",
+      "question": "IMO 문서 기준으로 선박 탄소집약도 등급을 관리하는 요구사항을 요약해줘.",
+      "gold": "IMO/MEPC CII 규제와 등급 관리 요구",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 21.03,
+      "miss": [
+        "IMO|MEPC",
+        "CII|탄소집약",
+        "등급|rating|attained|required"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n- 제시된 저인화점연료선박 규칙_2025.pdf의 60쪽 표(화학성분)를 바탕으로 한 답변입니다. [12]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 제시된 저인화점연료선박 규칙_2025.pdf의 60쪽 표(화학성분)를 바탕으로 한 답변입니다. [12]",
+      "error": "",
+      "router_latency_ms": 1806.18,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 89,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_rule_02",
+      "type": "rag_rule",
+      "question": "DNV의 자율운항선박 관련 지침이 강조하는 핵심 안전 원칙을 찾아줘.",
+      "gold": "DNV autonomous/MASS guidance",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "WEAK",
+      "quality": "THIN",
+      "dt": 11.96,
+      "miss": [
+        "DNV"
+      ],
+      "hits": [
+        "자율|autonom|MASS",
+        "안전|safety|guidance|지침"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 자율운항선박 관련 지침이 강조하 → Definition [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 자율운항선박 관련 지침이 강조하 → Definition [1][2][3]",
+      "error": "",
+      "router_latency_ms": 2215.3,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 99,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_01",
+      "type": "table_cell",
+      "question": "2편_2025.pdf 206페이지 표에서 RD·RY·RW·RU 308L 용접재료 시험에 대응하는 강종은?",
+      "gold": "RSTS 304L",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 11.89,
+      "miss": [],
+      "hits": [
+        "RSTS",
+        "304L"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 적용강종(1) → RSTS 304L [1]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 적용강종(1) → RSTS 304L [1]",
+      "error": "",
+      "router_latency_ms": 2102.73,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 110,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_02",
+      "type": "table_cell",
+      "question": "2편_2025.pdf 78쪽 표를 보면 복잡한 형상이거나 단품 중량이 10톤을 넘는 주강품은 제품별 시험재가 몇 개인가?",
+      "gold": "제품마다 2개",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 11.82,
+      "miss": [
+        "2개|2 개|두 개"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 넘는 주강품은 제품별 시험재 → 시험재의 수 [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 넘는 주강품은 제품별 시험재 → 시험재의 수 [1][2][3]",
+      "error": "",
+      "router_latency_ms": 2231.03,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 125,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_03",
+      "type": "table_cell",
+      "question": "13편_2025.pdf 48페이지 표에 정의된 기관실 격벽의 위치는 어디인가?",
+      "gold": "기관실 전방 또는 후방의 횡격벽",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 10.0,
+      "miss": [
+        "기관실",
+        "전방",
+        "후방",
+        "횡격벽"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 위치 → 정의 [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 위치 → 정의 [1][2][3]",
+      "error": "",
+      "router_latency_ms": 2038.82,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 106,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_04",
+      "type": "table_cell",
+      "question": "14편_2025.pdf 19쪽 표에서 AC-S·AC-SD·AC-A·AC-T 판과 국부 지지부재의 허용응력은 어느 절을 따르나?",
+      "gold": "6장 4절 및 6장 5절",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "FAIL",
+      "quality": "BAD",
+      "dt": 12.1,
+      "miss": [
+        "6장",
+        "4절",
+        "5절"
+      ],
+      "hits": [],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 항복 허용응력 → 5장 1절 [1]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 항복 허용응력 → 5장 1절 [1]",
+      "error": "",
+      "router_latency_ms": 2205.79,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 125,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_05",
+      "type": "table_reporting",
+      "question": "1편_2025.pdf 59쪽 검사표에서 빌지저장탱크는 제4차 이후 정기검사 때 내부검사 대상인가?",
+      "gold": "제4차 이후 내부검사 대상 ○",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 10.79,
+      "miss": [],
+      "hits": [
+        "제4차|4차",
+        "○|O|대상|내부검사"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 제4차 및 이후 정기검사 → ○ [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 제4차 및 이후 정기검사 → ○ [1][2][3]",
+      "error": "",
+      "router_latency_ms": 2009.25,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 110,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_06",
+      "type": "table_cell",
+      "question": "1편_2025.pdf 339페이지 CMS 표에서 Bilge System의 통일명칭은 무엇인가?",
+      "gold": "Bilge Pump",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 11.45,
+      "miss": [],
+      "hits": [
+        "Bilge",
+        "Pump"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 결론: CMS 통일명칭 → Bilge Pump [1]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: CMS 통일명칭 → Bilge Pump [1]",
+      "error": "",
+      "router_latency_ms": 1885.91,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 99,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_07",
+      "type": "table_cell",
+      "question": "1편_2025.pdf 338쪽 CMS 목록에서 Sea Water Service System은 어떤 통일명칭으로 적혀 있나?",
+      "gold": "S.W. Service Pump",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 20.91,
+      "miss": [],
+      "hits": [
+        "S\\.W\\.[\\s\\S]{0,80}Service[\\s\\S]{0,80}Pump"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 제시된 자료(표 kr_1_2025_p0338_t142)를 바탕으로 분석한 결과는 다음과 같습니다. [1][2][3]\n\n- **1. [1][2][3]\n- Cooling Sea Water System (해수 냉각 계통)** [1][2][3]\n- **Main Cooling S.W. [1][2][3]\n- Pump:** 선박에서는 'Main Condenser Cooling S.W. [1][2][3]\n- Pump'로도 불립니다. [1][2][3]\n- **Reserve Cooling S.W. [1][2][3]\n- Pump:** 선박 현장에서는 'Stand-by Cooling S.W. [1][2][3]\n- Pump'라는 명칭이 혼용됩니다. [1][2][3]\n- **A/E Cooling S.W. [1][2][3]\n- Pump:** 실제 운용 시에는 'Aux. [1][2][3]\n- Machinery Cooling S.W. [1][2][3]\n- Pump' 또는 'Aux. [1][2][3]\n- G/T Cooling S.W. [1][2][3]\n- Pump'로 불리기도 합니다. [1][2][3]\n- **Aux. [1][2][3]\n- Condenser Cooling S.W. [1][2][3]\n- Pump:** 선박에 따라 매우 다양한 명칭(Dumping, Vacuum, Atmospheric, Drain Cooler 등)이 사용됩니다. [1][2][3]\n\n- **2. [1][2][3]\n- Cooling Fresh Water System (청수 냉각 계통)** [1][2][3]\n- **M/E Cooling F.W. [1][2][3]\n- Pump:** 'Main Cooling F.W. [1][2][3]\n- Pump'로도 불립니다. [1][2][3]\n- **M/E Reserve Cooling F.W. [1][2][3]\n- Pump:** 현장에서는 'Reserve Cooling F.W. [1][2][3]\n- Pump' 또는 'Cooling F.W. [1][2][3]\n- Service Pump'로 통칭됩니다. [1][2][3]\n- **Aux. [1][2][3]\n- Cooling F.W. [1][2][3]\n- Pump:** 상황에 따라 'Air Intercooler Cooling F.W. [1][2][3]\n- Pump' 또는 'Turbo Charger Cooling F.W. [1][2][3]\n- Pump'로 불립니다. [1][2][3]\n- **A/E Cooling F.W. [1][2][3]\n- Pump:** 현장에서는 'Harbour Cooling F.W. [1][2][3]\n- Pump'라는 명칭이 사용되기도 합니다. [1][2][3]\n\n- **3. [1][2][3]\n- Fuel Oil (F.O.) 관련 계통** [1][2][3]\n- **M/E F.O. [1][2][3]\n- Supply pump:** 이 항목은 가장 다양한 실제 명칭을 포함하고 있습니다. [1][2][3]\n- Main H.F.O./I.F.O./M.D.O. [1][2][3]\n- Supply pump, Reserve F.O. [1][2][3]\n- Supply pump, F.O. [1][2][3]\n- Feed pump, Res. [1][2][3]\n- F.O. [1][2][3]\n- Supply & F.O. [1][2][3]\n- Valve Cooling pump, F.O. [1][2][3]\n- Supply & F.O. [1][2][3]\n- Transfer pump, Stand-by F.O. [1][2][3]\n- Supply Pump 등이 모두 이 범주에 포함됩니다. [1][2][3]\n- **M/E F.O. [1][2][3]\n- Service Pump:** 현장에서는 'M/E C Oil Service Pump'로도 불립니다. [1][2][3]\n- **A/E F.O. [1][2][3]\n- Service Pump:** 현장에서는 'A/E C Oil Service Pump'라는 명칭이 사용됩니다. [1][2][3]\n\n- **4. [1][2][3]\n- 기타 계통** [1][2][3]\n- **S.W. [1][2][3]\n- Service Pump:** 별도의 추가 명칭 없이 CMS 통일명칭으로 관리됩니다. [1][2][3]\n- **M/E F.O.V. [1][2][3]\n- Cooling Pump:** 현장에서는 'M/E F.O.V. [1][2][3]\n- Cooling F.W (or Oil) Pump'로 불리기도 합니다. [1][2][3]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 제시된 자료(표 kr_1_2025_p0338_t142)를 바탕으로 분석한 결과는 다음과 같습니다. [1][2][3]\n\n- **1. [1][2][3]\n- Cooling Sea Water System (해수 냉각 계통)** [1][2][3]\n- **Main Cooling S.W. [1][2][3]\n- Pump:** 선박에서는 'Main Condenser Cooling S.W. [1][2][3]\n- Pump'로도 불립니다. [1][2][3]\n- **Reserve Cooling S.W. [1][2][3]\n- Pump:** 선박 현장에서는 'Stand-by Cooling S.W. [1][2][3]\n- Pump'라는 명칭이 혼용됩니다. [1][2][3]\n- **A/E Cooling S.W. [1][2][3]\n- Pump:** 실제 운용 시에는 'Aux. [1][2][3]\n- Machinery Cooling S.W. [1][2][3]\n- Pump' 또는 'Aux. [1][2][3]\n- G/T Cooling S.W. [1][2][3]\n- Pump'로 불리기도 합니다. [1][2][3]\n- **Aux. [1][2][3]\n- Condenser Coo",
+      "error": "",
+      "router_latency_ms": 2074.82,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 114,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_table_08",
+      "type": "table_caption",
+      "question": "2편_2025.pdf 10페이지에 있는 구조화 표의 제목을 원문 기준으로 알려줘.",
+      "gold": "시험편의 모양",
+      "expect_route": "rag",
+      "route": "rag",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 10.37,
+      "miss": [],
+      "hits": [
+        "시험편",
+        "모양|형상"
+      ],
+      "answer": "## 1) 핵심 요약\n\n- 결론: 표 제목 → 시험편의 모양 [1]",
+      "answer_preview": "## 1) 핵심 요약\n\n- 결론: 표 제목 → 시험편의 모양 [1]",
+      "error": "",
+      "router_latency_ms": 2298.09,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 103,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_hybrid_01",
+      "type": "hybrid",
+      "question": "현재 우리 선박의 CII 성적이 IMO·MEPC 관리 요구에 부합하는지 실제 수치와 규정을 함께 비교해줘.",
+      "gold": "현재 CII 등급 E, attained 약 6.396, required 약 3.731을 IMO·MEPC 문서 요구와 비교",
+      "expect_route": "hybrid",
+      "route": "hybrid",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 24.63,
+      "miss": [],
+      "hits": [
+        "CII",
+        "E(?:\\s*등급|등급은|'E'|\\*\\*)|등급.{0,15}E",
+        "6\\.39|6\\.40",
+        "3\\.73",
+        "IMO|MEPC"
+      ],
+      "answer": "현재 선박의 CII 성적과 IMO·MEPC 관리 요구 사항을 비교한 결과는 다음과 같습니다.\n\n### 1. 현재 선박의 CII 실적 (2026년 잠정치)\n운항 데이터(2026-01-01 ~ 2026-06-28)를 기반으로 산출된 수치는 다음과 같습니다.\n\n*   **Attained CII (실제 성적):** **6.396 gCO₂/(DWT·nm)**\n*   **Reference CII (기준치):** 4.193 gCO₂/(DWT·nm)\n*   **Required CII (요구치):** **3.731 gCO₂/(DWT·nm)** (감축계수 Z=11.000% 적용)\n*   **비교 결과:** 현재 선박의 성적은 Required CII 대비 **171.4%** 수준이며, 이에 따른 **CII 등급은 'E'**입니다.\n\n### 2. IMO·MEPC 관리 요구 사항 및 규정 비교\n[DOCUMENT RESULT]에 따른 관련 규정과의 비교는 다음과 같습니다.\n\n*   **적합성 확인 절차:** MEPC 84/6/21에 따라, MARPOL Annex VI 규정 27에 의거하여 제출된 데이터의 적합성을 확인한 후 해당 연도 시작 후 5개월 이내에 Statement of Compliance를 발급받는 절차가 마련되어 있습니다.\n*   **관리 요구사항:** 선박은 탄소집약도(AER·cgDIST)를 2019년 기준선 및 선종·크기 구간별로 비교하여 성과를 관리해야 합니다.\n\n### [결론]\n현재 선박의 **Attained CII(6.396)**는 IMO가 요구하는 **Required CII(3.731)**를 크게 상회하고 있으며, 이로 인해 **등급 'E'**를 기록하고 있습니다. 이는 규정상 관리 목표치에 부합하지 않는 상태이며, 향후 Statement of Compliance 발급 및 지속적인 탄소집약도 관리가 필요한 상황입니다.\n\n※ 참고: 현재 수치는 2026년이 종료되지 않은 시점의 잠정(YTD)치로, 공식 연간 확정치가 아님을 유의하시기 바랍니다.",
+      "answer_preview": "현재 선박의 CII 성적과 IMO·MEPC 관리 요구 사항을 비교한 결과는 다음과 같습니다.\n\n### 1. 현재 선박의 CII 실적 (2026년 잠정치)\n운항 데이터(2026-01-01 ~ 2026-06-28)를 기반으로 산출된 수치는 다음과 같습니다.\n\n*   **Attained CII (실제 성적):** **6.396 gCO₂/(DWT·nm)**\n*   **Reference CII (기준치):** 4.193 gCO₂/(DWT·nm)\n*   **Required CII (요구치):** **3.731 gCO₂/(DWT·nm)** (감축계수 Z=11.000% 적용)\n*   **비교 결과:** 현재 선박의 성적은 Required CII 대비 **171.4%** 수준이며, 이에 따른 **CII 등급은 'E'**입니다.\n\n### 2. IMO·MEPC 관리 요구 사항 및 규정 비교\n[DOCUMENT RESULT]에 따른 관련 규정과의 비교는 다음과 같습니다.\n\n*   **적합성 확인 절차:** MEPC 84/6/21에 따라, MARPOL Annex VI 규정 27에 의거하여 제출된 데이터의 적합성을 확인한 후 해당 연도 시작 후 5개월 이내에 Statement of C",
+      "error": "",
+      "router_latency_ms": 1907.7,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 95,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": "stop",
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_hybrid_02",
+      "type": "hybrid",
+      "question": "이번 항차의 실제 CO2 배출 실적과 MARPOL Annex VI 관련 문서 기준을 한 답변에서 같이 설명해줘.",
+      "gold": "현 항차 CO2 약 2751.67MT와 MARPOL Annex VI 근거",
+      "expect_route": "hybrid",
+      "route": "hybrid",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 36.1,
+      "miss": [],
+      "hits": [
+        "2751\\.67|2751\\.7|2,751\\.67",
+        "MARPOL",
+        "Annex\\s*VI|부속서\\s*VI"
+      ],
+      "answer": "이번 항차의 실제 CO2 배출 실적과 MARPOL Annex VI 관련 문서 기준은 다음과 같습니다.\n\n**[현재 선박 실적 (OPS)]**\n*   **CO2 배출량:** 2751.67mt (실측 센서 기반)\n*   **메탄(CH4) 배출량:** 53.0901mt\n*   **전체 이산화탄소 상당량(CO2e):** 4238.2mt\n    *   해당 수치는 주기관, 발전기, 보조보일러 및 가스연료공급장치(GCU)를 모두 포함한 선박 전체의 실측 데이터입니다.\n\n**[MARPOL Annex VI 관련 문서 기준 (DOCUMENT)]**\n*   **관련 지침:** Table 2 Guidance for relevant requirements for CO2 carriers [9]가 관련 요구사항으로 확인됩니다.\n*   **참조 Rule/Guidance:** DNV-RU-SHIP-Pt6 [8] 및 mvr-part-6-jan26 [1]이 원문 후보이나, 정확한 적용 범위는 해당 조항에서 추가 확인이 필요합니다.\n*   **주의사항:** 현재 검색된 근거에는 세부 요구사항 정보가 부족하여, 해당 결과를 선급의 전체 요구사항으로 확대 해석할 수 없습니다. [7]",
+      "answer_preview": "이번 항차의 실제 CO2 배출 실적과 MARPOL Annex VI 관련 문서 기준은 다음과 같습니다.\n\n**[현재 선박 실적 (OPS)]**\n*   **CO2 배출량:** 2751.67mt (실측 센서 기반)\n*   **메탄(CH4) 배출량:** 53.0901mt\n*   **전체 이산화탄소 상당량(CO2e):** 4238.2mt\n    *   해당 수치는 주기관, 발전기, 보조보일러 및 가스연료공급장치(GCU)를 모두 포함한 선박 전체의 실측 데이터입니다.\n\n**[MARPOL Annex VI 관련 문서 기준 (DOCUMENT)]**\n*   **관련 지침:** Table 2 Guidance for relevant requirements for CO2 carriers [9]가 관련 요구사항으로 확인됩니다.\n*   **참조 Rule/Guidance:** DNV-RU-SHIP-Pt6 [8] 및 mvr-part-6-jan26 [1]이 원문 후보이나, 정확한 적용 범위는 해당 조항에서 추가 확인이 필요합니다.\n*   **주의사항:** 현재 검색된 근거에는 세부 요구사항 정보가 부족하여, 해당 결과를 선급의 전체 요구사항으로 확대 해석할 수 없습니다. [7]",
+      "error": "",
+      "router_latency_ms": 1989.57,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 89,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": "stop",
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_hybrid_03",
+      "type": "hybrid",
+      "question": "지금 우리 배 운항 상태를 보여주고, 그 상태와 관련해 참고할 DNV 자율운항 guidance도 같이 찾아줘.",
+      "gold": "현재 H2521 운항 데이터와 DNV autonomous guidance",
+      "expect_route": "hybrid",
+      "route": "hybrid",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 23.78,
+      "miss": [],
+      "hits": [
+        "H2521|Ballast|항차|운항",
+        "DNV",
+        "자율|autonom|MASS|guidance"
+      ],
+      "answer": "현재 선박의 운항 상태와 관련 DNV 자율운항 가이드라인은 다음과 같습니다.\n\n**[현재 선박 운항 상태 (H2521_V21_Ballast)]**\n*   **위치 및 속도:** 현재 위도 27.973, 경도 0.0 위치에서 18.6노트(SOG)의 속도로 운항 중입니다.\n*   **성능 데이터:** 주기관 출력은 19,740kW이며, 연료 소모량은 시간당 오일(FOC) 0.1083MT, 가스(FGC) 3.2426MT를 기록하고 있습니다.\n*   **배출량 및 등급:** 항차 누적 기준 배출량은 CO2 2,751.67MT, CH4 53.0901MT, CO2e 4,238.2MT이며, 현재 데이터 기반 올해(YTD) CII 등급은 **E등급**입니다.\n\n**[참고 DNV 자율운항 Guidance]**\n*   **핵심 문서:** **DNV-CG-0264**가 자율 및 원격운항 선박 관련 핵심 Guideline으로 확인됩니다. [1][2]\n*   **주요 내용:** 이 문서는 신기술을 적용한 자율·원격운항 선박 기능을 안전하게 구현하기 위한 설계, 운용, 승인 및 검증 절차를 다룹니다 (p.9). [1] 또한, 해당 기능의 구체적인 적용 범위를 포함하고 있습니다 (p.52). [2]",
+      "answer_preview": "현재 선박의 운항 상태와 관련 DNV 자율운항 가이드라인은 다음과 같습니다.\n\n**[현재 선박 운항 상태 (H2521_V21_Ballast)]**\n*   **위치 및 속도:** 현재 위도 27.973, 경도 0.0 위치에서 18.6노트(SOG)의 속도로 운항 중입니다.\n*   **성능 데이터:** 주기관 출력은 19,740kW이며, 연료 소모량은 시간당 오일(FOC) 0.1083MT, 가스(FGC) 3.2426MT를 기록하고 있습니다.\n*   **배출량 및 등급:** 항차 누적 기준 배출량은 CO2 2,751.67MT, CH4 53.0901MT, CO2e 4,238.2MT이며, 현재 데이터 기반 올해(YTD) CII 등급은 **E등급**입니다.\n\n**[참고 DNV 자율운항 Guidance]**\n*   **핵심 문서:** **DNV-CG-0264**가 자율 및 원격운항 선박 관련 핵심 Guideline으로 확인됩니다. [1][2]\n*   **주요 내용:** 이 문서는 신기술을 적용한 자율·원격운항 선박 기능을 안전하게 구현하기 위한 설계, 운용, 승인 및 검증 절차를 다룹니다 (p.9). [1] 또한, 해당 기능의 구체적인 적용 범위를 포함하고 있습니다 (p.",
+      "error": "",
+      "router_latency_ms": 1815.02,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 94,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": "stop",
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_oos_01",
+      "type": "oos",
+      "question": "오늘 원달러 환율이 얼마인지 알려줘.",
+      "gold": "시스템 범위 밖 안내",
+      "expect_route": "chat",
+      "route": "chat",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 1.75,
+      "miss": [],
+      "hits": [
+        "범위|운항|문서|지원|해당|밖"
+      ],
+      "answer": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "answer_preview": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "error": "",
+      "router_latency_ms": 1750.57,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 80,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    },
+    {
+      "id": "fresh_oos_02",
+      "type": "oos",
+      "question": "저녁 메뉴 하나 추천해줘.",
+      "gold": "시스템 범위 밖 안내",
+      "expect_route": "chat",
+      "route": "chat",
+      "route_ok": true,
+      "needle": "PASS",
+      "quality": "GOOD",
+      "dt": 1.41,
+      "miss": [],
+      "hits": [
+        "범위|운항|문서|지원|해당|밖"
+      ],
+      "answer": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "answer_preview": "질문을 운항 데이터로 볼지, 규정·회의 문서로 볼지 확실하지 않습니다.\n\n- **운항 수치**가 필요하면: 항차 상태, CII, 연료/배출, Noon/MRV 처럼 말씀해 주세요.\n- **문서 검색**이 필요하면: MEPC/MSC, 선급 Rule, 검사 기준/표 처럼 말씀해 주세요.\n\n예: `올해 CII 등급` / `최신 MEPC 동향`",
+      "error": "",
+      "router_latency_ms": 1406.01,
+      "router_fallback_used": false,
+      "router_error_kind": null,
+      "router_done_reason": "stop",
+      "router_eval_count": 73,
+      "answer_empty": false,
+      "answer_error": "",
+      "answer_done_reason": null,
+      "answer_model": "gemma4:12b"
+    }
+  ]
+}

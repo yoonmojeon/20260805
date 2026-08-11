@@ -14,10 +14,10 @@ REPORTS_DIR = _SHARED_REPORTS_DIR
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Ollama (로컬 LLM) — default llama3.1:8b (override with MODEL_NAME)
+# Ollama (로컬 LLM) — quality-30 winner gemma4:12b (override with MODEL_NAME)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = "ollama"
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3.1:8b")
+MODEL_NAME = os.getenv("MODEL_NAME", "gemma4:12b")
 
 # 선박 기본 정보 (ho_data 기반 실제 선박: h2521)
 # CII 산정 대상: DWT 279,000 미만 Bulk Carrier, DWT=81,200 (CII Capacity = DWT)

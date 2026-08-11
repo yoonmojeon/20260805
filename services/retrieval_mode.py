@@ -28,11 +28,12 @@ _TABLE_CUE_PATTERNS = [
     r"열\s*\d+|row\s*\d+|cell",
     r"\d+\s*편[_\s]?\d{4}\.pdf|\.pdf.{0,20}\d+\s*페이지",
     r"안전사용하중|설계하중\s*시나리오|용접\s*다리|방화\s*보존|부식추가|"
-    r"평가하는가|몇\s*(?:톤|mm)|SP-[A-Z]|호퍼탱크|이중선측",
+    r"평가하는가|몇\s*(?:톤|mm|배|개)|SP-[A-Z]|호퍼탱크|이중선측|"
+    r"허용\s*(?:바깥지름|기준)|확관|시험재|주강품|강종|RSTH|재화중량",
 ]
 
 _TEXT_PROSE_PATTERNS = [
-    r"취지|목적|정의|의미|scope|요건\s*설명",
+    r"취지|목적|정의|scope|요건\s*설명",
     r"회의\s*(결과|주요|결정|논의|요약)",
     r"주요\s*(결과|안건|내용|결정)",
     r"논의\s*(요약|내용|결과)",
@@ -40,6 +41,11 @@ _TEXT_PROSE_PATTERNS = [
     r"근거\s*조항|조항\s*설명|circular|resolution",
     r"MEPC|MSC|MASS\s*Code|GHG\s*Strategy",
 ]
+# Bare "의미" alone is often a glossary *table* cell ask ("…는 무엇을 의미하는가?").
+_GLOSSARY_TABLE_ASK_RE = re.compile(
+    r"(?:무엇을\s*)?의미하는가|어느\s*부분(?:을|을\s*의미)|어떤\s*(?:판\s*)?패널을\s*의미",
+    re.IGNORECASE,
+)
 
 _EXPLICIT_FILE_PAGE_RE = re.compile(
     r"[^\s]+\.pdf|페이지\s*\d+|\d+\s*(?:페이지|쪽)",
@@ -196,6 +202,17 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     table_score, _detail = table_shape_score(q)
     prose_score = prose_shape_score(q)
     bridge = _hit(_BOTH_BRIDGE_PATTERNS, q)
+
+    # Glossary-style cell asks over structural terms stay on the table index.
+    if _GLOSSARY_TABLE_ASK_RE.search(q) and (
+        table_score >= 0.25
+        or _hit(_TABLE_CUE_PATTERNS, q)
+        or re.search(
+            r"외판|격벽|패널|탱크|갑판|거더|웨브|부재|구역|기관실|좌굴",
+            q,
+        )
+    ):
+        return RetrievalMode.TABLE
 
     strong_table = table_score >= 0.55
     weak_table = 0.25 <= table_score < 0.55
