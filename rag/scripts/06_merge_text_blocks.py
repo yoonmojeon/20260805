@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import json
 import re
@@ -165,12 +166,19 @@ def resolve_pdf_path(
         return None
 
     row = matched.iloc[0]
-    candidates = [Path(str(row["file_path"]))]
+    candidates: list[Path] = []
     file_name = str(row.get("file_name", ""))
     if file_name:
         candidates.append(project_root / "data" / "raw_pdfs" / file_name)
         for found in (project_root / "data" / "raw_pdfs").rglob(file_name):
             candidates.append(found)
+    if os.environ.get("MARITIME_ALLOW_EXTERNAL_DATA_PATHS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        candidates.append(Path(str(row["file_path"])))
 
     seen: set[str] = set()
     for candidate in candidates:

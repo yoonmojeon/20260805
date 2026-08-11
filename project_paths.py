@@ -20,6 +20,7 @@ REPORTS_DIR = PROJECT_ROOT / "reports" / "output"
 RAG_INDEX_DIR = PROCESSED_DIR / "index"
 RAG_CHUNKS_DIR = PROCESSED_DIR / "chunks"
 RAG_TABLE_CHUNKS_DIR = PROCESSED_DIR / "chunks_tables_precise"
+PRECISE_TABLES_DIR = PROCESSED_DIR / "precise_tables"
 
 # Single source of truth for collection IDs (override via env if needed).
 DEFAULT_RAG_COLLECTION = os.environ.get(

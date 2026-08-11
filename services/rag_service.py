@@ -10,6 +10,7 @@ from typing import Any
 from project_paths import (
     DEFAULT_RAG_COLLECTION,
     DEFAULT_TABLE_COLLECTION,
+    PRECISE_TABLES_DIR,
     RAG_CHUNKS_DIR,
     RAG_DIR,
     RAG_INDEX_DIR,
@@ -345,17 +346,45 @@ def _chunk_meta_dict(chunk: Any) -> dict[str, Any]:
 
 def _resolve_crop_path(meta: dict[str, Any], table_id: str) -> str:
     crop = str(meta.get("crop_path") or "")
-    if crop and Path(crop).is_file():
-        return crop
-    # Precise corpus layout: .../precise_tables/{year}/p####_t###/crop.png
     import re
 
+    root = PRECISE_TABLES_DIR.resolve()
+    candidates: list[Path] = []
+
+    # Old metadata can contain an absolute path from the machine that built the
+    # corpus. Rebase the suffix below precise_tables onto this project first.
+    normalized = crop.replace("\\", "/")
+    marker = "/data/processed/precise_tables/"
+    marker_at = normalized.lower().find(marker)
+    if marker_at >= 0:
+        rel = normalized[marker_at + len(marker) :]
+        if rel:
+            candidates.append(root.joinpath(*Path(rel).parts))
+
+    # Current precise corpus layout:
+    # precise_tables/{doc-id hash}/p####_t###/crop.png
+    match = re.search(r"_([0-9a-f]{8,16})_(p\d+_t\d+)$", table_id or "", re.I)
+    if match:
+        candidates.append(root / match.group(1) / match.group(2) / "crop.png")
+
+    # Compatibility with the older year-based layout.
     match = re.search(r"(20\d{2}).*?(p\d+_t\d+)", table_id or "", re.I)
-    if not match:
-        return ""
-    root = Path(__file__).resolve().parents[1] / "data" / "processed" / "precise_tables"
-    candidate = root / match.group(1) / match.group(2) / "crop.png"
-    return str(candidate) if candidate.is_file() else ""
+    if match:
+        candidates.append(root / match.group(1) / match.group(2) / "crop.png")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    # External absolute paths are disabled by default so a copied workspace
+    # never silently depends on its source folder. This switch is only for
+    # backwards compatibility with installations that have not copied crops.
+    allow_external = os.environ.get(
+        "MARITIME_ALLOW_EXTERNAL_DATA_PATHS", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if allow_external and crop and Path(crop).is_file():
+        return str(Path(crop).resolve())
+    return ""
 
 
 def _related_tables_from_hits(

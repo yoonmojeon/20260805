@@ -356,7 +356,7 @@ flowchart TD
 │   ├── manifests/         # 코퍼스 목록
 │   ├── config/            # HancomEQN 매핑 등
 │   ├── eval/              # 혼합 평가 스위트 등
-│   └── processed/         # chunks / chroma / logs (로컬)
+│   └── processed/         # chunks / chroma / 표 crop / 중간 산출물 (로컬)
 ├── docs/                  # 본 문서, 매뉴얼, 표 파이프라인
 ├── scripts/               # 평가·빌드 헬퍼
 └── tests/                 # 라우터 골든 등
@@ -364,6 +364,8 @@ flowchart TD
 
 Git에 안 올리는 것(일반적): 원본 PDF, 모델 가중치, Chroma 바이너리,
 대용량 청크·로그, `.venv`, API 키.
+
+이 PC에서는 위 대용량 데이터도 `C:\Users\user\llmagent\data`와 `rag/models` 아래에 로컬 복사되어 있습니다. PDF manifest는 `data/raw_pdfs/...` 상대경로를 사용하고, 과거 표 메타데이터의 절대 `crop_path`는 현재 프로젝트의 `data/processed/precise_tables`로 먼저 재해석합니다. `MARITIME_ALLOW_EXTERNAL_DATA_PATHS` 기본값은 `0`이므로 예전 작업 폴더 fallback은 사용하지 않습니다.
 
 ---
 

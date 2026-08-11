@@ -48,11 +48,20 @@ def short_work_dir(work_root: Path, doc_id: str, table_id: str) -> Path:
     return work_root / doc_leaf / table_leaf
 
 
+def local_crop_path(item: dict[str, Any], work_root: Path) -> Path:
+    """Rebase a saved crop path onto this workspace's precise-table root."""
+    crop = str(item.get("crop_path") or "").replace("\\", "/")
+    marker = "/data/processed/precise_tables/"
+    marker_at = crop.lower().find(marker)
+    if marker_at >= 0:
+        rel = crop[marker_at + len(marker) :]
+        if rel:
+            return work_root.joinpath(*Path(rel).parts)
+    return short_work_dir(work_root, str(item["doc_id"]), str(item["table_id"])) / "crop.png"
+
+
 def table_work_dir(item: dict[str, Any], work_root: Path) -> Path:
-    crop = str(item.get("crop_path") or "")
-    if crop:
-        return Path(crop).parent
-    return short_work_dir(work_root, str(item["doc_id"]), str(item["table_id"]))
+    return local_crop_path(item, work_root).parent
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -194,7 +203,7 @@ def run_tatr(args: argparse.Namespace, manifest: dict) -> None:
     runtime = batch.load_runtime(batch.TATR.MODEL_ID)
     for index, item in enumerate(pending, 1):
         output = table_work_dir(item, args.work_root) / "tatr_v1_1_all"
-        result = batch.infer(Path(item["crop_path"]), runtime, args.tatr_threshold, args.tatr_padding, output)
+        result = batch.infer(local_crop_path(item, args.work_root), runtime, args.tatr_threshold, args.tatr_padding, output)
         print(f"[{index}/{len(pending)}] TATR {item['table_id']} {result['summary']['row_count']}x{result['summary']['column_count']}", flush=True)
 
 
@@ -390,7 +399,8 @@ def build_chunks(args: argparse.Namespace, docs: list[dict[str, str]], manifest:
         common = {"doc_id": doc_id, "source": item.get("source", "KR"), "file_name": item.get("file_name", ""),
                   "page": item["page"], "page_number": item["page"], "element_type": "table",
                   "table_id": table_id, "caption": caption, "parser_version": PARSER_VERSION,
-                  "quality_status": "pass", "quality_score": 1.0, "crop_path": item["crop_path"]}
+                  "quality_status": "pass", "quality_score": 1.0,
+                  "crop_path": str(local_crop_path(item, args.work_root).resolve())}
         header = f"표: {caption or table_id}\n문서: {item.get('file_name', '')}, {item['page']}쪽"
         for row in rows:
             region_suffix = f":{row['region_id']}" if row.get("region_id") else ""

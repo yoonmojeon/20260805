@@ -125,7 +125,7 @@ TABLE: 질문 → table_id 고정 → 행 anchor → 라벨 행/다단 header pa
 | `IMO 문서 기준으로 탄소집약도 등급 관리 요구사항을 요약해줘` | MEPC 84/6/1·84/6/2·84/6/21 범위에서 보고·등급 관리 근거 검색 |
 | `14편 19쪽, 판과 국부 지지부재 허용응력은?` | 옆 열의 `5장 1절`이 아니라 `6장 4절 및 6장 5절` 선택 |
 
-추가한 라우팅·검색 집중 회귀테스트는 **251개 통과**했습니다. 전체 수집에서는 392개가 통과했고, 현재 변경과 무관한 레거시 정책 기대값 2건과 누락된 선택형 보조 스크립트 1건은 아래 제한사항에 남겨 두었습니다.
+추가한 라우팅·검색·로컬 경로 집중 회귀테스트는 **255개 통과**했습니다. 전체 수집에서는 392개가 통과했고, 현재 변경과 무관한 레거시 정책 기대값 2건과 누락된 선택형 보조 스크립트 1건은 아래 제한사항에 남겨 두었습니다.
 
 새 20문항 회귀셋은 chat 2, OPS 4, 회의 3, 정의 2, 규정 2, 표 5, hybrid 1, 범위 밖 1개로 구성했습니다. Gemma LLM-primary의 엄격 QA는 보강 전 **13/20(65%)**에서 보강 후 **20/20(100%)**로 올라갔고, route mismatch·빈 답변·실행 실패는 모두 0건이었습니다. 평균 전체 응답은 8.98초, 평균 router 호출은 1.86초였습니다. 이 수치는 해당 20문항 회귀셋의 결과이며 모든 임의 질문에 대한 보장은 아닙니다.
 
@@ -173,7 +173,7 @@ TABLE: 질문 → table_id 고정 → 행 anchor → 라벨 행/다단 header pa
 | TOC만/격리 | **7** | KR TOC 6 + ABS quarantine 1 |
 | 표 추출 실패 | **0** | |
 
-원본 PDF는 Git에 포함되지 않습니다. 현재 `llmagent/data/raw_pdfs`에는 PDF가 없지만, 복사된 본문·표 인덱스와 표 crop, 운항 DB만으로 UI 검색과 위 평가를 실행할 수 있습니다. PDF 재처리·인덱스 재생성·원문 페이지 직접 열기가 필요할 때만 원래 작업공간의 PDF를 `data/raw_pdfs` 아래로 복사하면 됩니다. 앱 시작 배너는 실제 PDF 파일이 있을 때만 `raw_pdfs: 연결됨`으로 표시합니다.
+원본 PDF와 표 crop은 Git에는 포함되지 않지만, 이 PC의 `C:\Users\user\llmagent\data` 아래에는 PDF·중간 산출물·표 crop·본문/표 인덱스·운항 DB를 모두 로컬 복사했습니다. 검색과 재처리 모두 예전 바탕화면 폴더 없이 실행되며, 저장된 과거 절대경로는 실행 시 현재 프로젝트의 `data` 경로로 먼저 재해석합니다. 외부 절대경로 fallback은 기본적으로 차단되고, 호환이 꼭 필요할 때만 `MARITIME_ALLOW_EXTERNAL_DATA_PATHS=1`로 허용합니다.
 
 ```powershell
 python scripts/audit_text_coverage.py
@@ -266,10 +266,10 @@ MaritimeOpsRAG/
 ├── data/
 │   ├── ho_data/           # 운항 Excel
 │   ├── maritime.db        # load_hodata 후 생성
-│   ├── raw_pdfs/          # PDF (보통 junction)
+│   ├── raw_pdfs/          # PDF (이 PC에서는 로컬 복사본)
 │   ├── manifests/
 │   ├── eval/
-│   └── processed/         # Chroma·청크 (로컬)
+│   └── processed/         # Chroma·청크·표 crop·중간 산출물 (로컬)
 └── reports/output/
 ```
 

@@ -100,11 +100,16 @@ def make_doc_id(source: str, pdf_path: Path, input_dir: Path) -> str:
 def collect_pdfs(input_dir: Path) -> list[dict]:
     rows: list[dict] = []
     assigned: dict[str, str] = {}
+    project_root = Path.cwd().resolve()
 
     for pdf_path in sorted(p for p in input_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"):
         source = infer_source(pdf_path)
         file_name = pdf_path.name
-        file_path = pdf_path.resolve().as_posix()
+        resolved_pdf = pdf_path.resolve()
+        try:
+            file_path = resolved_pdf.relative_to(project_root).as_posix()
+        except ValueError:
+            file_path = resolved_pdf.as_posix()
         doc_id = make_doc_id(source, pdf_path, input_dir)
 
         if doc_id in assigned and assigned[doc_id] != file_path:

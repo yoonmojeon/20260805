@@ -9,6 +9,8 @@ STALE_PATH_MARKERS = (
     "OneDrive",
     "Desktop/MaritimeRAG",
     "Desktop\\MaritimeRAG",
+    "Desktop/20260805",
+    "Desktop\\20260805",
 )
 
 
@@ -19,14 +21,11 @@ def project_root_from_cwd() -> Path:
 def extract_relative_data_path(path_str: str) -> str | None:
     normalized = path_str.replace("\\", "/")
     lower = normalized.lower()
-    key = "maritimerag/"
-    idx = lower.find(key)
+    marker = "/data/"
+    idx = lower.find(marker)
     if idx < 0:
         return None
-    rel = normalized[idx + len(key) :]
-    if rel.lower().startswith("data/"):
-        return rel
-    return None
+    return normalized[idx + 1 :]
 
 
 def rewrite_stale_path(path_str: str, project_root: Path | None = None) -> tuple[str, bool]:

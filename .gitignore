@@ -15,7 +15,7 @@ data/*.db-shm
 data/*.db-wal
 data/*.xlsx
 
-# MaritimeRAG heavy artifacts (raw PDFs may be a junction; ignore local copies)
+# MaritimeRAG heavy local artifacts
 data/raw_pdfs/**
 !data/raw_pdfs/.gitkeep
 data/processed/

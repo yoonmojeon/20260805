@@ -172,6 +172,52 @@ def test_dual_retrieval_defaults_on_when_env_unset():
     os.environ.pop("MARITIME_RAG_DUAL", None)
 
 
+def test_crop_path_rebases_old_absolute_path_to_local():
+    import os
+    from unittest.mock import patch
+
+    import services.rag_service as rs
+
+    table_id = "kr_rules_abcdef12_p0042_t007"
+    local_root = ROOT / "local-test-data" / "processed" / "precise_tables"
+    local_crop = local_root / "abcdef12" / "p0042_t007" / "crop.png"
+    old_crop = (
+        r"C:\Users\user\Desktop\20260805\data\processed\precise_tables"
+        r"\abcdef12\p0042_t007\crop.png"
+    )
+
+    with patch.object(rs, "PRECISE_TABLES_DIR", local_root), patch.dict(
+        os.environ, {"MARITIME_ALLOW_EXTERNAL_DATA_PATHS": "0"}
+    ), patch(
+        "services.rag_service.Path.is_file",
+        autospec=True,
+        side_effect=lambda path: path == local_crop,
+    ):
+        resolved = rs._resolve_crop_path({"crop_path": old_crop}, table_id)
+
+    assert Path(resolved) == local_crop
+
+
+def test_crop_path_does_not_fall_back_to_external_by_default():
+    import os
+    from unittest.mock import patch
+
+    import services.rag_service as rs
+
+    external = ROOT / "external-test-data" / "crop.png"
+    local_root = ROOT / "local-test-data" / "processed" / "precise_tables"
+    with patch.object(rs, "PRECISE_TABLES_DIR", local_root), patch.dict(
+        os.environ, {"MARITIME_ALLOW_EXTERNAL_DATA_PATHS": "0"}
+    ), patch(
+        "services.rag_service.Path.is_file",
+        autospec=True,
+        side_effect=lambda path: path == external,
+    ):
+        resolved = rs._resolve_crop_path({"crop_path": str(external)}, "unknown")
+
+    assert resolved == ""
+
+
 def test_both_queries_text_and_table_collections():
     """BOTH must invoke both retrieval sides and fuse hits."""
     import os

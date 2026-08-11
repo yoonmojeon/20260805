@@ -167,9 +167,14 @@ def collect_candidates(args: argparse.Namespace) -> dict:
 def clear_outputs(item: dict, work_root: Path) -> None:
     work = Path(item.get("work_dir") or "")
     if not work.exists():
-        # fallback via crop_path
-        crop = Path(item.get("crop_path") or "")
-        work = crop.parent if crop else work_root
+        import re
+
+        doc_id = str(item.get("doc_id") or "")
+        table_id = str(item.get("table_id") or "")
+        doc_leaf = doc_id.rsplit("_", 1)[-1][:16]
+        table_match = re.search(r"(p\d{4}_t\d{3})$", table_id)
+        table_leaf = table_match.group(1) if table_match else ""
+        work = work_root / doc_leaf / table_leaf if doc_leaf and table_leaf else work_root
     tatr = work / "tatr_v1_1_all"
     if tatr.exists():
         for name in (
