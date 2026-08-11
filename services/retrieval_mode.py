@@ -30,6 +30,7 @@ _TABLE_CUE_PATTERNS = [
     r"안전사용하중|설계하중\s*시나리오|용접\s*다리|방화\s*보존|부식추가|"
     r"평가하는가|몇\s*(?:톤|mm|배|개)|SP-[A-Z]|호퍼탱크|이중선측|"
     r"허용\s*(?:바깥지름|기준)|확관|시험재|주강품|강종|RSTH|재화중량",
+    r"CMS\s*통일명칭|적층제조.{0,30}제조법\s*승인",
 ]
 
 _TEXT_PROSE_PATTERNS = [
@@ -70,7 +71,7 @@ _NUMERIC_RANGE_RE = re.compile(
 )
 _VALUE_ASK_RE = re.compile(r"얼마|몇\s*(?:mm|m|년)?|값은|해당\s*값|요구되는|최소|최대")
 _EXPLICIT_TABLE_FRAME_RE = re.compile(
-    r"표\s*(?:에서|에|의|번호|제목)?|\brow\b|\bcell\b|행\s*(?:에서|번호)?|열\s*\d+|"
+    r"표\s*(?:에서|에|의|번호|제목)|\brow\b|\bcell\b|행\s*(?:에서|번호)|열\s*\d+|"
     r"구조화\s*표|페이지\s*\d+|\d+\s*(?:페이지|쪽)",
     re.IGNORECASE,
 )
@@ -79,6 +80,29 @@ _NARRATIVE_RULE_RE = re.compile(
     r"(?:(?:CII|탄소\s*(?:집약도|강도)).{0,30}(?:요구사항|규제|관리|요약|설명))|"
     r"(?:(?:DNV|KR|ABS|LR).{0,50}(?:지침|guidance|규칙|원칙|요건).{0,50}"
     r"(?:강조|핵심|안전|찾아|설명|요약))",
+    re.IGNORECASE,
+)
+
+# Rule prose is frequently phrased as a short Korean noun question.  The table
+# parser sees the noun before ``은/는`` as a row key, even though the user is
+# asking for a definition, procedure or clause explanation.  Keep these asks on
+# the text corpus unless an explicit table/page/row/column frame is present.
+_RULE_PROSE_ASK_RE = re.compile(
+    r"(?:(?:\d{3,4})\s*(?:절|조|항)|제\s*\d{1,2}\s*편|"
+    r"선급(?:등록|부호|검사|기술규칙|\s*문서)|공동선급선|중복선급선|동형선|"
+    r"선박소유자|지적사항|불가항력|풍우밀|과도한\s*부식|쇠모한도|"
+    r"양자\s*협정|문서준수확인서|시험\s*및\s*검사|"
+    r"dual\s+class\s+vessel|double\s+class\s+vessel|sister\s+ship|"
+    r"condition\s+of\s+class|force\s+majeure|weathertight|"
+    r"DNV\s*[-–]?\s*(?:CG|RP|RU)|Notice\s*No\.?|\bABS\b|\bLR\b)"
+    r".{0,100}"
+    r"(?:정의|이란|무엇을\s*말|나타내|누가|포함|언제부터|원칙|요지|목적|"
+    r"절차|적용\s*(?:대상|범위)|요건|요구|차이|시행|통보|유지|판정|설명|"
+    r"어디에|찾아|definition|scope|requirement)",
+    re.IGNORECASE,
+)
+_MEETING_REPORT_RE = re.compile(
+    r"\b(?:MEPC|MSC)\b.{0,100}(?:회의|보고서|report|agenda|의제|결정|결과)",
     re.IGNORECASE,
 )
 
@@ -211,6 +235,12 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     if _CAPTION_ASK_RE.search(q) and re.search(r"\.pdf|표\s*\d+", q, re.I):
         return RetrievalMode.TABLE
 
+    # A numbered Rule clause is prose even when the generic table parser sees
+    # words such as 검사/준비 as row slots.  Explicit table/page framing above
+    # still retains the table route.
+    if re.search(r"(?<!\d)\d{3,4}\s*(?:절|조|항)", q) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
+        return RetrievalMode.TEXT
+
     table_score, _detail = table_shape_score(q)
     prose_score = prose_shape_score(q)
     bridge = _hit(_BOTH_BRIDGE_PATTERNS, q)
@@ -219,7 +249,11 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     # Latin letters for material/chemistry columns.  A narrative definition or
     # regulatory-summary ask belongs to prose unless the user explicitly says
     # table/page/row/column.
-    if _NARRATIVE_RULE_RE.search(q) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
+    if (
+        _NARRATIVE_RULE_RE.search(q)
+        or _RULE_PROSE_ASK_RE.search(q)
+        or _MEETING_REPORT_RE.search(q)
+    ) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
         return RetrievalMode.TEXT
 
     # Glossary-style cell asks over structural terms stay on the table index.

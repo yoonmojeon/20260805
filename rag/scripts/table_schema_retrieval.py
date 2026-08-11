@@ -63,6 +63,7 @@ class TableScoreBreakdown:
     rrf_score: float = 0.0
     rerank_score: float = 0.0
     combined_score: float = 0.0
+    literal_row_match: bool = False
     chunk_type: str = ""
     meta: dict = field(default_factory=dict)
 
@@ -130,10 +131,28 @@ def _literal_row_candidates(
     )
     if not entities:
         return []
-    # Prefer compact domain labels ("화물창") over long natural phrases that
-    # almost never appear verbatim inside a cell.
-    compact = [e for e in entities if 2 <= len(e) <= 12]
-    search_entities = (compact or entities)[:3]
+    # Search bilingual aliases as well as Korean surface forms.  Several KR
+    # rule tables keep English row labels (for example "Double bottom floors")
+    # even though the user naturally asks in Korean.
+    variants: list[str] = []
+    for entity in entities:
+        variants.append(entity)
+        variants.extend(expand_entity_aliases(entity))
+    variants = list(
+        dict.fromkeys(
+            value.strip()
+            for value in variants
+            if 3 <= len(str(value).strip()) <= 60
+        )
+    )
+    generic = {"기관실", "구명정", "격벽", "설계", "design", "시험압력", "체인로커"}
+    variants.sort(
+        key=lambda value: (
+            value.lower() in generic,
+            -(len(value) if len(value) <= 42 else 0),
+        )
+    )
+    search_entities = variants[:8]
     age_q = "선령" in (parsed.raw_question or "") or any(
         "선령" in c for c in parsed.column_entities
     )
@@ -726,6 +745,7 @@ def route_table_candidates(
             if age_q:
                 boost = 1.45 if "선령" in (doc or "") else 0.10
             bd.combined_score = round(bd.combined_score + boost, 4)
+            bd.literal_row_match = True
         if str(meta.get("chunk_type") or "") == "table_row":
             assignment_count = len(
                 re.findall(
@@ -814,6 +834,7 @@ def route_table_candidates(
             + dense_rrf * 10.0
             + lexical_norm * 0.20
             + min(bd.combined_score, 1.2) * 0.15
+            + (0.65 if bd.literal_row_match else 0.0)
             + agreement,
             4,
         )

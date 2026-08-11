@@ -100,6 +100,12 @@ def main() -> int:
     ap.add_argument("--model", default=os.environ.get("MARITIME_OLLAMA_MODEL", "gemma4:12b"))
     ap.add_argument("--rules-only", action="store_true")
     ap.add_argument("--output", type=Path)
+    ap.add_argument(
+        "--id-prefix",
+        action="append",
+        default=[],
+        help="Run only question ids that start with one of these prefixes (repeatable).",
+    )
     args = ap.parse_args()
     # Some retrieval modules temporarily change the process working directory.
     # Resolve CLI paths before importing/running them so evaluation artifacts do
@@ -125,6 +131,9 @@ def main() -> int:
     warmup_rag_resources(DEFAULT_TABLE_COLLECTION)
 
     rows = _load(args.questions)
+    if args.id_prefix:
+        prefixes = tuple(str(value) for value in args.id_prefix if str(value))
+        rows = [row for row in rows if str(row.get("id") or "").startswith(prefixes)]
     results = []
     by_type: dict[str, list] = defaultdict(list)
 

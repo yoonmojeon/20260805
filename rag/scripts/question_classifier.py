@@ -52,6 +52,17 @@ RULE_PATTERNS = [
     # fallback; table questions are still caught by ``_table_qa`` above.
     r"\btc\s*(?:orr|1|2)\b|\bAC-(?:S|SD|A|T)\b",
     r"(?:구조|선급|강선)\s*규칙.{0,30}(?:기호|정의|뜻)",
+    # KR Part 1 and equivalent class-rule prose.  Without these signals the
+    # generic fallback labels short clause/definition asks as trend summaries.
+    r"(?:\d{3,4})\s*(?:절|조|항)",
+    r"제\s*\d{1,2}\s*편\s*규칙",
+    r"선급(?:등록|부호|검사|기술규칙)|공동선급선|중복선급선|동형선|"
+    r"선박소유자|지적사항|불가항력|풍우밀|과도한\s*부식|쇠모한도|"
+    r"건조계약일|문서준수확인서|탈급|양자\s*협정|등록된\s*선박|"
+    r"시험\s*및\s*검사|제조중등록검사|검사\s*신청",
+    r"dual\s+class\s+vessel|double\s+class\s+vessel|sister\s+ship|"
+    r"condition\s+of\s+class|force\s+majeure|weathertight|"
+    r"substantial\s+corrosion",
 ]
 
 MEPC_BROAD_KEYWORDS = [

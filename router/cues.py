@@ -41,6 +41,11 @@ RAG_PATTERNS: list[tuple[str, float]] = [
         r"guidance\s*note|규제|스마트\s*(?:십|기능)|원격\s*검사|remote\s*survey",
         2.0,
     ),
+    (
+        r"(?:\d{3,4})\s*(?:절|조|항)|선급등록|선급부호|문서준수확인서|"
+        r"증서의\s*재교부|탈급|검사\s*신청|선박소유자|시험\s*및\s*검사",
+        3.0,
+    ),
     (r"MARPOL|마르폴|SOLAS|Net-?Zero|GFI|SEEMP|EEXI|DCS|GISIS", 2.0),
     (
         r"표\s*(에서|에|의|질의|검색|기준)|표에|정기검사|평형수|밸러스트\s*탱크|선령|"
@@ -83,7 +88,7 @@ GREET_PATTERN = re.compile(r"^(안녕|헬로|hello|\bhi\b)[\s!?.]*$", flags=re.I
 # 봇 능력·소개. 도메인 단어가 섞여도 chat으로 고정할 때 사용.
 # '둘 다 알려줘'(내용 요청)와 구분되도록 '가능/할 수' 단서를 요구한다.
 CAPABILITY_PATTERN = re.compile(
-    r"(뭐|무엇)\s*할\s*수|할\s*수\s*있|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
+    r"(뭐|무엇)\s*할\s*수|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
     r"찾(?:을|아\s*줄)\s*수\s*있|검색(?:할|해\s*줄)\s*수\s*있|"
     r"(운항|문서).{0,20}가능|둘\s*다.{0,10}가능|가능.{0,12}(운항|문서|둘)|"
     r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써|"
@@ -92,7 +97,7 @@ CAPABILITY_PATTERN = re.compile(
 )
 IDENTITY_PATTERN = re.compile(
     r"너\s*누구|누구야|너는\s*누구|너는\s*뭐|너\s*뭐야|자기소개|너에\s*대해|"
-    r"뭐\s*할\s*수|할\s*수\s*있|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
+    r"뭐\s*할\s*수|기능\s*(알려|소개|설명)|도움말|\bhelp\b|"
     r"이\s*봇|이\s*에이전트|정체가\s*뭐|이름이\s*뭐|누가\s*만들|너는\s*사람|"
     r"사용법|뭘\s*물어보면|범위가\s*뭐|할\s*수\s*없는|처음인데|어떻게\s*써|"
     r"(운항|문서).{0,20}가능|둘\s*다.{0,10}가능",
@@ -158,6 +163,7 @@ TECHNICAL_RAG_SHAPE_PATTERN = re.compile(
     # Definition / glossary shapes (class-rule terms, not ship ops).
     r"(?:의\s*)?정의(?:는|가|란)?|무슨\s*뜻|의미(?:는|가)|용어|"
     r"substantial\s*corrosion|과도한\s*부식|허용\s*부식|부식\s*여유|"
+    r"(?:\d{3,4})\s*(?:절|조|항)|문서준수확인서|증서의\s*재교부|탈급|"
     r"glossary|what\s+is\s+(?:substantial\s+)?corrosion",
     flags=re.IGNORECASE,
 )
@@ -173,7 +179,8 @@ DOC_FRAME_PATTERN = re.compile(
     rf"{_AC}(?:IMO|GHG|KR){_AZ}|대체연료|원격\s*검사|survey|표에|표\s*에서|"
     r"최소\s*두께|판두께|선박\s*길이|부식추가|화학성분|재료기호|용접강|"
     r"정기검사|화물창|화물탱크|reporting|"
-    r"(?:의\s*)?정의|substantial\s*corrosion|과도한\s*부식|용어",
+    r"(?:의\s*)?정의|substantial\s*corrosion|과도한\s*부식|용어|"
+    r"(?:\d{3,4})\s*(?:절|조|항)|문서준수확인서|증서의\s*재교부|탈급",
     flags=re.IGNORECASE,
 )
 SHIP_FRAME_PATTERN = re.compile(

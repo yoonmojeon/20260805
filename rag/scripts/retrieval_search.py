@@ -36,6 +36,20 @@ EXPANDED_TERM_BOOST = 0.06
 SUBCOMM_PENALTY = 0.14
 DOC_CODE_CROSSREF_RE = re.compile(r"document\s+code.*title", re.I)
 DNV_RULE_CODE_RE = re.compile(r"^DNV-(?:CG|RP|RU)-[A-Z0-9-]+$", re.I)
+KR_RULE_PART_RE = re.compile(
+    r"(?:제\s*)?(\d{1,2})\s*편(?:\s*[_-]?\s*(20\d{2})|\s*년판)?",
+    re.IGNORECASE,
+)
+KR_PART1_CONTEXT_RE = re.compile(
+    r"선급(?:등록|부호|검사|기술규칙)|공동선급선|중복선급선|동형선|"
+    r"선박소유자|지적사항|불가항력|풍우밀|과도한\s*부식|쇠모한도|"
+    r"건조계약일|문서준수확인서|탈급|양자\s*협정|등록된\s*선박|"
+    r"시험\s*및\s*검사|제조중등록검사|"
+    r"dual\s+class\s+vessel|double\s+class\s+vessel|sister\s+ship|"
+    r"condition\s+of\s+class|force\s+majeure|weathertight|"
+    r"substantial\s+corrosion",
+    re.IGNORECASE,
+)
 EXACT_IDENTIFIER_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:"
     r"t(?:corr|c\s*[12])|"
@@ -54,6 +68,11 @@ SPARSE_STOPWORDS = {
     "관련", "기준", "문서", "규정", "주요", "어떤", "무엇", "알려줘", "찾아줘",
     "에서", "으로", "대한", "the", "and", "for", "with", "what", "which",
 }
+KOREAN_QUERY_SUFFIXES = (
+    "으로부터", "에서는", "에게서", "이라고", "라는", "하는가", "되는가",
+    "해야", "하고", "에서", "으로", "에게", "에는", "은", "는", "이", "가",
+    "을", "를", "의", "와", "과", "에",
+)
 DOCUMENT_ROUTE_MAX_DOCS = 4
 DOCUMENT_ROUTE_MAX_DOCS_BROAD = 6
 DOCUMENT_ROUTE_STAGE2_FETCH = 72
@@ -61,7 +80,7 @@ DOCUMENT_ROUTE_BOOSTS = (0.20, 0.13, 0.08, 0.04, 0.02, 0.01)
 SCOPED_SPARSE_MAX_ROWS = 6000
 
 
-def _priority_rule_file_names(signals: QuerySignals) -> list[str]:
+def _priority_rule_file_names(signals: QuerySignals, query: str = "") -> list[str]:
     """Return exact class-rule filenames worth querying alongside dense hits.
 
     The global dense search can miss a short document code when the question is
@@ -83,20 +102,63 @@ def _priority_rule_file_names(signals: QuerySignals) -> list[str]:
         and (autonomous_hint or "mass" in signals.topics)
     ):
         names.append("DNV-CG-0264.pdf")
+    part = KR_RULE_PART_RE.search(query or "")
+    if part:
+        volume = int(part.group(1))
+        year = part.group(2) or "2025"
+        names.append(f"{volume}편_{year}.pdf")
+    elif KR_PART1_CONTEXT_RE.search(query or ""):
+        names.append("1편_2025.pdf")
     return list(dict.fromkeys(names))
 
 
-def _resolve_priority_rule_doc_ids(collection, signals: QuerySignals) -> list[str]:
+def _direct_priority_rule_doc_ids(query: str, signals: QuerySignals) -> list[str]:
+    """Known corpus identities for strongly named rule documents."""
+    out: list[str] = []
+    q = query or ""
+    part = KR_RULE_PART_RE.search(q)
+    unnamed_korean_clause = bool(
+        not part
+        and not signals.class_society_hint
+        and re.search(r"[가-힣]", q)
+        and re.search(r"(?:^|\s)\d{3,4}\s*(?:절|조|항)(?:\s|에서|의|$)", q)
+    )
+    if (part and int(part.group(1)) == 1 and (part.group(2) or "2025") == "2025") or (
+        not part and KR_PART1_CONTEXT_RE.search(q)
+    ) or unnamed_korean_clause:
+        out.append("kr_1_2025")
+    if "Notice No.1" in signals.rule_doc_hints:
+        out.append("lr_notice_no_1_2025")
+    if (
+        str(signals.class_society_hint or "").upper() == "ABS"
+        and any(str(h).lower() == "autonomous" for h in signals.rule_doc_hints)
+    ):
+        out.append(
+            "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb"
+        )
+    return list(dict.fromkeys(out))
+
+
+def infer_query_narrow_doc_id(query: str, signals: QuerySignals) -> str | None:
+    """Return a single high-confidence document identity stated by the query."""
+    direct = _direct_priority_rule_doc_ids(query, signals)
+    return direct[0] if len(direct) == 1 else None
+
+
+def _resolve_priority_rule_doc_ids(
+    collection, signals: QuerySignals, query: str = ""
+) -> list[str]:
     """Resolve exact rule filenames to Chroma document ids."""
-    names = _priority_rule_file_names(signals)
+    direct = _direct_priority_rule_doc_ids(query, signals)
+    names = _priority_rule_file_names(signals, query)
     if not names:
-        return []
+        return direct
     where = {"file_name": names[0]} if len(names) == 1 else {"file_name": {"$in": names}}
     try:
         raw = collection.get(where=where, include=["metadatas"], limit=100)
     except Exception:
-        return []
-    doc_ids: list[str] = []
+        return direct
+    doc_ids: list[str] = list(direct)
     for meta in raw.get("metadatas") or []:
         doc_id = str((meta or {}).get("doc_id") or "").strip()
         if doc_id and doc_id not in doc_ids:
@@ -341,6 +403,12 @@ def _sparse_query_terms(query: str, signals: QuerySignals) -> list[tuple[str, fl
         elif len(term) >= 5:
             weight = max(weight, 1.25)
         weighted[term] = max(weighted.get(term, 0.0), weight)
+        if re.fullmatch(r"[가-힣]{3,}", raw):
+            for suffix in KOREAN_QUERY_SUFFIXES:
+                if term.endswith(suffix) and len(term) - len(suffix) >= 2:
+                    stem = term[: -len(suffix)]
+                    weighted[stem] = max(weighted.get(stem, 0.0), weight * 1.1)
+                    break
     for raw in signals.expanded_terms[:16]:
         term = str(raw or "").lower().strip()
         if len(term) >= 3:
@@ -357,21 +425,79 @@ def rank_scoped_sparse_rows(
     *,
     top_k: int = 18,
 ) -> list[tuple[float, str, dict, str]]:
-    """Rank chunks inside routed documents using lightweight exact terms."""
+    """Rank chunks inside routed documents using lightweight exact terms.
+
+    The same section number can occur in several chapters of a rule book.  A
+    plain term count therefore overvalues repeated identifiers (for example
+    ``902``) and generic words such as "procedure".  Document-local IDF,
+    heading matches, and short query phrases make the topic next to the section
+    number decisive without requiring a new embedding index.
+    """
     terms = _sparse_query_terms(query, signals)
     if not terms:
         return []
+    row_texts = [
+        f"{(meta or {}).get('file_name', '')} {document or ''}".lower()
+        for meta, document in zip(metadatas, documents)
+    ]
+    row_count = max(1, len(row_texts))
+    doc_frequency = {
+        term: sum(1 for text in row_texts if term in text)
+        for term, _weight in terms
+    }
+
+    # Phrase matching keeps one-syllable connectors such as Korean "및" even
+    # though they are intentionally excluded from unigram scoring.
+    raw_tokens = [
+        token.lower()
+        for token in re.findall(
+            r"[A-Za-z]+(?:[A-Za-z0-9]*)(?:[-./][A-Za-z0-9]+)*|\d+(?:\.\d+)?|[가-힣]+",
+            query or "",
+        )
+    ]
+    phrases: list[tuple[str, float]] = []
+    phrase_values: set[str] = set()
+    for size, weight in ((3, 10.0), (2, 2.5)):
+        for start in range(max(0, len(raw_tokens) - size + 1)):
+            phrase = " ".join(raw_tokens[start : start + size]).strip()
+            if len(phrase) >= 5 and phrase not in phrase_values:
+                phrases.append((phrase, weight))
+                phrase_values.add(phrase)
+
+    topic_anchors = []
+    for match in re.finditer(
+        r"\d{3,4}\s*(?:section|clause|절|조)\s*([A-Za-z가-힣][A-Za-z가-힣0-9_-]{1,24})",
+        query or "",
+        re.IGNORECASE,
+    ):
+        anchor = match.group(1).lower().strip()
+        if anchor not in {"검사", "inspection", "requirements", "요건"}:
+            topic_anchors.append(anchor)
+
     scored: list[tuple[float, str, dict, str]] = []
-    for cid, meta, document in zip(ids, metadatas, documents):
-        text = f"{(meta or {}).get('file_name', '')} {document or ''}".lower()
+    for cid, meta, document, text in zip(ids, metadatas, documents, row_texts):
+        heading = text[:220]
         score = 0.0
         hits = 0
         for term, weight in terms:
             if term in text:
                 hits += 1
-                score += weight
+                frequency = doc_frequency.get(term, row_count)
+                idf = math.log(1.0 + (row_count + 1.0) / (frequency + 1.0))
+                effective_weight = weight * min(2.8, 0.75 + 0.38 * idf)
+                score += effective_weight
                 if " " in term or re.search(r"\d|[-./]", term):
-                    score += weight * 0.35
+                    score += effective_weight * 0.35
+                if term in heading:
+                    score += effective_weight * 0.45
+        for phrase, phrase_weight in phrases:
+            if phrase in text:
+                score += phrase_weight * (1.45 if phrase in heading else 1.0)
+        for anchor in topic_anchors:
+            if anchor in heading:
+                score += 12.0
+            elif anchor in text:
+                score += 4.0
         if hits:
             score += min(0.8, hits * 0.08)
             scored.append((score, cid, meta or {}, document or ""))
@@ -598,7 +724,11 @@ def _definition_clause_boost(query: str, document: str) -> float:
         return 0.0
     body = str(document or "")
     boost = 0.0
-    if re.search(r"(?:정의(?:된|한다|는)|means|is\s+defined\s+as)", body, re.I):
+    if re.search(
+        r"(?:정의(?:된|한다|는)|이라\s*함은|을\s*말한다|means|is\s+defined\s+as)",
+        body,
+        re.I,
+    ):
         boost += 0.10
     if re.search(r"\btc\s*orr\b|\bt_corr\b", q, re.I):
         if re.search(r"국부\s*부식추가.{0,40}tc\s*orr|tc\s*orr.{0,40}국부\s*부식추가", body, re.I):
@@ -720,7 +850,7 @@ def query_with_hybrid_ranking(
     signals = analyze_query(query)
     priority_ids = priority_doc_ids_for_signals(signals)
     if doc_id is None:
-        for priority_id in _resolve_priority_rule_doc_ids(collection, signals):
+        for priority_id in _resolve_priority_rule_doc_ids(collection, signals, query):
             if priority_id not in priority_ids:
                 priority_ids.append(priority_id)
     priority_set = set(priority_ids)
@@ -735,7 +865,7 @@ def query_with_hybrid_ranking(
     merged_meta: dict[str, dict] = {}
     merged_doc: dict[str, str] = {}
     exact_scores: dict[str, float] = {}
-    scoped_sparse_scores: dict[str, float] = {}
+    scoped_sparse_ratios: dict[str, float] = {}
 
     def absorb(raw: dict) -> None:
         if not raw.get("ids") or not raw["ids"][0]:
@@ -831,6 +961,47 @@ def query_with_hybrid_ranking(
         "scoped_sparse_used": False,
     }
     selected_doc_ids: list[str] = []
+    if hierarchy_enabled and doc_id and (clause_hints or signals.wants_rule_lookup):
+        sparse_ids, sparse_metas, sparse_docs = _load_scoped_sparse_rows(
+            collection,
+            [doc_id],
+            base_where=base_where,
+        )
+        sparse_ranked = rank_scoped_sparse_rows(
+            query,
+            signals,
+            sparse_ids,
+            sparse_metas,
+            sparse_docs,
+            top_k=max(24, top_k * 4),
+        )
+        best_sparse_score = max((item[0] for item in sparse_ranked), default=1.0)
+        doc_best = min(merged_dist.values(), default=0.58)
+        for sparse_score, cid, meta, document in sparse_ranked:
+            synthetic_distance = max(
+                0.0,
+                doc_best + 0.05 - min(0.28, sparse_score * 0.03),
+            )
+            scoped_sparse_ratios[cid] = max(
+                scoped_sparse_ratios.get(cid, 0.0),
+                sparse_score / max(best_sparse_score, 1e-9),
+            )
+            absorb(
+                {
+                    "ids": [[cid]],
+                    "distances": [[synthetic_distance]],
+                    "metadatas": [[meta]],
+                    "documents": [[document]],
+                }
+            )
+        document_route.update(
+            {
+                "enabled": True,
+                "selected_doc_ids": [doc_id],
+                "confidence": 1.0,
+                "scoped_sparse_used": bool(sparse_ranked),
+            }
+        )
     if hierarchy_enabled and not doc_id and merged_ids:
         doc_candidates = _document_route_candidates(
             query=query,
@@ -883,6 +1054,7 @@ def query_with_hybrid_ranking(
                     sparse_docs,
                     top_k=max(18, top_k * 3),
                 )
+                best_sparse_score = max((item[0] for item in sparse_ranked), default=1.0)
                 best_by_doc = {
                     str(item["doc_id"]): float(item["raw_best_distance"])
                     for item in doc_candidates
@@ -895,16 +1067,22 @@ def query_with_hybrid_ranking(
                         + 0.05
                         - min(0.20, sparse_score * 0.025),
                     )
-                    scoped_sparse_scores[cid] = sparse_score
-                    if cid not in merged_dist:
-                        absorb(
-                            {
-                                "ids": [[cid]],
-                                "distances": [[synthetic_distance]],
-                                "metadatas": [[meta]],
-                                "documents": [[document]],
-                            }
-                        )
+                    scoped_sparse_ratios[cid] = max(
+                        scoped_sparse_ratios.get(cid, 0.0),
+                        sparse_score / max(best_sparse_score, 1e-9),
+                    )
+                    # A sparse-exact hit may already be present in the dense
+                    # pool with a poor distance.  Re-absorb it so ``min`` can
+                    # lower that distance; otherwise the lexical signal is
+                    # recorded but cannot overcome the stale dense score.
+                    absorb(
+                        {
+                            "ids": [[cid]],
+                            "distances": [[synthetic_distance]],
+                            "metadatas": [[meta]],
+                            "documents": [[document]],
+                        }
+                    )
                 document_route["scoped_sparse_used"] = bool(sparse_ranked)
 
         margin = (
@@ -956,7 +1134,10 @@ def query_with_hybrid_ranking(
         if rank is not None and rank < len(DOCUMENT_ROUTE_BOOSTS):
             score -= DOCUMENT_ROUTE_BOOSTS[rank]
         score -= min(0.60, exact_scores.get(cid, 0.0) * 0.38)
-        score -= min(0.24, scoped_sparse_scores.get(cid, 0.0) * 0.025)
+        # IDF and phrase matches can make several lexical scores exceed a
+        # fixed cap.  A within-document ratio preserves the decisive gap
+        # between the strongest clause and a generic introduction.
+        score -= scoped_sparse_ratios.get(cid, 0.0) * 0.32
         return score
 
     ranked = sorted(merged_ids, key=final_distance)[:top_k]

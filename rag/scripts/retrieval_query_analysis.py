@@ -53,6 +53,18 @@ MEETING_OUTCOME_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+CLASS_RULE_PROSE_RE = re.compile(
+    r"(?:\d{3,4})\s*(?:절|조|항)|제\s*\d{1,2}\s*편\s*규칙|"
+    r"선급(?:등록|부호|검사|기술규칙)|공동선급선|중복선급선|동형선|"
+    r"선박소유자|지적사항|불가항력|풍우밀|과도한\s*부식|쇠모한도|"
+    r"건조계약일|문서준수확인서|탈급|양자\s*협정|등록된\s*선박|"
+    r"시험\s*및\s*검사|제조중등록검사|검사\s*신청|증서의\s*재교부|"
+    r"dual\s+class\s+vessel|double\s+class\s+vessel|sister\s+ship|"
+    r"condition\s+of\s+class|force\s+majeure|weathertight|"
+    r"substantial\s+corrosion",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class QuerySignals:
@@ -190,7 +202,7 @@ def analyze_query(query: str) -> QuerySignals:
         signals.topics.add("igc")
     if signals.wants_summary:
         signals.wants_report = True
-    signals.wants_rule_lookup = any(
+    signals.wants_rule_lookup = bool(CLASS_RULE_PROSE_RE.search(q)) or any(
         k in lower for k in ("rule", "guidance", "찾아", "찾아줘", "notice", "cg-", "규칙")
     )
     signals.class_society_hint = detect_class_society_hint(q)

@@ -42,12 +42,35 @@ ENTITY_ALIASES: dict[str, list[str]] = {
     "수평거더": ["수평 거더", "horizontal girder"],
     "구명정": ["lifeboat", "life boat"],
     "안전대피구역": ["임시 안전대피구역", "임시 안전 대피 구역", "temporary refuge", "refuge"],
+    "기관실격벽": ["기관실 격벽", "engine room bulkhead"],
+    "격벽위치": ["격벽 위치", "최전방 수밀 횡격벽", "foremost watertight transverse bulkhead"],
+    "적층제조": ["additive manufacturing", "AM"],
+    "적층제조최종재료": ["적층제조 최종 재료", "AM 최종 재료", "AM final material"],
+    "제조법승인적용장": [
+        "제조법 승인 적용 장",
+        "이 지침에서 적용되는 장 또는 하위 번호",
+        "applicable chapter or subsection",
+    ],
+    "구명정승정구역": ["구명정 승정구역", "구명정 승정 구역", "lifeboat embarkation area"],
+    "개방갑판": ["open deck", "open-deck"],
+    "OIL/BULK/ORE CARRIER": ["Oil/Bulk/Ore Carrier", "OBO carrier"],
+    "ESP EXP": ["ESP·EXP", "ESP(EXP)", "'ESP'(EXP)"],
+    "DESIGN": ["설계", "design"],
+    "이중저늑판": ["이중저 늑판", "double bottom floors", "double bottom floor"],
+    "체인로커": ["chain locker", "체인로커"],
+    "선수격벽후방체인로커": [
+        "선수격벽 뒤에 있는 체인로커",
+        "체인로커(선수격벽 후방에 있는 경우)",
+        "chain locker aft of collision bulkhead",
+    ],
+    "시험압력수두": ["시험압력수두", "시험압력수두(m)", "test pressure head"],
 }
 
 MATERIAL_GRADE_RE = re.compile(r"\b(AH|DH|EH|FH)\s*(\d{1,2})\b", re.IGNORECASE)
 PAREN_SYMBOL_RE = re.compile(r"([가-힣A-Za-z]+)\s*\(([A-Za-z]{1,3})\)")
 UNIT_RE = re.compile(
-    r"(%|％|mm|cm|m\b|N/mm²|N/mm2|n/mm²|n/mm2|MPa|kN|°C|℃|개|년)",
+    r"(%|％|(?<![A-Za-z])(?:mm|cm|N/mm²|N/mm2|n/mm²|n/mm2|MPa|kN|°C)(?![A-Za-z])|"
+    r"(?<![A-Za-z])m\b|℃|개|년)",
     re.IGNORECASE,
 )
 
@@ -108,13 +131,16 @@ def expand_entity_aliases(text: str) -> list[str]:
     compact_lower = compact
     for canon, alias_forms in ENTITY_ALIASES.items():
         canon_c = normalize_compact(canon)
-        if canon_c and canon_c in compact_lower:
+        # One/two-letter material symbols (C/S/P/N/MN/SI...) are exact aliases,
+        # not safe substrings: otherwise CMS/System becomes a chemistry query.
+        if len(canon_c) >= 3 and canon_c in compact_lower:
             forms.append(canon)
             forms.extend(alias_forms)
             continue
         for form in alias_forms:
             form_c = normalize_compact(form)
-            if form_c and len(form_c) >= 3 and form_c in compact_lower:
+            short_ascii = form_c.isascii() and form_c.isalpha() and len(form_c) <= 4
+            if form_c and len(form_c) >= 3 and not short_ascii and form_c in compact_lower:
                 forms.append(canon)
                 forms.extend(alias_forms)
                 break

@@ -683,6 +683,33 @@ def _guard_overbroad_hybrid(
     return decision
 
 
+def _guard_technical_chat_miss(
+    decision: RouteDecision,
+    *,
+    question: str,
+    ops_score: float,
+    rag_score: float,
+) -> RouteDecision:
+    """Do not let an LLM chat miss discard a strong document-shaped query."""
+    if (
+        decision.route == "chat"
+        and ops_score == 0.0
+        and (rag_score >= 2.0 or looks_like_technical_rag(question))
+        and not OOS_PATTERN.search(question or "")
+    ):
+        decision.route = "rag"
+        decision.need_ops = False
+        decision.need_documents = True
+        decision.chat_mode = None
+        decision.method = "llm_guarded"
+        decision.confidence = max(decision.confidence, 0.75)
+        decision.reason = (
+            "LLM이 chat으로 분류했지만 조항·선급 문서 단서가 명확하여 "
+            "문서 검색으로 보정합니다."
+        )
+    return decision
+
+
 def _deterministic_fallback(
     question: str,
     *,
@@ -812,6 +839,12 @@ def route_question(
                     active_model=model,
                 )
                 decision = _guard_overbroad_hybrid(
+                    decision,
+                    question=expanded,
+                    ops_score=ops,
+                    rag_score=rag,
+                )
+                decision = _guard_technical_chat_miss(
                     decision,
                     question=expanded,
                     ops_score=ops,
