@@ -282,6 +282,33 @@ def test_llm_hybrid_is_guarded_when_plain_ops_question_has_no_document_cue():
     assert d.rag_query is None
 
 
+def test_llm_chat_is_guarded_for_explicit_rule_clause_question():
+    from router import intent_router as ir
+
+    def fake_llm(*_a, **_kwargs):
+        return {
+            "need_ops": False,
+            "need_documents": False,
+            "confidence": 0.96,
+            "reason": "일반 대화로 잘못 추정",
+            "ops_query": "",
+            "rag_query": "",
+        }
+
+    original = ir._llm_classify
+    ir._llm_classify = fake_llm  # type: ignore[assignment]
+    try:
+        d = ir.route_question(
+            "510 문서준수확인서는 누가 신청할 수 있는가?",
+            use_llm_fallback=True,
+        )
+    finally:
+        ir._llm_classify = original  # type: ignore[assignment]
+    assert d.route == "rag"
+    assert d.method == "llm_guarded"
+    assert d.need_documents is True
+
+
 def test_invalid_boolean_uses_deterministic_fallback():
     from router import intent_router as ir
 

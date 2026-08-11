@@ -540,6 +540,49 @@ def generate_fast_answer(
         or row.get("_rule_guidance_lookup")
     )
     if rule_guidance:
+        from rule_lookup_answer import build_direct_rule_fact_answer
+
+        direct_candidates = list(chunks)
+        seen_direct_ids = {str(getattr(chunk, "chunk_id", "")) for chunk in direct_candidates}
+        for chunk in list(pool or []):
+            chunk_id = str(getattr(chunk, "chunk_id", ""))
+            if chunk_id not in seen_direct_ids:
+                direct_candidates.append(chunk)
+                seen_direct_ids.add(chunk_id)
+        direct_answer, direct_chunk, direct_debug = build_direct_rule_fact_answer(
+            str(row.get("question") or ""),
+            direct_candidates,
+        )
+        if direct_answer and direct_chunk is not None:
+            row["_answer_citation_chunks"] = [direct_chunk]
+            row["_rule_guidance_llm_chunks"] = [direct_chunk]
+            row["_verified_structured_answer"] = True
+            generation = {
+                "answer_source": "direct_rule_fact_extract",
+                "llm_used": False,
+                "llm_call_function": None,
+                "llm_prompt_chars": 0,
+                "llm_context_chunks": 1,
+                "llm_output_chars": len(direct_answer),
+                "llm_grounded_check_pass": True,
+                "fallback_reason": None,
+                **direct_debug,
+            }
+            meta.update(
+                {
+                    "answer_mode": "rule_guidance_lookup",
+                    "structured_rule_lookup": False,
+                    "llm_skipped": True,
+                    "answer_source": "direct_rule_fact_extract",
+                    "answer_generation": generation,
+                    "direct_clause_grounded": True,
+                }
+            )
+            row["_answer_generation"] = generation
+            if timing is not None and hasattr(timing, "mark_wall"):
+                timing.mark_wall("t_answer_complete")
+            return direct_answer, meta
+
         # A direct clause hit is a precision question, not a document-discovery
         # question.  The previous Fast path rendered a document-level template
         # even after retrieval had found the exact clause, which produced a

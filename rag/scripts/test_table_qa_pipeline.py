@@ -50,6 +50,124 @@ class TableQAPipelineTest(unittest.TestCase):
         self.assertNotIn("선령", parsed.column_entities)
         self.assertFalse(any("선령" in c for c in parsed.column_entities))
 
+    def test_cms_does_not_expand_to_chemistry_or_centimeters(self) -> None:
+        parsed = parse_table_query("Sea Water Service System의 CMS 통일명칭은 무엇인가?")
+        self.assertIn("Sea Water Service System", parsed.row_entities)
+        self.assertIn("CMS 통일명칭", parsed.column_entities)
+        self.assertNotIn("C", parsed.keyword_terms)
+        self.assertNotIn("S", parsed.keyword_terms)
+        self.assertNotIn("CM", parsed.unit_candidates)
+        self.assertNotIn("화학성분", parsed.table_topic_candidates)
+
+    def test_casting_specimen_question_keeps_row_and_column(self) -> None:
+        parsed = parse_table_query(
+            "형상이 복잡하거나 한 개의 중량이 10톤을 넘는 주강품은 "
+            "제품마다 시험재가 몇 개 필요한가?"
+        )
+        self.assertTrue(any("주강품" in row for row in parsed.row_entities))
+        self.assertIn("시험재의 수", parsed.column_entities)
+        self.assertIn("시험재료", parsed.table_topic_candidates)
+        self.assertNotIn("용접", parsed.table_topic_candidates)
+
+    def test_open_table_questions_add_bilingual_row_and_column_slots(self) -> None:
+        cases = [
+            (
+                "기관실 격벽은 어느 위치의 횡격벽을 의미하는가?",
+                "engine room bulkhead",
+                "최전방 수밀 횡격벽",
+            ),
+            (
+                "적층제조 최종 재료의 제조법 승인에는 지침의 어느 장을 적용하는가?",
+                "AM 최종 재료",
+                "이 지침에서 적용되는 장 또는 하위 번호",
+            ),
+            (
+                "ESP·EXP 부호가 있는 Oil/Bulk/Ore Carrier의 설계에는 어느 장을 적용하는가?",
+                "Oil/Bulk/Ore Carrier 'ESP'(EXP)",
+                "Design",
+            ),
+            (
+                "이중저 늑판은 어떤 구조평가 방법을 적용하는가?",
+                "Double bottom floors",
+                "구조평가 방법",
+            ),
+            (
+                "선수격벽 뒤에 있는 체인로커의 시험압력수두는 어떻게 정하는가?",
+                "체인로커(선수격벽 후방에 있는 경우)",
+                "시험압력수두(m)",
+            ),
+        ]
+        for question, expected_row, expected_column in cases:
+            with self.subTest(question=question):
+                parsed = parse_table_query(question)
+                self.assertIn(expected_row, parsed.row_entities)
+                self.assertIn(expected_column, parsed.column_entities)
+
+    def test_kr_part1_rule_query_is_prioritized(self) -> None:
+        from retrieval_query_analysis import analyze_query
+        from retrieval_search import _direct_priority_rule_doc_ids, infer_query_narrow_doc_id
+
+        q = "902절 탈급(선급등록 취소)의 적용 대상과 절차는?"
+        self.assertIn("kr_1_2025", _direct_priority_rule_doc_ids(q, analyze_query(q)))
+        self.assertEqual(infer_query_narrow_doc_id(q, analyze_query(q)), "kr_1_2025")
+
+    def test_literal_table_row_signal_survives_rerank_payload(self) -> None:
+        from table_schema_retrieval import TableScoreBreakdown
+
+        item = TableScoreBreakdown(table_id="t", literal_row_match=True)
+        self.assertTrue(item.to_dict()["literal_row_match"])
+
+    def test_korean_sparse_terms_strip_particles(self) -> None:
+        from retrieval_query_analysis import analyze_query
+        from retrieval_search import _sparse_query_terms
+
+        q = "603절 증서의 재교부는 누가 신청하고 조치해야 하는가?"
+        terms = dict(_sparse_query_terms(q, analyze_query(q)))
+        self.assertIn("증서", terms)
+        self.assertIn("재교부", terms)
+        self.assertIn("신청", terms)
+        self.assertIn("조치", terms)
+
+    def test_scoped_sparse_prefers_exact_phrase_and_clause_topic(self) -> None:
+        from retrieval_query_analysis import analyze_query
+        from retrieval_search import rank_scoped_sparse_rows
+
+        ids = ["wrong", "phrase", "cms", "withdrawal"]
+        metas = [
+            {"page_number": 73},
+            {"page_number": 9},
+            {"page_number": 84, "clause_number": "902"},
+            {"page_number": 22, "clause_number": "902"},
+        ]
+        docs = [
+            "정기검사는 원칙적으로 입거하여 시행하는 경우에 적용한다.",
+            "시험 및 검사는 특별한 경우 외에는 검사원의 입회하에 시행한다.",
+            "clause: 902 조문 902절 902. 검사사항 CMS 검사절차와 적용대상 및 취소",
+            "clause: 902 조문 902절 902. 탈급 선급위원회의 승인 후 탈급한다.",
+        ]
+
+        phrase_query = "시험 및 검사는 원칙적으로 어떻게 시행해야 하는가?"
+        phrase_ranked = rank_scoped_sparse_rows(
+            phrase_query,
+            analyze_query(phrase_query),
+            ids,
+            metas,
+            docs,
+            top_k=4,
+        )
+        self.assertEqual(phrase_ranked[0][1], "phrase")
+
+        clause_query = "902절 탈급(선급등록 취소)의 적용 대상과 절차는?"
+        clause_ranked = rank_scoped_sparse_rows(
+            clause_query,
+            analyze_query(clause_query),
+            ids,
+            metas,
+            docs,
+            top_k=4,
+        )
+        self.assertEqual(clause_ranked[0][1], "withdrawal")
+
     def test_table_qa_mepc_question_does_not_default_to_kr(self) -> None:
         from rag_query_router import enrich_row_for_routing
 

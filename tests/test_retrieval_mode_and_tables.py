@@ -84,6 +84,36 @@ def test_retrieval_mode_named_society_guidance_summary_stays_text():
     assert mode == RetrievalMode.TEXT
 
 
+def test_retrieval_mode_clause_procedure_stays_text():
+    assert classify_retrieval_mode(
+        "902절 탈급(선급등록 취소)의 적용 대상과 절차는?"
+    ) == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_numbered_clause_with_inspection_words_stays_text():
+    assert classify_retrieval_mode(
+        "801절에서 검사 준비가 안 되었거나 입회자가 없을 때 검사원은 어떻게 할 수 있는가?"
+    ) == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_rule_effective_date_stays_text():
+    assert classify_retrieval_mode(
+        "2025년판 제1편 규칙은 언제부터 검사 신청 선박에 적용되는가?"
+    ) == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_rule_comparison_stays_text():
+    assert classify_retrieval_mode(
+        "쇠모한도를 초과한 부식과 과도한 부식의 차이는?"
+    ) == RetrievalMode.TEXT
+
+
+def test_retrieval_mode_word_containing_row_syllable_is_not_table_frame():
+    assert classify_retrieval_mode(
+        "시험 및 검사는 원칙적으로 어떻게 시행해야 하는가?"
+    ) == RetrievalMode.TEXT
+
+
 def test_table_rows_ordered_and_columns_preserved():
     pairs = [
         (

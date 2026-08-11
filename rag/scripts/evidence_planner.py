@@ -73,8 +73,11 @@ class EvidencePlan:
         }
 
 
-_SOURCE_CACHE: dict[tuple[int, str], list[RetrievedChunk]] = {}
-_DOCUMENT_CACHE: dict[tuple[int, str], list[RetrievedChunk]] = {}
+# Keep the collection object alongside cached rows.  An integer ``id`` alone
+# can be reused after a short-lived collection/test double is garbage
+# collected, which previously leaked evidence from an unrelated document.
+_SOURCE_CACHE: dict[tuple[int, str], tuple[Any, list[RetrievedChunk]]] = {}
+_DOCUMENT_CACHE: dict[tuple[int, str], tuple[Any, list[RetrievedChunk]]] = {}
 
 
 def _session(question: str) -> tuple[str, str]:
@@ -575,8 +578,9 @@ def _to_chunk(cid: str, document: str, meta: dict) -> RetrievedChunk:
 
 def _source_chunks(collection, source: str) -> list[RetrievedChunk]:
     key = (id(collection), source.upper())
-    if key in _SOURCE_CACHE:
-        return _SOURCE_CACHE[key]
+    cached = _SOURCE_CACHE.get(key)
+    if cached is not None and cached[0] is collection:
+        return cached[1]
     try:
         raw = collection.get(
             where={"source": source.upper()},
@@ -593,14 +597,15 @@ def _source_chunks(collection, source: str) -> list[RetrievedChunk]:
             raw.get("metadatas") or [],
         )
     ]
-    _SOURCE_CACHE[key] = chunks
+    _SOURCE_CACHE[key] = (collection, chunks)
     return chunks
 
 
 def _document_chunks(collection, file_name: str) -> list[RetrievedChunk]:
     key = (id(collection), file_name)
-    if key in _DOCUMENT_CACHE:
-        return _DOCUMENT_CACHE[key]
+    cached = _DOCUMENT_CACHE.get(key)
+    if cached is not None and cached[0] is collection:
+        return cached[1]
     try:
         raw = collection.get(
             where={"file_name": file_name},
@@ -617,7 +622,7 @@ def _document_chunks(collection, file_name: str) -> list[RetrievedChunk]:
             raw.get("metadatas") or [],
         )
     ]
-    _DOCUMENT_CACHE[key] = chunks
+    _DOCUMENT_CACHE[key] = (collection, chunks)
     return chunks
 
 

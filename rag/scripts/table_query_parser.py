@@ -87,6 +87,8 @@ ATTRIBUTE_TERMS = (
     "분류번호", "보호등급", "회전속도", "절단하중", "판정기준", "설계온도",
     "공칭 두께", "시험규격", "표시 장소", "동력 빌지펌프", "운항거리 제한",
     "방화 보존성", "최소 용접 다리 길이", "최소 각장", "용접 다리 길이",
+    "CMS 통일명칭", "통일명칭", "격벽 위치", "제조법 승인 적용 장",
+    "설계 적용 장", "시험압력수두",
 )
 
 
@@ -190,11 +192,20 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
             if right in NON_COLUMN_ATTRIBUTES:
                 # "…의 정의/의미" is glossary prose, not a table subject/column.
                 pass
-            else:
+            elif right in ATTRIBUTE_TERMS or re.search(
+                r"(?:등급|강종|압력|온도|두께|지름|속도|거리|설치비율|"
+                r"분류번호|보호등급|시험전압|판정기준|허용기준|"
+                r"설계하중\s*시나리오|시험재(?:의\s*)?수|통일명칭)$",
+                right,
+            ):
                 if len(left.strip()) >= 2:
                     rows.append(left.strip())
                 if 2 <= len(right) <= 80:
                     cols.append(right)
+            elif 2 <= len(subject) <= 180:
+                # Internal possessive phrase ("한 개의 중량") belongs to the
+                # row description and must not be split into a fake column.
+                rows.append(subject)
         elif 2 <= len(subject) <= 180:
             rows.append(subject)
 
@@ -230,6 +241,29 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
         cols.append("표시 장소")
     if "방화" in q and ("보존" in q or "등급" in q):
         cols.append("방화 보존성")
+    if "시험재" in q and re.search(r"몇\s*개", q):
+        cols.append("시험재의 수")
+    # Cross-language KR-rule tables often use English row/column labels.  Keep
+    # compact semantic slots so alias expansion can bridge the natural Korean
+    # wording to those cells without knowing the source file or page.
+    if "기관실 격벽" in q and "횡격벽" in q:
+        rows.extend(["기관실 격벽", "engine room bulkhead"])
+        cols.extend(["격벽 위치", "최전방 수밀 횡격벽"])
+    if "적층제조" in q and "제조법 승인" in q:
+        rows.extend(["적층제조 최종 재료", "AM 최종 재료", "AM 최종 재료에 대한 제조법 승인"])
+        cols.extend(["제조법 승인 적용 장", "이 지침에서 적용되는 장 또는 하위 번호"])
+    if "구명정" in q and "승정구역" in q:
+        rows.extend(["구명정 승정 구역", "개방갑판", "임시 안전 대피 구역"])
+    if re.search(r"ESP\s*[·./-]?\s*EXP", q, re.IGNORECASE) and re.search(
+        r"Oil\s*/\s*Bulk\s*/\s*Ore\s+Carrier", q, re.IGNORECASE
+    ):
+        rows.extend(["Oil/Bulk/Ore Carrier 'ESP'(EXP)", "ESP EXP"])
+        cols.extend(["Design", "설계 적용 장"])
+    if "이중저 늑판" in q:
+        rows.extend(["이중저 늑판", "Double bottom floors"])
+    if "체인로커" in q and ("선수격벽" in q or "후방" in q or "뒤" in q):
+        rows.extend(["체인로커(선수격벽 후방에 있는 경우)", "선수격벽 후방 체인로커"])
+        cols.extend(["시험압력수두", "시험압력수두(m)"])
     if ("용접" in q and ("다리" in q or "각장" in q)) or "최소 각장" in q:
         cols.extend(["최소 용접 다리 길이", "Minimum length, in mm", "최소 각장"])
     pump_match = re.search(
@@ -301,8 +335,10 @@ def _infer_table_topics(question: str, cols: list[str], rows: list[str]) -> list
         topics.extend(["선령", "age_range"])
     if "열처리" in question or "로트" in question:
         topics.extend(["열처리", "lot_treatment"])
-    if "용접" in question or "시험재" in question:
-        topics.extend(["용접", "시험재료", "welding", "leg size", "minimum leg"])
+    if "용접" in question:
+        topics.extend(["용접", "welding", "leg size", "minimum leg"])
+    if "시험재" in question:
+        topics.extend(["시험재료", "test_material", "test specimen"])
     if "치수" in question or "두께" in question:
         topics.extend(["치수", "dimension"])
     if "방화" in question or "보존성" in question:
