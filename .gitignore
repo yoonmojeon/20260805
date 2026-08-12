@@ -24,6 +24,10 @@ rag/models/
 reports/output/*.docx
 outputs/
 
+# Local evaluation reviews and generated operator-only views
+data/eval/*_review.md
+data/eval/*_questions_only.md
+
 # IDE / OS
 .idea/
 .vscode/

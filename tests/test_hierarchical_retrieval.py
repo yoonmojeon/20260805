@@ -11,13 +11,20 @@ for path in (ROOT, RAG_SCRIPTS):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from retrieval_query_analysis import analyze_query, is_meeting_outcome_question
+from retrieval_query_analysis import (
+    analyze_query,
+    detect_excluded_sources,
+    detect_named_sources,
+    is_meeting_outcome_question,
+)
 from evidence_planner import build_evidence_plan
 from rule_guidance_accurate import _build_definition_extractive_answer, _is_definition_lookup
 from question_classifier import classify_question_category
-from rag_query_router import is_rule_guidance_lookup
+from rag_query_router import enrich_row_for_routing, is_rule_guidance_lookup
 from fast_question_classifier import classify_fast_question_type
+from fast_retrieval import select_rule_slots
 from retrieval_search import (
+    _direct_priority_rule_doc_ids,
     _document_route_candidates,
     _identifier_matches_filename,
     extract_exact_identifiers,
@@ -26,6 +33,12 @@ from retrieval_search import (
 )
 from table_qa_answer import build_deterministic_table_answer, verify_row_column_intersection
 from meeting_structured_answer import _section1_meeting_outcome
+from rag_answer_lib import (
+    PREMISE_VERIFICATION_RE,
+    SPECIFIC_DOCUMENT_LOOKUP_RE,
+    _generate_specific_lookup_answer,
+)
+from build_text_eval_v3 import integration_secondary_id
 
 
 def test_exact_identifiers_cover_sparse_maritime_codes():
@@ -37,6 +50,70 @@ def test_exact_identifiers_cover_sparse_maritime_codes():
     assert "tcorr" in normalized
     assert "ac-sd" in normalized
     assert "dnv-cg-0264" in normalized
+
+
+def test_long_document_lookup_is_sent_to_absence_verifier():
+    question = (
+        "DNV-CG-0264 — Autonomous and remotely operated vessels에서 "
+        "개별 자율운항선 인증서 번호를 찾아 문서 근거와 함께 알려줘."
+    )
+    assert SPECIFIC_DOCUMENT_LOOKUP_RE.search(question)
+
+
+def test_absent_specific_lookup_is_rejected_without_unrelated_padding():
+    row = {
+        "question": (
+            "ABS Requirements 문서에서 IMO MASS Code 확정 발효일을 "
+            "찾아 문서 근거와 함께 알려줘."
+        )
+    }
+    chunk = SimpleNamespace(text="Foundational requirements for connectivity and software")
+    answer = _generate_specific_lookup_answer(
+        row,
+        [chunk],
+        model="unused",
+        ollama_base="http://unused",
+        num_ctx=1024,
+    )
+    assert answer is not None
+    assert "확인할 수 없습니다" in answer
+    assert "Foundational" not in answer
+
+
+def test_rule_counterfactual_is_sent_to_premise_verifier():
+    question = (
+        "ABS Requirements를 기준으로 '기능 위험범주는 고장 결과와 무관하다'라는 "
+        "전제가 맞는지 검증하고, 틀리면 문서 근거로 바로잡아줘."
+    )
+    assert PREMISE_VERIFICATION_RE.search(question)
+
+
+def test_korean_abs_risk_question_adds_bilingual_specific_clause_terms():
+    plan = build_evidence_plan(
+        "ABS Autonomous and Remote Control Requirements에서 기능 위험범주는 어떻게 정해져?",
+        {},
+    )
+    slot = next(item for item in plan.slots if item.name == "specific_clause")
+    assert "risk category" in slot.terms
+    assert "operations supervision" in slot.terms
+    assert "consequences of failure" in slot.terms
+
+
+def test_integration_gold_follows_the_second_named_society():
+    msc = {"source": "MSC", "secondary_scenario": "V07"}
+    assert integration_secondary_id(
+        "MSC 111 안전 결론과 DNV guidance를 묶어줘", msc
+    ) == "V06"
+    assert integration_secondary_id(
+        "MSC 111 안전 결론과 LR Rule을 묶어줘", msc
+    ) == "V07"
+
+
+def test_integration_gold_uses_mass_scenario_for_cross_source_msc_question():
+    abs_scenario = {"source": "ABS", "secondary_scenario": "V08"}
+    assert integration_secondary_id(
+        "ABS Requirements와 MSC MASS Code를 함께 설명해줘", abs_scenario
+    ) == "V05"
 
 
 def test_rule_symbol_and_korean_cii_are_not_generic_trend_fallbacks():
@@ -150,6 +227,79 @@ def test_meeting_agenda_and_discussion_wording_are_outcome_queries():
     assert is_meeting_outcome_question(
         "MSC 111 문서에서 IGC Code 개정 논의가 어떻게 정리됐는지 알려줘."
     )
+
+
+def test_explicit_source_exclusion_does_not_become_a_hard_filter():
+    question = "MEPC 문서는 제외하고 MSC 111의 MASS 결정만 정리해줘."
+    assert detect_excluded_sources(question) == ["MEPC"]
+    assert detect_named_sources(question) == ["MSC"]
+    routed = enrich_row_for_routing({"question": question, "category": "autonomous"})
+    assert routed["retrieval_sources"] == ["MSC"]
+    assert ("MEPC", 111) not in analyze_query(question).session_codes
+
+
+def test_multi_source_question_preserves_all_named_sources():
+    question = "MSC 111의 MASS 결정과 DNV-CG-0264 지침을 함께 비교해줘."
+    routed = enrich_row_for_routing({"question": question, "category": "autonomous"})
+    assert routed["retrieval_sources"] == ["MSC", "DNV"]
+    assert not routed.get("class_society_hint")
+
+
+def test_named_meeting_topic_without_number_uses_latest_indexed_session():
+    signals = analyze_query("MSC MASS Code 국제 일정과 후속조치를 정리해줘.")
+    assert ("MSC", 111) in signals.session_codes
+
+
+def test_abs_smart_functions_title_routes_to_the_named_guide_not_neighbor_docs():
+    question = "ABS Guide for Smart Functions만 근거로 적용 범위를 설명해줘."
+    signals = analyze_query(question)
+    assert signals.constrained_sources == ["ABS"]
+    assert "ABS-Smart-Functions-Guide" in signals.rule_doc_hints
+    assert _direct_priority_rule_doc_ids(question, signals) == [
+        "abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e"
+    ]
+
+
+def test_korean_suffix_after_society_still_detects_abs_requirements():
+    question = "ABS에서 autonomous 또는 remote control function 관련 Requirements를 찾아줘."
+    signals = analyze_query(question)
+    assert signals.named_sources == ["ABS"]
+    assert "ABS-Autonomous-Remote-Requirements" in signals.rule_doc_hints
+    assert _direct_priority_rule_doc_ids(question, signals) == [
+        "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb"
+    ]
+
+
+def test_rule_slot_prefers_question_focused_requirement_over_arbitrary_clause():
+    generic = SimpleNamespace(
+        chunk_id="generic",
+        doc_id="abs-req",
+        file_name="RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        source="ABS",
+        text="7.4 Remote operator and remote control conditions.",
+        clause_number="7.4",
+        page_number=32,
+        distance=0.05,
+    )
+    focused = SimpleNamespace(
+        chunk_id="focused",
+        doc_id="abs-req",
+        file_name="RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        source="ABS",
+        text=(
+            "Each function is assigned a risk category using operations supervision "
+            "and consequences of failure."
+        ),
+        clause_number="2",
+        page_number=23,
+        distance=0.12,
+    )
+    selected = select_rule_slots(
+        [generic, focused],
+        "ABS에서 기능 위험범주는 어떻게 정해져?",
+        {"class_society_hint": "ABS", "_rule_guidance_lookup": True},
+    )
+    assert selected[0].chunk is focused
 
 
 def test_explicit_igc_outcome_does_not_pad_answer_with_other_msc_topics():

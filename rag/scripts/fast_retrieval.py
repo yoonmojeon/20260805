@@ -27,6 +27,27 @@ OUTCOME_TERMS = ("outcome", "summary report", "key outcomes", "adopted", "approv
 SUMMARY_TERMS = ("summary", "overview", "executive", "highlight", "outcome", "report")
 SCOPE_TERMS = ("scope", "application", "applicable", "적용", "정의", "definition")
 
+RULE_FOCUS_GROUPS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"위험\s*범주|risk\s*categor", re.I), ("risk category", "operations supervision", "consequences of failure")),
+    (re.compile(r"위험\s*정보|risk[- ]?informed|검증\s*활동", re.I), ("risk-informed", "verification and validation")),
+    (re.compile(r"foundational|기반\s*요건", re.I), ("foundational requirements", "connectivity", "data and software")),
+    (re.compile(r"상위.{0,12}하위|higher.{0,20}lower", re.I), ("higher risk category", "lower risk category")),
+    (re.compile(r"적용\s*(?:대상|범위)|\bscope\b|applicab", re.I), ("guide scope", "scope", "applicable to")),
+    (re.compile(r"concept\s*qualification|개념\s*(?:검증|적격)", re.I), ("concept qualification", "third-party verification", "aros notations")),
+    (re.compile(r"초기\s*위험|preliminary\s*risk|\bPRA\b", re.I), ("preliminary risk assessment", "showstoppers", "safety and design philosophies")),
+    (re.compile(r"크랭크케이스|crankcase|\bLEL\b", re.I), ("crankcase", "below the lel", "crankcase explosion")),
+    (re.compile(r"저인화점|low[- ]?flashpoint", re.I), ("low-flashpoint", "low flashpoint fuel")),
+    (re.compile(r"SHM|MHM|smart\s*function", re.I), ("smart functions", "shm", "mhm", "smart (inf)")),
+)
+
+
+def _rule_focus_terms(question: str) -> tuple[str, ...]:
+    terms: list[str] = []
+    for pattern, expansions in RULE_FOCUS_GROUPS:
+        if pattern.search(question or ""):
+            terms.extend(expansions)
+    return tuple(dict.fromkeys(term.lower() for term in terms))
+
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").lower())
@@ -354,6 +375,7 @@ def select_rule_slots(
     used: set[str] = set()
     out: list[FastEvidence] = []
     hints = extract_clause_hints(question)
+    focus_terms = _rule_focus_terms(question)
 
     # Definition asks need the defining paragraph, not simply the first chunk
     # carrying any clause number.  This is especially important for short
@@ -406,7 +428,26 @@ def select_rule_slots(
             return True
         return any(h in (c.text or "") for h in hints)
 
-    exact = _pick_first(pool, clause_match if hints else lambda c: bool(c.clause_number), used=used)
+    focused = None
+    if focus_terms:
+        def focus_count(c: RetrievedChunk) -> int:
+            blob = _norm(f"{c.file_name} {c.text}")
+            return sum(1 for term in focus_terms if term in blob)
+
+        focused = _pick_first(
+            pool,
+            lambda c: focus_count(c) > 0,
+            used=used,
+            prefer=lambda c: (-focus_count(c), float(c.distance)),
+        )
+        if focused:
+            out.append(FastEvidence(focused, "focused_requirement"))
+
+    exact = _pick_first(
+        pool,
+        clause_match if hints else (lambda c: bool(c.clause_number) and focused is None),
+        used=used,
+    )
     if exact:
         out.append(FastEvidence(exact, "exact_clause"))
 

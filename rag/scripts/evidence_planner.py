@@ -412,7 +412,26 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
     if semantic.task == "rule_lookup" or rule_requested or is_society_requirement:
         qlow = q.lower()
         focus_terms: list[str] = []
+        direct_focus_terms: list[str] = []
         topic_aliases = (
+            # Specific technical concepts come before their broad domain.
+            # Their order is preserved in the direct-clause scorer.
+            (
+                ("상위 위험", "하위 위험", "higher risk", "lower risk"),
+                ("higher risk category", "lower risk category"),
+            ),
+            (
+                ("위험정보", "위험 정보", "risk-informed", "검증활동"),
+                ("risk-informed", "verification and validation"),
+            ),
+            (
+                ("foundational", "기초 요건", "기반 요건"),
+                ("foundational requirements", "connectivity", "data and software"),
+            ),
+            (
+                ("위험범주", "위험 범주", "risk category"),
+                ("risk category", "operations supervision", "consequences of failure"),
+            ),
             (
                 ("자율운항", "원격운항", "smart vessel", "autonomous"),
                 ("autonomous", "remotely operated", "remote operation", "smart vessel"),
@@ -430,9 +449,11 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
                 ("hydrogen",),
             ),
         )
-        for triggers, aliases in topic_aliases:
+        for alias_index, (triggers, aliases) in enumerate(topic_aliases):
             if any(trigger.lower() in qlow for trigger in triggers):
                 focus_terms.extend(aliases)
+                if alias_index < 4:
+                    direct_focus_terms.extend(aliases)
         shared = tuple(dict.fromkeys([*focus_terms, *topic_terms])) or ("rule", "guidance")
         focus_group = tuple(focus_terms or shared)
         plan.intent = "rule_lookup"
@@ -466,7 +487,15 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
                 max_hits=3,
             ),
         ]
-        direct_terms = _specific_clause_terms(q)
+        # Put bilingual concept aliases before literal English query phrases.
+        # This lets a Korean technical question search the governing English
+        # clause instead of repeatedly selecting a document-title/scope hit.
+        direct_terms = tuple(
+            dict.fromkeys(
+                direct_focus_terms
+                or [*focus_terms, *_specific_clause_terms(q)]
+            )
+        )
         direct_phrases = tuple(term for term in direct_terms if " " in term)
         # A broad instrument-discovery question such as
         # "Smart Vessel 관련 Rule/Guidance를 찾아줘" contains English topic
@@ -761,6 +790,14 @@ def _score_slot(chunk: RetrievedChunk, slot: EvidenceSlot, question_terms: set[s
     status = classify_document_status(chunk)
     score = hits * 2.4 + min(overlap, 8) * 0.6 + status.authority * 0.8
     if slot.name == "specific_clause":
+        # The first terms are query-specific bilingual concept aliases. Give
+        # them enough weight to beat a generic nearby section heading; a
+        # heading bonus alone previously selected "Foundational Requirements"
+        # for unrelated risk-category questions in the same ABS document.
+        primary_hits = sum(
+            1 for term in slot.terms[:4] if term.lower() in text
+        )
+        score += primary_hits * 10.0
         # Prefer the beginning of the requested clause over a continuation on
         # the following page that happens to repeat its title words.  Indexed
         # metadata can be section-level ("6"), so inspect the body for a
@@ -771,7 +808,7 @@ def _score_slot(chunk: RetrievedChunk, slot: EvidenceSlot, question_terms: set[s
             body[:600],
         )
         if heading_match:
-            score += 12.0 + heading_match.group(1).count(".")
+            score += (3.0 if primary_hits else 12.0) + heading_match.group(1).count(".")
         for phrase in (term for term in slot.terms if " " in term):
             position = body.lower().find(phrase.lower())
             if position >= 0:

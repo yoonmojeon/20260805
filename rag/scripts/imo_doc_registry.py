@@ -9,7 +9,7 @@ from pathlib import Path
 from imo_doc_classify import classify_imo_filename, session_agenda_key
 from retrieval_query_analysis import QuerySignals
 
-DEFAULT_CORPUS = Path(__file__).resolve().parent.parent / "data/manifests/rag_corpus_407.csv"
+DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "data/manifests/rag_corpus_407.csv"
 
 
 @lru_cache(maxsize=4)
@@ -130,6 +130,29 @@ def priority_doc_ids_for_signals(signals: QuerySignals) -> list[str]:
             "session_outcome",
             "reference_outcome",
         )
+    elif "mass" in signals.topics:
+        agenda = (5,)
+        preferred = (
+            "working_group_report",
+            "session_outcome",
+            "session_report",
+            "agenda_report",
+        )
+    elif "ghg" in signals.topics and any(b == "MEPC" for b, _ in signals.session_codes):
+        agenda = (7,)
+        preferred = ("working_group_report", "agenda_report", "session_outcome")
+    elif "alt_fuel" in signals.topics and any(b == "MSC" for b, _ in signals.session_codes):
+        agenda = (12, 14)
+        preferred = (
+            "subcommittee_report",
+            "working_group_report",
+            "agenda_report",
+            "session_outcome",
+            "session_report",
+        )
+    elif "cii" in signals.topics or "marpol" in signals.topics:
+        agenda = (6,)
+        preferred = ("agenda_report", "working_group_report", "session_outcome")
     elif signals.wants_agenda:
         preferred = ("agenda",)
     elif signals.wants_summary or signals.wants_outcome:
@@ -139,17 +162,5 @@ def priority_doc_ids_for_signals(signals: QuerySignals) -> list[str]:
             "working_group_report",
             "agenda_report",
         )
-    elif "mass" in signals.topics:
-        agenda = (5,)
-        preferred = ("working_group_report", "session_outcome", "agenda_report")
-    elif "ghg" in signals.topics and any(b == "MEPC" for b, _ in signals.session_codes):
-        agenda = (7,)
-        preferred = ("working_group_report", "agenda_report", "session_outcome")
-    elif "alt_fuel" in signals.topics and any(b == "MSC" for b, _ in signals.session_codes):
-        agenda = (12, 14)
-        preferred = ("subcommittee_report", "working_group_report", "agenda_report")
-    elif "cii" in signals.topics or "marpol" in signals.topics:
-        agenda = (6,)
-        preferred = ("agenda_report", "working_group_report", "session_outcome")
 
     return priority_doc_ids(signals, preferred_types=preferred, agenda_items=agenda)
