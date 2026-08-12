@@ -5,13 +5,11 @@ from __future__ import annotations
 AVAILABLE_LLM_MODELS: tuple[str, ...] = (
     "gemma4:12b",
     "llama3.1:8b",
-    "mistral-nemo:12b",
 )
 
 LLM_MODEL_CHOICES: tuple[tuple[str, str], ...] = (
     ("Gemma 4 12B (기본·권장)", "gemma4:12b"),
     ("Llama 3.1 8B (빠른 응답)", "llama3.1:8b"),
-    ("Mistral Nemo 12B", "mistral-nemo:12b"),
 )
 
 DEFAULT_LLM_MODEL = "gemma4:12b"

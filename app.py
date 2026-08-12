@@ -23,11 +23,6 @@ from services.answer_ui import render_evidence_table_html, render_related_tables
 from services.llm_models import DEFAULT_LLM_MODEL, LLM_MODEL_CHOICES
 from services.ops_service import ops_db_ready
 from services.orchestrator import handle_question
-from services.routing_options import (
-    DEFAULT_ROUTING_MODE,
-    ROUTING_MODE_CHOICES,
-    use_llm_primary_router,
-)
 from services.rag_service import (
     rag_index_banner,
     rag_index_ready,
@@ -148,7 +143,6 @@ def chat_fn(
     history: list,
     dialogue_state: dict | None,
     route_mode: str,
-    routing_strategy: str,
     llm_model: str,
 ):
     empty = build_answer_html("", "")
@@ -159,7 +153,7 @@ def chat_fn(
         user_msg,
         history,
         force_route=_force_from_mode(route_mode),  # type: ignore[arg-type]
-        use_llm_router=use_llm_primary_router(routing_strategy),
+        use_llm_router=True,
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
         llm_model=llm_model,
@@ -179,7 +173,6 @@ def retry_fn(
     history: list,
     dialogue_state: dict | None,
     last_question: str,
-    routing_strategy: str,
     llm_model: str,
 ):
     empty = build_answer_html("", "")
@@ -193,7 +186,7 @@ def retry_fn(
         q,
         hist,
         force_route=force_route,  # type: ignore[arg-type]
-        use_llm_router=use_llm_primary_router(routing_strategy),
+        use_llm_router=True,
         rag_latency_mode="fast",
         dialogue_state=dialogue_state,
         llm_model=llm_model,
@@ -206,6 +199,36 @@ def retry_fn(
         files or [],
         q,
     )
+
+
+def fixed_route_chat_fn(
+    force_route: str,
+    user_msg: str,
+    history: list,
+    dialogue_state: dict | None,
+    llm_model: str,
+):
+    """Handle a question in a dedicated tab without running top-level routing."""
+    label = "운항 DB 강제" if force_route == "ops" else "문서 RAG 강제"
+    return chat_fn(user_msg, history, dialogue_state, label, llm_model)
+
+
+def document_chat_fn(
+    user_msg: str,
+    history: list,
+    dialogue_state: dict | None,
+    llm_model: str,
+):
+    return fixed_route_chat_fn("rag", user_msg, history, dialogue_state, llm_model)
+
+
+def ops_chat_fn(
+    user_msg: str,
+    history: list,
+    dialogue_state: dict | None,
+    llm_model: str,
+):
+    return fixed_route_chat_fn("ops", user_msg, history, dialogue_state, llm_model)
 
 
 CUSTOM_CSS = """
@@ -289,64 +312,125 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
     </div>
     """)
 
-    history_state = gr.State([])
-    dialogue_state = gr.State({})
-    last_question_state = gr.State("")
-
     with gr.Row():
-        route_mode = gr.Radio(
-            choices=["자동 라우팅", "운항 DB 강제", "문서 RAG 강제"],
-            value="자동 라우팅",
-            label="데이터 경로",
-        )
         llm_model = gr.Dropdown(
             choices=list(LLM_MODEL_CHOICES),
             value=DEFAULT_LLM_MODEL,
-            label="라우터·답변 모델 (Ollama)",
-            info="기본값은 Gemma 4 12B이며 선택 모델을 라우팅과 답변에 함께 사용합니다.",
+            label="사용 모델 (Ollama)",
+            info=(
+                "Gemma 4 12B가 기본입니다. 통합 질문에서는 라우팅과 답변에, "
+                "전용 탭에서는 답변에 사용합니다."
+            ),
             scale=1,
         )
-        routing_strategy = gr.Radio(
-            choices=list(ROUTING_MODE_CHOICES),
-            value=DEFAULT_ROUTING_MODE,
-            label="라우팅 방식",
-            info="LLM-primary를 권장하며 Rules-only는 비교 실험용입니다.",
-        )
 
-    gr.Markdown(
-        "**운항 예:** 현재 운항 상태 / CII 등급 / Noon·MRV 보고서  &nbsp;|&nbsp; "
-        "**문서 예:** MEPC·MSC 동향 / DNV·KR Rule / 표 질의"
-    )
+    with gr.Tabs():
+        with gr.Tab("통합 질문", id="integrated"):
+            integrated_history = gr.State([])
+            integrated_dialogue = gr.State({})
+            integrated_last_question = gr.State("")
 
-    with gr.Row(elem_classes=["example-row"]):
-        examples = [
-            "현재 운항 상태 알려줘",
-            "올해 CII 등급을 알려줘",
-            "Noon Report 생성해줘",
-            "최신 MEPC 회의 주요 내용을 정리해줘",
-            "DNV에서 자율운항 관련 Rule/Guidance를 찾아줘",
-            "선령 15년을 초과한 선박의 평형수탱크 검사 범위는?",
-            "우리 CII랑 MEPC 규제 같이 알려줘",
-        ]
-        example_btns = [gr.Button(t, size="sm") for t in examples]
+            gr.Markdown(
+                "운항 DB와 문서 RAG 중 필요한 경로를 LLM이 자동으로 판단합니다. "
+                "운항 정보와 규정을 함께 묻는 질문은 `hybrid`로 처리합니다."
+            )
+            integrated_route_mode = gr.Radio(
+                choices=["자동 라우팅", "운항 DB 강제", "문서 RAG 강제"],
+                value="자동 라우팅",
+                label="데이터 경로",
+            )
+            integrated_examples = [
+                "현재 운항 상태 알려줘",
+                "최신 MEPC 회의 주요 내용을 정리해줘",
+                "우리 CII랑 MEPC 규제 같이 알려줘",
+            ]
+            with gr.Row(elem_classes=["example-row"]):
+                integrated_example_btns = [
+                    gr.Button(text, size="sm") for text in integrated_examples
+                ]
+            integrated_answer = gr.HTML(value=build_answer_html("", ""))
+            with gr.Row():
+                integrated_input = gr.Textbox(
+                    placeholder="운항·문서·혼합 질문을 입력하세요",
+                    show_label=False,
+                    scale=8,
+                    container=False,
+                )
+                integrated_send = gr.Button(
+                    "전송", variant="primary", scale=1, elem_classes=["send-btn"]
+                )
+            with gr.Row():
+                retry_ops = gr.Button("운항만으로 다시", size="sm")
+                retry_rag = gr.Button("문서만으로 다시", size="sm")
+                retry_hyb = gr.Button("둘 다로 다시", size="sm")
+            integrated_files = gr.File(
+                label="생성된 보고서 / 표 crop", file_count="multiple"
+            )
 
-    answer_html = gr.HTML(value=build_answer_html("", ""))
+        with gr.Tab("문서 검색", id="documents"):
+            document_history = gr.State([])
+            document_dialogue = gr.State({})
+            document_last_question = gr.State("")
 
-    with gr.Row():
-        user_input = gr.Textbox(
-            placeholder="질문을 입력하세요",
-            show_label=False,
-            scale=8,
-            container=False,
-        )
-        send_btn = gr.Button("전송", variant="primary", scale=1, elem_classes=["send-btn"])
+            gr.Markdown(
+                "선급 규정, IMO 회의자료, 본문과 표를 검색합니다. "
+                "이 탭의 질문은 상위 라우터를 거치지 않고 항상 `rag`로 처리됩니다."
+            )
+            document_examples = [
+                "과도한 부식의 정의는 무엇인가?",
+                "구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?",
+                "형상이 복잡하거나 한 개의 중량이 10톤을 넘는 주강품은 제품마다 시험재가 몇 개 필요한가?",
+            ]
+            with gr.Row(elem_classes=["example-row"]):
+                document_example_btns = [
+                    gr.Button(text, size="sm") for text in document_examples
+                ]
+            document_answer = gr.HTML(value=build_answer_html("", ""))
+            with gr.Row():
+                document_input = gr.Textbox(
+                    placeholder="규정·회의자료·표 검색 질문을 입력하세요",
+                    show_label=False,
+                    scale=8,
+                    container=False,
+                )
+                document_send = gr.Button(
+                    "문서 검색", variant="primary", scale=1, elem_classes=["send-btn"]
+                )
+            document_files = gr.File(
+                label="검색된 원본 표 / 생성 파일", file_count="multiple"
+            )
 
-    with gr.Row():
-        retry_ops = gr.Button("운항만으로 다시", size="sm")
-        retry_rag = gr.Button("문서만으로 다시", size="sm")
-        retry_hyb = gr.Button("둘 다로 다시", size="sm")
+        with gr.Tab("운항 정보", id="operations"):
+            ops_history = gr.State([])
+            ops_dialogue = gr.State({})
+            ops_last_question = gr.State("")
 
-    generated_files = gr.File(label="생성된 보고서 / 표 crop", file_count="multiple")
+            gr.Markdown(
+                "현재·과거 항차, 속력, 연료, 배출량, CII와 보고서를 조회합니다. "
+                "이 탭의 질문은 상위 라우터를 거치지 않고 항상 `ops`로 처리됩니다."
+            )
+            ops_examples = [
+                "현재 운항 중인 항차 번호와 적재 상태를 알려줘.",
+                "현재 Ballast 항차의 누적 운항거리는 몇 해리야?",
+                "2026년 누적 잠정 CII attained, required와 등급은?",
+            ]
+            with gr.Row(elem_classes=["example-row"]):
+                ops_example_btns = [
+                    gr.Button(text, size="sm") for text in ops_examples
+                ]
+            ops_answer = gr.HTML(value=build_answer_html("", ""))
+            with gr.Row():
+                ops_input = gr.Textbox(
+                    placeholder="항차·연료·배출량·CII 질문을 입력하세요",
+                    show_label=False,
+                    scale=8,
+                    container=False,
+                )
+                ops_send = gr.Button(
+                    "운항 조회", variant="primary", scale=1, elem_classes=["send-btn"]
+                )
+            ops_files = gr.File(label="생성된 운항 보고서", file_count="multiple")
+
     try:
         banner = rag_index_banner(sample_size=1500)
     except Exception as exc:
@@ -359,74 +443,140 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
     with gr.Accordion("RAG index diagnostics", open=False):
         gr.Markdown(f"```\n{banner}\n```")
 
-    for btn, text in zip(example_btns, examples):
-        btn.click(lambda t=text: t, outputs=user_input)
+    for btn, text in zip(integrated_example_btns, integrated_examples):
+        btn.click(lambda t=text: t, outputs=integrated_input)
+    for btn, text in zip(document_example_btns, document_examples):
+        btn.click(lambda t=text: t, outputs=document_input)
+    for btn, text in zip(ops_example_btns, ops_examples):
+        btn.click(lambda t=text: t, outputs=ops_input)
 
-    send_btn.click(
+    integrated_send.click(
         chat_fn,
         inputs=[
-            user_input,
-            history_state,
-            dialogue_state,
-            route_mode,
-            routing_strategy,
+            integrated_input,
+            integrated_history,
+            integrated_dialogue,
+            integrated_route_mode,
             llm_model,
         ],
-        outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
-    ).then(lambda: "", outputs=user_input)
+        outputs=[
+            integrated_history,
+            integrated_dialogue,
+            integrated_answer,
+            integrated_files,
+            integrated_last_question,
+        ],
+    ).then(lambda: "", outputs=integrated_input)
 
-    user_input.submit(
+    integrated_input.submit(
         chat_fn,
         inputs=[
-            user_input,
-            history_state,
-            dialogue_state,
-            route_mode,
-            routing_strategy,
+            integrated_input,
+            integrated_history,
+            integrated_dialogue,
+            integrated_route_mode,
             llm_model,
         ],
-        outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
-    ).then(lambda: "", outputs=user_input)
+        outputs=[
+            integrated_history,
+            integrated_dialogue,
+            integrated_answer,
+            integrated_files,
+            integrated_last_question,
+        ],
+    ).then(lambda: "", outputs=integrated_input)
 
     retry_ops.click(
-        lambda hist, st, last_q, routing, model: retry_fn(
-            "ops", hist, st, last_q, routing, model
-        ),
+        lambda hist, st, last_q, model: retry_fn("ops", hist, st, last_q, model),
         inputs=[
-            history_state,
-            dialogue_state,
-            last_question_state,
-            routing_strategy,
+            integrated_history,
+            integrated_dialogue,
+            integrated_last_question,
             llm_model,
         ],
-        outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
+        outputs=[
+            integrated_history,
+            integrated_dialogue,
+            integrated_answer,
+            integrated_files,
+            integrated_last_question,
+        ],
     )
     retry_rag.click(
-        lambda hist, st, last_q, routing, model: retry_fn(
-            "rag", hist, st, last_q, routing, model
-        ),
+        lambda hist, st, last_q, model: retry_fn("rag", hist, st, last_q, model),
         inputs=[
-            history_state,
-            dialogue_state,
-            last_question_state,
-            routing_strategy,
+            integrated_history,
+            integrated_dialogue,
+            integrated_last_question,
             llm_model,
         ],
-        outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
+        outputs=[
+            integrated_history,
+            integrated_dialogue,
+            integrated_answer,
+            integrated_files,
+            integrated_last_question,
+        ],
     )
     retry_hyb.click(
-        lambda hist, st, last_q, routing, model: retry_fn(
-            "hybrid", hist, st, last_q, routing, model
-        ),
+        lambda hist, st, last_q, model: retry_fn("hybrid", hist, st, last_q, model),
         inputs=[
-            history_state,
-            dialogue_state,
-            last_question_state,
-            routing_strategy,
+            integrated_history,
+            integrated_dialogue,
+            integrated_last_question,
             llm_model,
         ],
-        outputs=[history_state, dialogue_state, answer_html, generated_files, last_question_state],
+        outputs=[
+            integrated_history,
+            integrated_dialogue,
+            integrated_answer,
+            integrated_files,
+            integrated_last_question,
+        ],
     )
+
+    document_outputs = [
+        document_history,
+        document_dialogue,
+        document_answer,
+        document_files,
+        document_last_question,
+    ]
+    document_inputs = [
+        document_input,
+        document_history,
+        document_dialogue,
+        llm_model,
+    ]
+    document_send.click(
+        document_chat_fn,
+        inputs=document_inputs,
+        outputs=document_outputs,
+    ).then(lambda: "", outputs=document_input)
+    document_input.submit(
+        document_chat_fn,
+        inputs=document_inputs,
+        outputs=document_outputs,
+    ).then(lambda: "", outputs=document_input)
+
+    ops_outputs = [
+        ops_history,
+        ops_dialogue,
+        ops_answer,
+        ops_files,
+        ops_last_question,
+    ]
+    ops_inputs = [ops_input, ops_history, ops_dialogue, llm_model]
+    ops_send.click(
+        ops_chat_fn,
+        inputs=ops_inputs,
+        outputs=ops_outputs,
+    ).then(lambda: "", outputs=ops_input)
+    ops_input.submit(
+        ops_chat_fn,
+        inputs=ops_inputs,
+        outputs=ops_outputs,
+    ).then(lambda: "", outputs=ops_input)
 
 
 if __name__ == "__main__":
