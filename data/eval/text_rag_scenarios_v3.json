@@ -1,0 +1,240 @@
+{
+  "schema_version": "text-rag-eval-v3",
+  "corpus_id": "full_corpus_715_v1",
+  "scenarios": {
+    "V01": {
+      "category": "trend_summary",
+      "source": "MEPC",
+      "doc_id": "mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943",
+      "doc_label": "MEPC 84/7/14 — ISWG-GHG 20차 회의 보고",
+      "secondary_scenario": "V03",
+      "keypoints": [
+        {"id": "V01-K1", "text": "지속가능연료 인증체계(SFCS)와 Fuel Life Cycle Label 지침 개발을 서둘러야 하며, 인정된 SFCS 목록은 2027년 3월 1일까지 공표하도록 초안이 잡혀 있다.", "aliases": ["SFCS", "Fuel Life Cycle Label", "FLL", "2027년 3월 1일"], "chunk_ids": ["mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0013_m000"]},
+        {"id": "V01-K2", "text": "GFI 준수 방식은 MARPOL Annex VI 초안 규칙 36의 범위를 넘어 지침에서 새 의무를 만들지 않는 방향이 강조됐다.", "aliases": ["GFI 준수", "규칙 36", "regulation 36"], "chunk_ids": ["mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0022_m002"]},
+        {"id": "V01-K3", "text": "GFI 보고·검증은 초안 규칙 37과 정합시키고 ISWG-GHG 20/2/1을 바탕으로 SEEMP 지침 개정안을 더 개발하기로 했다.", "aliases": ["GFI 보고", "검증", "규칙 37", "SEEMP", "20/2/1"], "chunk_ids": ["mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0022_m004"]},
+        {"id": "V01-K4", "text": "LCA 지침은 전과정 GHG 연료집약도 계산과 연료 인증의 기반 방법론으로 다뤄졌다.", "aliases": ["LCA", "전과정", "well-to-tank", "tank-to-wake", "연료 인증"], "chunk_ids": ["mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0025_m001"]}
+      ],
+      "hard_negative_chunk_ids": [
+        "mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0003_m003",
+        "mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0005_m000"
+      ],
+      "precision_questions": [
+        "MEPC 84/7/14에서 SFCS 인정 목록 공표 시한은 언제로 제시됐어?",
+        "MEPC 84/7/14의 GFI 준수 방식과 MARPOL Annex VI 초안 규칙 36의 관계를 설명해줘.",
+        "GFI 보고·검증과 SEEMP 지침 개정에 관해 작업반이 정한 후속 조치는 뭐야?",
+        "IMO Net-Zero Framework에서 LCA 지침이 맡는 역할은 무엇이야?",
+        "MEPC 84/7/14 기준으로 선사가 준비해야 할 연료 인증·GFI 보고 항목을 근거별로 구분해줘."
+      ],
+      "unanswerable_targets": ["항만별 GFI 벌금 확정표", "선박별 실제 GFI 계정 잔액", "최종 채택된 SEEMP 개정 전문", "국가별 SFCS 승인기관 명단", "IMO Net-Zero Fund의 확정된 선사별 납부액"],
+      "false_premises": ["MEPC 80이 이 인덱스의 최신 MEPC 회의다", "GFI 보고 지침이 이미 최종 확정·발효됐다", "LCA 지침은 선박 운항 단계 배출만 계산한다", "SEEMP 개정 작업은 더 이상 필요하지 않다고 결론 났다"],
+      "forbidden_claims": ["MEPC 80이 최신 회의", "GFI 보고 지침 최종 발효", "선사별 확정 벌금", "LCA가 tank-to-wake만 포함"]
+    },
+    "V02": {
+      "category": "meeting_outcome",
+      "source": "MSC",
+      "doc_id": "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f",
+      "doc_label": "MSC 111-WP.1 — MSC 111 본회의 보고서 초안",
+      "secondary_scenario": "V05",
+      "keypoints": [
+        {"id": "V02-K1", "text": "위원회는 MASS Code 초안의 최종화를 위해 관련 제안들을 MASS 작업반에 회부했다.", "aliases": ["MASS Code", "최종화", "작업반 회부"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0041_m008"]},
+        {"id": "V02-K2", "text": "선박용 VHF 데이터 교환 시스템(VDES) 성능기준과 SOLAS V장 연계 결의안이 주요 결과로 다뤄졌다.", "aliases": ["VDES", "VHF 데이터 교환", "SOLAS V"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0020_m005", "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0021_m001"]},
+        {"id": "V02-K3", "text": "수소 연료 사용 선박의 안전을 위한 잠정 지침이 편집 수정 후 승인됐다.", "aliases": ["수소 연료", "잠정 지침", "승인"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0064_m003"]},
+        {"id": "V02-K4", "text": "액화수소 산적운송 개정 잠정 권고의 통합본 결의가 채택됐다.", "aliases": ["액화수소", "산적운송", "결의", "채택"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0099_m002"]}
+      ],
+      "hard_negative_chunk_ids": [
+        "msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f_p0007_m000__e001",
+        "msc_msc_msc_111_12_report_of_the_twelfth_session_of_the_sub_committee_secretariat_2d23873d_p0003_m000__e001"
+      ],
+      "precision_questions": [
+        "MSC 111-WP.1에서 MASS Code 초안 최종화를 위해 위원회가 취한 조치는 뭐야?",
+        "MSC 111의 VDES 관련 결의와 성능기준 결과를 정리해줘.",
+        "수소 연료 선박 잠정 안전지침은 MSC 111에서 어떤 상태가 됐어?",
+        "액화수소 산적운송 잠정 권고와 관련해 MSC 111이 채택한 것은 무엇이야?",
+        "MSC 111의 MASS·VDES·수소연료 결과를 각각 결정 동사까지 구분해줘."
+      ],
+      "unanswerable_targets": ["MSC 111이 승인한 KR 선급부호 목록", "회의 참가자 개인별 표결 내역", "VDES 장비 제조사별 형식승인 번호", "MASS 실증선별 사고 통계", "MSC 111 결의의 한국 국내법 시행일"],
+      "false_premises": ["MSC 110과 MSC 111의 결과는 동일하다", "MASS Code가 MSC 111에서 즉시 강제 발효됐다", "수소 연료 잠정 안전지침은 부결됐다", "VDES 안건은 MSC 111에서 논의되지 않았다"],
+      "forbidden_claims": ["MASS Code 즉시 강제 발효", "수소 지침 부결", "VDES 미논의", "개인별 표결 내역 확정"]
+    },
+    "V03": {
+      "category": "env_regulation",
+      "source": "MEPC",
+      "doc_id": "mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb",
+      "doc_label": "MEPC 84/6/2 — 2024년 선대 탄소집약도 보고",
+      "secondary_scenario": "V01",
+      "keypoints": [
+        {"id": "V03-K1", "text": "문서는 2024년 선대의 수요기반·공급기반 탄소집약도를 IMO 연료유 소비 DB 지침에 따라 보고한다.", "aliases": ["2024", "수요기반", "공급기반", "연료유 소비 DB"], "chunk_ids": ["mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0001_m005"]},
+        {"id": "V03-K2", "text": "공급기반 지표는 AER와 cgDIST, 수요기반 추정치는 EEOI를 사용해 2019~2024 추이를 비교했다.", "aliases": ["AER", "cgDIST", "EEOI", "2019", "2024"], "chunk_ids": ["mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0003_m003"]},
+        {"id": "V03-K3", "text": "2024년 공급기반 평균 탄소집약도는 2019년 대비 최대 10.8% 감소했지만 연도별 변동이 있었다.", "aliases": ["10.8%", "2019년 대비", "연도별 변동"], "chunk_ids": ["mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0005_m000"]},
+        {"id": "V03-K4", "text": "Fourth IMO GHG Study와 IMO DCS는 서로 다른 데이터셋이므로 직접 비교는 지시적 성격으로 해석해야 한다.", "aliases": ["Fourth IMO GHG Study", "IMO DCS", "서로 다른 데이터셋", "지시적"], "chunk_ids": ["mepc_mepc_mepc_84_6_2_report_on_annual_carbon_intensity_and_efficiency_of_the_fleet_reporting_year_2024_secretariat_3b6842cb_p0003_m004"]}
+      ],
+      "hard_negative_chunk_ids": [
+        "mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0022_m004",
+        "mepc_mepc_mepc_84_7_14_report_of_the_twentieth_meeting_of_the_intersessional_working_group_on_reduction_of_ghg_em_secretariat_99627943_p0025_m001"
+      ],
+      "precision_questions": [
+        "MEPC 84/6/2가 보고한 2024년 탄소집약도 지표 종류는 무엇이야?",
+        "AER·cgDIST·EEOI는 이 문서에서 각각 어떤 비교에 쓰였어?",
+        "2024년 공급기반 평균 탄소집약도는 2019년 대비 얼마나 변했어?",
+        "Fourth IMO GHG Study와 IMO DCS 수치를 직접 비교할 때 주의점은 뭐야?",
+        "MEPC 84/6/2의 데이터 범위·사용 지표·2024년 결과·데이터셋 비교 주의를 함께 정리해줘."
+      ],
+      "unanswerable_targets": ["개별 선박명과 CII 등급 전체 목록", "선사별 과징금 액수", "항차별 연료소비 원시데이터", "2025년 확정 선대 탄소집약도", "모든 선박의 CII A등급 의무화 날짜"],
+      "false_premises": ["문서의 보고연도는 2022년이다", "2024년에 전 세계 모든 선박이 CII A등급을 받았다", "CII 제도는 폐지됐다", "AER와 cgDIST는 개별 선박 과징금을 계산하는 지표다"],
+      "forbidden_claims": ["모든 선박 A등급", "CII 폐지", "2022년 보고", "개별 선박 과징금"]
+    },
+    "V04": {
+      "category": "env_regulation",
+      "source": "MSC",
+      "doc_id": "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f",
+      "doc_label": "MSC 111-WP.1 및 MSC 111/12 — 대체연료·GHG 안전 결과",
+      "acceptable_doc_ids": [
+        "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f",
+        "msc_msc_msc_111_12_report_of_the_twelfth_session_of_the_sub_committee_secretariat_2d23873d"
+      ],
+      "default_hop_count": 2,
+      "secondary_scenario": "V07",
+      "keypoints": [
+        {"id": "V04-K1", "text": "MSC 111은 수소 연료 사용 선박의 안전을 위한 잠정 지침을 편집 수정 후 승인했다.", "aliases": ["수소 연료", "잠정 지침", "승인"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0064_m003"]},
+        {"id": "V04-K2", "text": "액화수소 산적운송에 관한 개정 잠정 권고의 통합본 결의가 채택됐다.", "aliases": ["액화수소", "산적운송", "개정 잠정 권고", "채택"], "chunk_ids": ["msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0099_m002"]},
+        {"id": "V04-K3", "text": "신기술·대체연료 사용 선박의 GHG 감축을 지원하는 안전 규제 프레임워크 개발 작업계획 초안이 승인됐다.", "aliases": ["안전 규제 프레임워크", "작업계획", "승인", "대체연료"], "chunk_ids": ["msc_msc_msc_111_12_report_of_the_twelfth_session_of_the_sub_committee_secretariat_2d23873d_p0003_m000__e002"]},
+        {"id": "V04-K4", "text": "풍력보조추진·리튬이온 배터리 등 일부 항목은 최종 강제코드가 아니라 후속 제출·작업계획 단계로 남았다.", "aliases": ["풍력보조추진", "리튬이온", "후속 제출", "작업계획 단계"], "chunk_ids": ["msc_msc_msc_111_12_report_of_the_twelfth_session_of_the_sub_committee_secretariat_2d23873d_p0003_m000__e002"]}
+      ],
+      "hard_negative_chunk_ids": ["lr_notice_no_1_2025_p0013_m009", "lr_notice_no_1_2025_p0013_m010_s01"],
+      "precision_questions": [
+        "MSC 111-WP.1에서 수소 연료 선박의 잠정 안전지침은 어떤 상태가 됐어?",
+        "액화수소 산적운송 개정 잠정 권고에 대해 MSC 111이 채택한 것은 무엇이야?",
+        "MSC 111/12에서 신기술·대체연료 안전 규제 프레임워크와 관련해 승인된 것은 정확히 뭐야?",
+        "MSC 111 대체연료 결과 중 승인·채택된 것과 후속 작업계획을 구분해줘.",
+        "MSC 111-WP.1과 MSC 111/12를 함께 보고 대체연료·GHG 안전 후속조치를 정리해줘."
+      ],
+      "unanswerable_targets": ["암모니아 추진선별 사고 건수", "메탄올 연료탱크의 최종 강제 설계치", "풍력보조추진 장비 제조사 승인목록", "리튬배터리 선박별 검사결과", "대체연료 코드의 확정 발효일"],
+      "false_premises": ["모든 대체연료 안전코드가 MSC 111에서 전면 강제 발효됐다", "풍력보조추진 최종 규칙이 채택됐다", "리튬이온 배터리 작업은 계획에서 삭제됐다", "이 결과는 MEPC 111의 환경규제 결론이다"],
+      "forbidden_claims": ["대체연료 안전코드 전면 발효", "풍력보조추진 최종 규칙 채택", "리튬배터리 작업 삭제", "MEPC 111 결과"]
+    },
+    "V05": {
+      "category": "autonomous",
+      "source": "MSC",
+      "doc_id": "msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f",
+      "acceptable_doc_ids": [
+        "msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f",
+        "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f"
+      ],
+      "doc_label": "MSC 111/5 — 회기간 MASS 작업반 보고",
+      "secondary_scenario": "V06",
+      "keypoints": [
+        {"id": "V05-K1", "text": "원격운항자 훈련은 비강제 MASS Code의 고수준 조항, 후속 지침, 적절한 문서의 최종 기준으로 이어지는 3단계 접근을 합의했다.", "aliases": ["3단계", "원격운항자", "훈련", "비강제 MASS Code"], "chunk_ids": ["msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f_p0008_m000"]},
+        {"id": "V05-K2", "text": "mandatory MASS Code 채택과 STCW 전면검토 완료는 모두 2030년 예상 일정으로 언급됐다.", "aliases": ["mandatory MASS Code", "STCW", "2030"], "chunk_ids": ["msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f_p0009_m000__e001"]},
+        {"id": "V05-K3", "text": "비강제 Code 사용기간에 현행 협약이 허용하지 않는 MASS 운항을 위한 대체·동등 방안을 검토할 필요가 제기됐다.", "aliases": ["비강제 Code", "대체 방안", "동등 방안", "현행 협약"], "chunk_ids": ["msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f_p0015_m000__e002"]},
+        {"id": "V05-K4", "text": "MSC 111 작업반은 비강제 Code·결의 최종화, 경험축적단계 프레임워크, 타 IMO 기구 후속과제, 로드맵 갱신을 수행하도록 제안됐다.", "aliases": ["경험축적단계", "로드맵", "최종화", "후속과제"], "chunk_ids": ["msc_msc_msc_111_5_report_of_the_intersessional_mass_working_group_secretariat_5efdef3f_p0025_m001"]}
+      ],
+      "hard_negative_chunk_ids": ["dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0105_m001", "dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0019_m001"],
+      "precision_questions": [
+        "MASS 원격운항자 훈련에 관해 합의된 3단계 접근은 무엇이야?",
+        "mandatory MASS Code와 STCW 전면검토의 예상 일정은 언제야?",
+        "비강제 MASS Code 기간에 현행 협약과 충돌할 때 어떤 접근이 제기됐어?",
+        "MSC 111 MASS 작업반에 제시된 다섯 가지 후속 임무를 정리해줘.",
+        "MSC 111/5 기준으로 확정 사항과 아직 개발·검토할 사항을 구분해줘."
+      ],
+      "unanswerable_targets": ["전 세계 ROC 면허번호 목록", "MASS 실증선별 보험료", "mandatory MASS Code의 확정 발효일", "원격운항자 개인별 자격증 번호", "자율운항선 제조사별 승인등급"],
+      "false_premises": ["MASS Code가 MSC 111에서 이미 강제 발효됐다", "MASS Code 개발이 폐지됐다", "mandatory Code 채택 목표는 2025년이다", "원격운항자는 STCW 논의 대상에서 완전히 제외하기로 확정됐다"],
+      "forbidden_claims": ["MASS Code 이미 강제 발효", "MASS Code 폐지", "mandatory 채택 2025년", "원격운항자 완전 제외"]
+    },
+    "V06": {
+      "category": "rule_lookup",
+      "source": "DNV",
+      "doc_id": "dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67",
+      "doc_label": "DNV-CG-0264 — Autonomous and remotely operated vessels",
+      "secondary_scenario": "V09",
+      "keypoints": [
+        {"id": "V06-K1", "text": "DNV-CG-0264는 자율·원격운항 선박 평가의 기반으로 동등 안전, 위험기반 접근, 운항 초점, fallback 상태 등을 제시한다.", "aliases": ["DNV-CG-0264", "동등 안전", "위험기반", "fallback"], "chunk_ids": ["dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0019_m001"]},
+        {"id": "V06-K2", "text": "새로운 운항·기능·시스템에서 생기는 위험을 식별·통제하도록 위험평가를 사용해야 한다.", "aliases": ["위험평가", "novelty", "기능 재배분", "위험 통제"], "chunk_ids": ["dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0022_m003"]},
+        {"id": "V06-K3", "text": "Concept Qualification은 AROS notation 부여와 혁신 개념의 제3자 검증에 쓰이는 절차다.", "aliases": ["Concept Qualification", "CQ", "AROS", "제3자 검증"], "chunk_ids": ["dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0027_m003__e001"]},
+        {"id": "V06-K4", "text": "초기 위험평가는 잠재적 showstopper 식별, 개념 개선, 안전·설계 철학 수립을 목표로 한다.", "aliases": ["초기 위험평가", "PRA", "showstopper", "설계 철학"], "chunk_ids": ["dnv_dnv_class_2026_04_dnv_cg_0264_00e0cc67_p0034_m000_s01__e001"]}
+      ],
+      "hard_negative_chunk_ids": ["abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0023_m000", "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0026_m000"],
+      "precision_questions": [
+        "DNV-CG-0264가 제시하는 자율·원격운항 평가의 주요 원칙은 무엇이야?",
+        "DNV-CG-0264에서 위험평가가 다뤄야 하는 새 위험의 출처는 뭐야?",
+        "Concept Qualification은 어떤 두 목적에 쓰여?",
+        "DNV-CG-0264의 초기 위험평가(PRA) 목적을 정리해줘.",
+        "DNV-CG-0264의 문서명·적용대상·평가 절차를 근거별로 알려줘."
+      ],
+      "unanswerable_targets": ["IMO 의무발효일", "KR 선급의 동일 문서번호", "개별 자율운항선 인증서 번호", "ROC 운영사 승인목록", "DNV가 확정한 MASS 국제협약 채택일"],
+      "false_premises": ["DNV-CG-0264는 KR 규칙이다", "DNV-CG-0264는 IMO 강제협약이다", "이 지침은 위험평가를 요구하지 않는다", "Concept Qualification은 AROS notation과 무관하다"],
+      "forbidden_claims": ["KR 규칙", "IMO 강제협약", "위험평가 불필요", "AROS와 무관"]
+    },
+    "V07": {
+      "category": "rule_lookup",
+      "source": "LR",
+      "doc_id": "lr_notice_no_1_2025",
+      "doc_label": "LR Notice No.1 (2025) — 저인화점 연료 엔진 Section 15",
+      "secondary_scenario": "V04",
+      "keypoints": [
+        {"id": "V07-K1", "text": "관련 문서는 LR Notice No.1, Rules and Regulations for the Classification of Ships, July 2025이며 핵심 위치는 Section 15다.", "aliases": ["LR Notice No.1", "July 2025", "Section 15"], "chunk_ids": ["lr_notice_no_1_2025_p0013_m009"]},
+        {"id": "V07-K2", "text": "Section 15는 저압·고압 가스 또는 기타 저인화점 연료를 공급받는 엔진을 다룬다.", "aliases": ["저압", "고압 가스", "저인화점 연료", "엔진"], "chunk_ids": ["lr_notice_no_1_2025_p0013_m009"]},
+        {"id": "V07-K3", "text": "가스·저인화점 연료 엔진은 크랭크케이스 안전에 대한 상세 평가가 필요하며, 농도를 LEL 아래로 유지하거나 폭발위험 저감조치를 정당화해야 한다.", "aliases": ["크랭크케이스", "LEL", "폭발위험", "상세 평가"], "chunk_ids": ["lr_notice_no_1_2025_p0013_m010_s01"]},
+        {"id": "V07-K4", "text": "저인화점 이중연료 트렁크 피스톤 엔진의 크랭크케이스 환기는 조건부 예외와 안전조치를 따른다.", "aliases": ["이중연료", "트렁크 피스톤", "환기", "조건부"], "chunk_ids": ["lr_notice_no_1_2025_p0012_m006"]}
+      ],
+      "hard_negative_chunk_ids": ["msc_msc_msc_111_12_report_of_the_twelfth_session_of_the_sub_committee_secretariat_2d23873d_p0003_m000__e002", "msc_msc_msc_111_wp_1_draft_report_of_the_maritime_safety_committee_on_its_111th_session_secretariat_41937f9f_p0064_m003"],
+      "precision_questions": [
+        "LR Notice No.1에서 저인화점 연료 엔진을 다루는 정확한 Section은 어디야?",
+        "LR Section 15가 적용되는 엔진·연료 범위를 설명해줘.",
+        "가스·저인화점 연료 엔진의 크랭크케이스 안전평가가 입증해야 할 두 선택지는 뭐야?",
+        "저인화점 이중연료 트렁크 피스톤 엔진의 크랭크케이스 환기 예외를 설명해줘.",
+        "LR Notice No.1의 문서명·Section·핵심 저인화점 연료 요건을 근거와 함께 알려줘."
+      ],
+      "unanswerable_targets": ["ABS SMART notation 목록", "IMO 대체연료 코드 확정 발효일", "엔진 제조사별 형식승인 번호", "선박별 크랭크케이스 사고 통계", "DNV-CG-0264의 자율운항 등급"],
+      "false_premises": ["Section 15는 ABS 규정이다", "Notice No.1은 저인화점 연료를 다루지 않는다", "가스 엔진의 크랭크케이스 안전평가는 필요 없다", "이 조항은 IMO MSC 회의결과 문서다"],
+      "forbidden_claims": ["ABS 규정", "저인화점 연료 미포함", "안전평가 불필요", "IMO 회의결과 문서"]
+    },
+    "V08": {
+      "category": "rule_lookup",
+      "source": "ABS",
+      "doc_id": "abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e",
+      "doc_label": "ABS Guide for Smart Functions for Marine Vessels and Offshore Units v8",
+      "secondary_scenario": "V09",
+      "keypoints": [
+        {"id": "V08-K1", "text": "이 Guide는 모든 해양선박과 해양구조물에 적용되며 선택적 Smart Function class notation 범위에서 SHM과 MHM을 다룬다.", "aliases": ["모든 해양선박", "해양구조물", "SHM", "MHM"], "chunk_ids": ["abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e_p0017_m002"]},
+        {"id": "V08-K2", "text": "Smart Function은 개별 장비·기능시스템·선박 전체에 독립 또는 통합 방식으로 구현될 수 있다.", "aliases": ["개별 장비", "기능시스템", "선박 전체", "통합"], "chunk_ids": ["abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e_p0012_m002_s01"]},
+        {"id": "V08-K3", "text": "목적은 목표기반 구현 프레임워크, 위험정보 기반 평가요건, 선택적 notation, 서비스공급자·PDA 인정 체계를 제공하는 것이다.", "aliases": ["목표기반", "위험정보", "notation", "PDA"], "chunk_ids": ["abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e_p0011_m001"]},
+        {"id": "V08-K4", "text": "영구 설치된 Smart Function 시스템은 평가요건 충족 시 SMART 계열 선택 notation을 받을 수 있다.", "aliases": ["영구 설치", "SMART", "선택 notation", "평가요건"], "chunk_ids": ["abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e_p0018_m001"]}
+      ],
+      "hard_negative_chunk_ids": ["abs_abs_rules_guidancenotesonsmartfunctionimplementation_v1_b275249c_p0003_m001", "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0023_m000"],
+      "precision_questions": [
+        "ABS Guide for Smart Functions v8의 적용 대상과 포함 SF 범위는 무엇이야?",
+        "Smart Function은 선박의 어느 수준에 어떤 방식으로 구현될 수 있어?",
+        "ABS Smart Functions Guide가 제시하는 네 가지 목적을 정리해줘.",
+        "SMART 선택 notation을 받기 위한 시스템 설치·평가 조건은 무엇이야?",
+        "Guide for Smart Functions의 적용대상·구현 단위·평가 목적·SMART notation 조건을 함께 정리해줘."
+      ],
+      "unanswerable_targets": ["IMO MASS Code 의무발효일", "개별 선박 SMART notation 인증번호", "DNV AROS 승인목록", "ABS가 승인한 센서 제조사 가격표", "MEPC GFI 벌금 산식"],
+      "false_premises": ["Guide for Smart Functions는 ABS Autonomous Requirements와 같은 문서다", "적용 대상은 해양구조물을 제외한 상선뿐이다", "SMART notation은 의무 강제부호다", "이 Guide는 IMO MSC가 채택한 협약이다"],
+      "forbidden_claims": ["Autonomous Requirements와 동일 문서", "상선에만 적용", "SMART notation 의무", "IMO 협약"]
+    },
+    "V09": {
+      "category": "rule_lookup",
+      "source": "ABS",
+      "doc_id": "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb",
+      "doc_label": "ABS Requirements for Autonomous and Remote Control Functions v4",
+      "secondary_scenario": "V08",
+      "keypoints": [
+        {"id": "V09-K1", "text": "각 자율·원격제어 기능은 운항감독 수준과 고장 결과를 기준으로 저·중·고 위험범주 중 하나를 배정받는다.", "aliases": ["저위험", "중위험", "고위험", "운항감독", "고장 결과"], "chunk_ids": ["abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0023_m000"]},
+        {"id": "V09-K2", "text": "문서는 위험정보 기반 접근으로 ABS 검증·검증확인 활동의 규정요건을 정한다.", "aliases": ["위험정보 기반", "검증", "validation", "verification"], "chunk_ids": ["abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0039_m001"]},
+        {"id": "V09-K3", "text": "연결성·데이터·소프트웨어 의존성을 고려해 ABS Marine Vessel Rules의 관련 절을 foundational requirements로 둔다.", "aliases": ["연결성", "데이터", "소프트웨어", "foundational requirements"], "chunk_ids": ["abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0026_m000"]},
+        {"id": "V09-K4", "text": "상위 위험범주 기능은 하위 위험범주의 관련 요건도 모두 충족해야 한다.", "aliases": ["상위 위험범주", "하위 위험범주", "모두 충족"], "chunk_ids": ["abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb_p0051_m002"]}
+      ],
+      "hard_negative_chunk_ids": ["abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e_p0017_m002", "abs_abs_rules_guidancenotesonsmartfunctionimplementation_v1_b275249c_p0003_m001"],
+      "precision_questions": [
+        "ABS Autonomous and Remote Control Requirements에서 기능 위험범주는 어떻게 정해져?",
+        "이 Requirements의 위험정보 기반 접근이 검증활동에 어떻게 쓰여?",
+        "자율·원격제어 기능의 foundational requirements가 필요한 이유는 뭐야?",
+        "상위 위험범주 기능과 하위 위험범주 요건의 관계를 설명해줘.",
+        "ABS Autonomous Requirements v4의 위험범주 배정·검증 접근·기초 요건·상하위 범주 관계를 함께 정리해줘."
+      ],
+      "unanswerable_targets": ["개별 선박 인증서 번호", "IMO MASS Code 확정 발효일", "원격제어 장비 제조사별 가격", "DNV AROS notation 승인목록", "ABS 심사원 개인별 판정 기록"],
+      "false_premises": ["ABS Autonomous Requirements는 Smart Functions Guide와 같은 문서다", "기능 위험범주는 고장 결과와 무관하다", "상위 위험범주는 하위범주 요건을 충족할 필요가 없다", "이 Requirements는 IMO 협약이다"],
+      "forbidden_claims": ["Smart Functions Guide와 동일 문서", "고장 결과와 무관", "하위범주 요건 불필요", "IMO 협약"]
+    }
+  }
+}

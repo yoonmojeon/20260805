@@ -18,6 +18,24 @@ METADATA_LEAK_RE = re.compile(
     re.I,
 )
 FOREIGN_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+PREMISE_CHECK_RE = re.compile(
+    r"전제.{0,24}(?:맞|검증)|틀리면|사실인지|가정.{0,24}(?:맞|검증)",
+    re.I,
+)
+
+
+def robustness_instruction(question: str) -> str:
+    """Question-derived guardrail; contains no evaluation answers or IDs."""
+    if not PREMISE_CHECK_RE.search(question or ""):
+        return ""
+    return (
+        "- 이 질문은 전제 검증 질문이다. 첫 bullet 첫 문장에서 전제가 맞는지 "
+        "'맞습니다' 또는 '맞지 않습니다'로 명시하고 [N]을 붙인다.\n"
+        "- 전제가 틀리면 무시하지 말고, 어떤 부분이 틀렸는지와 근거에서 확인되는 "
+        "올바른 상태·범위·일정을 바로 이어서 쓴다.\n"
+        "- 근거가 전제의 참·거짓을 판정하기 부족하면 맞다고 추정하지 말고 "
+        "'검색 근거에서 확인되지 않음'이라고 명시한다.\n"
+    )
 
 
 def _chunk_text(chunk: Any, limit: int = 4200) -> str:
@@ -231,6 +249,7 @@ def build_prompts(
 - 광범위 요약 여부: {'예' if req.broad_summary else '아니오'}
 
 작성 지시:
+- 질문 유형별 추가 지시:\n{robustness_instruction(question) or '- 일반 근거 답변'}
 - 1절 첫 bullet부터 질문의 직접 답을 쓴다.
 - 질문이 요구한 각 항목을 빠뜨리지 않는다.
 - 서로 다른 근거의 내용을 임의로 결합해 하나의 의무나 결론으로 만들지 않는다.
@@ -296,7 +315,8 @@ def build_scaffold_synthesis_prompts(
         "independent source):\n"
         f"{scaffold}\n\n"
         "Writing rules:\n"
-        "- Put the direct answer to the question first, then only concrete "
+        + robustness_instruction(question)
+        + "- Put the direct answer to the question first, then only concrete "
         "operational actions supported by evidence.\n"
         "- For a broad meeting question, select the decision, status/timeline, "
         "and operational or reporting consequence that are actually evidenced.\n"

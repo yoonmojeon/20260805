@@ -79,6 +79,18 @@ DOCUMENT_ROUTE_STAGE2_FETCH = 72
 DOCUMENT_ROUTE_BOOSTS = (0.20, 0.13, 0.08, 0.04, 0.02, 0.01)
 SCOPED_SPARSE_MAX_ROWS = 6000
 
+ABS_RULE_DOC_IDS = {
+    "ABS-Smart-Functions-Guide": (
+        "abs_abs_rules_guideforsmartfunctionsformarinevesselsandoffshoreunits_v8_bbfd9d9e"
+    ),
+    "ABS-Smart-Implementation": (
+        "abs_abs_rules_guidancenotesonsmartfunctionimplementation_v1_b275249c"
+    ),
+    "ABS-Autonomous-Remote-Requirements": (
+        "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb"
+    ),
+}
+
 
 def _priority_rule_file_names(signals: QuerySignals, query: str = "") -> list[str]:
     """Return exact class-rule filenames worth querying alongside dense hits.
@@ -129,9 +141,13 @@ def _direct_priority_rule_doc_ids(query: str, signals: QuerySignals) -> list[str
         out.append("kr_1_2025")
     if "Notice No.1" in signals.rule_doc_hints:
         out.append("lr_notice_no_1_2025")
+    for hint, doc_id in ABS_RULE_DOC_IDS.items():
+        if hint in signals.rule_doc_hints:
+            out.append(doc_id)
     if (
         str(signals.class_society_hint or "").upper() == "ABS"
         and any(str(h).lower() == "autonomous" for h in signals.rule_doc_hints)
+        and not any(hint in signals.rule_doc_hints for hint in ABS_RULE_DOC_IDS)
     ):
         out.append(
             "abs_abs_rules_requirementsforautonomousandremotecontrolfunctions_v4_1d89b7bb"
@@ -894,6 +910,23 @@ def query_with_hybrid_ranking(
         where=base_where,
     )
     absorb(raw_vector)
+
+    # A priority registry used to affect ranking only when a document happened
+    # to survive the global vector top-N.  Topic-heavy sessions contain many
+    # near-duplicate submissions, so authoritative reports such as MSC 111/12
+    # could be absent and therefore impossible to boost.  Fetch a small number
+    # of best chunks inside each routed priority document before ranking.  This
+    # reuses the existing embeddings and adds no indexing step.
+    if doc_id is None:
+        for priority_doc_id in priority_ids[:8]:
+            priority_where = _merge_where(base_where, {"doc_id": priority_doc_id})
+            priority_raw = safe_chroma_query(
+                collection,
+                query_embeddings=[query_vector],
+                n_results=3,
+                where=priority_where,
+            )
+            absorb(priority_raw)
 
     hierarchy_enabled = _hierarchical_text_enabled()
     if hierarchy_enabled:

@@ -25,8 +25,41 @@ CLASS_RULE_SOURCES = frozenset({"DNV", "LR", "ABS", "KR"})
 
 RULE_DOC_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"DNV\s*[-–]?\s*CG\s*[-–]?\s*0264", re.I), "DNV-CG-0264"),
+    (
+        re.compile(
+            r"Guide\s+for\s+Smart\s+Functions|ABS.{0,40}Smart\s+Functions?.{0,20}Guide",
+            re.I,
+        ),
+        "ABS-Smart-Functions-Guide",
+    ),
+    (
+        re.compile(r"Guidance\s+Notes?\s+on\s+Smart\s+Function\s+Implementation", re.I),
+        "ABS-Smart-Implementation",
+    ),
+    (
+        re.compile(
+            r"Requirements?\s+for\s+Autonomous\s+and\s+Remote\s+Control\s+Functions|"
+            r"ABS.{0,80}(?:autonomous|remote\s+control|자율.{0,4}원격).{0,40}(?:Requirements?|요건|규정)",
+            re.I,
+        ),
+        "ABS-Autonomous-Remote-Requirements",
+    ),
     (re.compile(r"Smart\s*Vessel|자율운항|autonomous", re.I), "autonomous"),
     (re.compile(r"Notice\s*No\.?\s*1|LR.*Rule", re.I), "Notice No.1"),
+)
+
+SOURCE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(MEPC|MSC|DNV|LR|ABS|KR)(?![A-Za-z0-9])",
+    re.I,
+)
+EXCLUSION_AFTER_RE = re.compile(
+    r"^\s*(?:문서|자료|가이드|guide|documents?)?\s*(?:는|은|를|을|에서|의)?\s*"
+    r"(?:제외|빼고|말고|아닌|아니라|제외하고|제외한|exclude(?:d|ing)?|without|except)",
+    re.I,
+)
+EXCLUSION_BEFORE_RE = re.compile(
+    r"(?:exclude(?:d|ing)?|without|except)\s*$",
+    re.I,
 )
 
 TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -79,13 +112,68 @@ class QuerySignals:
     rule_doc_hints: list[str] = field(default_factory=list)
     expanded_terms: list[str] = field(default_factory=list)
     class_society_hint: str = ""
+    named_sources: list[str] = field(default_factory=list)
+    excluded_sources: list[str] = field(default_factory=list)
+    constrained_sources: list[str] = field(default_factory=list)
+
+
+def detect_excluded_sources(question: str) -> list[str]:
+    """Return explicitly negated source names in occurrence order.
+
+    This prevents queries such as ``MEPC는 제외하고 MASS만`` from being
+    hard-filtered to the very source the user asked us to omit.
+    """
+    q = question or ""
+    out: list[str] = []
+    for match in SOURCE_TOKEN_RE.finditer(q):
+        source = match.group(1).upper()
+        before = q[max(0, match.start() - 24) : match.start()]
+        after = q[match.end() : match.end() + 32]
+        if EXCLUSION_AFTER_RE.search(after) or EXCLUSION_BEFORE_RE.search(before):
+            if source not in out:
+                out.append(source)
+    return out
+
+
+def detect_only_sources(question: str) -> list[str]:
+    """Return source names constrained by Korean ``만`` or English ``only``."""
+    q = question or ""
+    out: list[str] = []
+    matches = list(SOURCE_TOKEN_RE.finditer(q))
+    for match in matches:
+        source = match.group(1).upper()
+        before = q[max(0, match.start() - 36) : match.start()]
+        after = q[match.end() : match.end() + 44]
+        only_after = re.search(
+            r"^(?:.{0,32}?)(?:만(?:\s|으로|에서|보고|근거|사용|대상|가지고)|\bonly\b)",
+            after,
+            re.I,
+        )
+        only_before = re.search(r"\bonly\s*$", before, re.I)
+        if only_after or only_before:
+            if source not in out:
+                out.append(source)
+    return out
+
+
+def detect_named_sources(question: str) -> list[str]:
+    """Return active source names, respecting explicit only/exclude language."""
+    q = question or ""
+    excluded = set(detect_excluded_sources(q))
+    only = [source for source in detect_only_sources(q) if source not in excluded]
+    if only:
+        return only
+    out: list[str] = []
+    for match in SOURCE_TOKEN_RE.finditer(q):
+        source = match.group(1).upper()
+        if source not in excluded and source not in out:
+            out.append(source)
+    return out
 
 
 def detect_class_society_hint(question: str) -> str:
     """When the user names one class society (e.g. 'DNV에서'), prefer that source in rule lookup."""
-    q = question or ""
-    hits = [soc for pat, soc in CLASS_SOCIETY_PATTERNS if pat.search(q)]
-    unique = list(dict.fromkeys(hits))
+    unique = [source for source in detect_named_sources(question) if source in CLASS_RULE_SOURCES]
     if len(unique) == 1:
         return unique[0]
     return ""
@@ -93,11 +181,9 @@ def detect_class_society_hint(question: str) -> str:
 
 def detect_meeting_source_hint(question: str) -> str:
     """Explicit IMO meeting acronym in the question → Chroma ``source`` filter."""
-    upper = (question or "").upper()
-    if re.search(r"\bMEPC\b", upper):
-        return "MEPC"
-    if re.search(r"\bMSC\b", upper):
-        return "MSC"
+    meetings = [source for source in detect_named_sources(question) if source in {"MEPC", "MSC"}]
+    if len(meetings) == 1:
+        return meetings[0]
     return ""
 
 
@@ -140,23 +226,35 @@ def analyze_query(query: str) -> QuerySignals:
     q = query.strip()
     lower = q.lower()
     signals = QuerySignals()
+    signals.named_sources = detect_named_sources(q)
+    signals.excluded_sources = detect_excluded_sources(q)
+    signals.constrained_sources = detect_only_sources(q)
 
     for m in IMO_SESSION_RE.finditer(q):
         body = m.group(1)
         num = m.group(2) or m.group(3)
         if body and num:
-            signals.session_codes.append((body.upper(), int(num)))
+            if body.upper() not in signals.excluded_sources:
+                signals.session_codes.append((body.upper(), int(num)))
         elif num and ("회의" in q or "차" in m.group(0)):
             if "mepc" in lower:
                 signals.session_codes.append(("MEPC", int(num)))
             elif "msc" in lower:
                 signals.session_codes.append(("MSC", int(num)))
 
-    if "mepc" in lower and not any(s[0] == "MEPC" for s in signals.session_codes):
+    if (
+        "mepc" in lower
+        and "MEPC" not in signals.excluded_sources
+        and not any(s[0] == "MEPC" for s in signals.session_codes)
+    ):
         m = re.search(r"mepc\s*(\d{1,3})", lower)
         if m:
             signals.session_codes.append(("MEPC", int(m.group(1))))
-    if "msc" in lower and not any(s[0] == "MSC" for s in signals.session_codes):
+    if (
+        "msc" in lower
+        and "MSC" not in signals.excluded_sources
+        and not any(s[0] == "MSC" for s in signals.session_codes)
+    ):
         m = re.search(r"msc\s*(\d{1,3})", lower)
         if m:
             signals.session_codes.append(("MSC", int(m.group(1))))
@@ -165,7 +263,11 @@ def analyze_query(query: str) -> QuerySignals:
     # to the newest session represented by this index version before retrieval.
     if LATEST_SESSION_RE.search(q):
         for body, number in LATEST_CORPUS_SESSION.items():
-            if body.lower() in lower and not any(s[0] == body for s in signals.session_codes):
+            if (
+                body.lower() in lower
+                and body not in signals.excluded_sources
+                and not any(s[0] == body for s in signals.session_codes)
+            ):
                 signals.session_codes.append((body, number))
 
     signals.wants_report = any(
@@ -213,6 +315,14 @@ def analyze_query(query: str) -> QuerySignals:
 
     if any(k in lower for k in ("환경규제", "환경 규제", "environmental regulation")):
         signals.topics.update({"ghg", "marpol"})
+
+    # A named meeting body plus a concrete topic is normally asking about the
+    # newest meeting represented by this versioned corpus, even when the user
+    # omits the session number (for example, "MSC MASS Code 일정").
+    if not signals.session_codes and (signals.topics or signals.wants_report):
+        for source in signals.named_sources:
+            if source in LATEST_CORPUS_SESSION:
+                signals.session_codes.append((source, LATEST_CORPUS_SESSION[source]))
 
     for pattern, hint in RULE_DOC_PATTERNS:
         if pattern.search(q):
@@ -289,6 +399,20 @@ def _build_expanded_terms(signals: QuerySignals, query: str) -> list[str]:
         terms.extend(["DNV-CG-0264", "DNV-RP-C205", "DNV-RP-C206", "Smart Vessel", "autonomous"])
     if "Notice No.1" in signals.rule_doc_hints:
         terms.extend(["Notice No.1", "low-flashpoint", "Section 15"])
+    rule_term_expansions = (
+        (r"위험\s*범주|risk\s*categor", ("risk category", "operations supervision", "consequences of failure")),
+        (r"위험\s*정보|risk[- ]?informed|검증\s*활동", ("risk-informed", "verification and validation")),
+        (r"foundational|기반\s*요건", ("foundational requirements", "connectivity data software")),
+        (r"상위.{0,12}하위", ("higher risk category", "lower risk category")),
+        (r"적용\s*(?:대상|범위)", ("scope", "applicable to")),
+        (r"concept\s*qualification|개념\s*(?:검증|적격)", ("concept qualification", "AROS notation")),
+        (r"초기\s*위험|preliminary\s*risk|\bPRA\b", ("preliminary risk assessment", "showstoppers")),
+        (r"크랭크케이스|crankcase|\bLEL\b", ("crankcase", "below the LEL", "crankcase explosion")),
+        (r"저인화점|low[- ]?flashpoint", ("low-flashpoint fuel", "Section 15")),
+    )
+    for pattern, expansions in rule_term_expansions:
+        if re.search(pattern, query, re.I):
+            terms.extend(expansions)
     pairs = {
         "환경규제": "environmental regulation MARPOL GHG emissions",
         "대체연료": "alternative fuel low-flashpoint",

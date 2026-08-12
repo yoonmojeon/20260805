@@ -8,6 +8,7 @@ MaritimeOpsRAG — 통합 Gradio UI
 from __future__ import annotations
 
 import html
+import os
 import sys
 from pathlib import Path
 
@@ -580,17 +581,18 @@ with gr.Blocks(title="MaritimeOpsRAG") as demo:
 
 
 if __name__ == "__main__":
+    server_port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
     print("=" * 56)
     print("  MaritimeOpsRAG")
     print(f"  {_status_line().replace('&nbsp;', ' ')}")
     print("=" * 56)
     if rag_index_ready():
         print("  문서 인덱스 준비됨. 첫 RAG 질문 때 모델을 로드합니다.")
-    print("  브라우저: http://127.0.0.1:7860  (0.0.0.0 은 접속 주소가 아님)")
+    print(f"  브라우저: http://127.0.0.1:{server_port}  (0.0.0.0 은 접속 주소가 아님)")
     print("=" * 56)
     demo.launch(
         server_name="0.0.0.0",
-        server_port=7860,
+        server_port=server_port,
         share=False,
         theme=gr.themes.Base(primary_hue="red", neutral_hue="gray"),
         css=CUSTOM_CSS,

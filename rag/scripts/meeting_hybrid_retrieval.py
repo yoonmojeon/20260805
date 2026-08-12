@@ -56,7 +56,8 @@ def _single_hybrid_search(
     from hybrid_retrieval import FusedHit
 
     signals = analyze_query(query)
-    priority_set = set(priority_doc_ids_for_signals(signals))
+    priority_ids = priority_doc_ids_for_signals(signals)
+    priority_set = set(priority_ids)
     warning_flags: list[str] = []
 
     dense_ids, dense_dist, dense_meta, dense_doc, w = query_dense_pool(
@@ -69,6 +70,29 @@ def _single_hybrid_search(
         timing=timing,
     )
     warning_flags.extend(w)
+    # Priority documents must enter the candidate pool before their registry
+    # boost can have any effect.  Global dense/BM25 top-N alone often drops an
+    # authoritative session/subcommittee report behind many similarly titled
+    # submissions.  Search a few chunks inside each routed document and merge
+    # them as alternate positives; this uses the existing embedding index.
+    if doc_id is None:
+        for priority_doc_id in priority_ids[:8]:
+            p_ids, p_dist, p_meta, p_doc, p_warnings = query_dense_pool(
+                collection,
+                query,
+                query_vector,
+                fetch_k=3,
+                source=society,
+                doc_id=priority_doc_id,
+                timing=timing,
+            )
+            warning_flags.extend(p_warnings)
+            for cid in p_ids:
+                if cid not in dense_dist:
+                    dense_ids.append(cid)
+                    dense_dist[cid] = p_dist[cid]
+                    dense_meta[cid] = p_meta[cid]
+                    dense_doc[cid] = p_doc[cid]
 
     bm25_hits = []
     bm25_query = query

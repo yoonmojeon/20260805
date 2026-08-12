@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import urllib.error
@@ -262,13 +263,16 @@ def retrieve_for_question(
 ) -> list[RetrievedChunk]:
     question = str(row["question"])
     sources = list(row.get("retrieval_sources") or [])
-    source_filter = sources[0] if len(sources) == 1 else None
+    # For multi-source questions the first pass searches the first source and
+    # the merge below allocates slots to every remaining source.  This avoids a
+    # global top-k in which one repetitive document family can occupy all slots.
+    source_filter = sources[0] if sources else None
     # Meeting acronyms always win over a society default left on the row
     # (table_qa used to pin retrieval_sources=["KR"] and skip this branch).
     from retrieval_query_analysis import detect_meeting_source_hint
 
     meeting_source = detect_meeting_source_hint(question)
-    if meeting_source:
+    if meeting_source and len(sources) <= 1:
         source_filter = meeting_source
         row["class_society_hint"] = meeting_source
         row["retrieval_sources"] = [meeting_source]
@@ -370,7 +374,7 @@ def retrieve_for_question(
 
         # Meeting QA: prefer hybrid when enabled; otherwise dense + expanded query
         # with meeting outcome boosts (avoids 10–15s BM25 scans on Accurate).
-        if uses_structured_meeting_answer(row, legacy_category=legacy_cat):
+        if uses_structured_meeting_answer(row, legacy_category=legacy_cat) and len(sources) <= 1:
             from pathlib import Path as _Path
 
             from rag_inprocess import DEFAULT_INDEX_DIR, DEFAULT_UNIFIED
@@ -470,6 +474,48 @@ def retrieve_for_question(
                         previous = ranked_by_id.get(cid)
                         if previous is None or score < previous[0]:
                             ranked_by_id[cid] = candidate
+                if not filter_doc_id:
+                    from imo_doc_registry import priority_doc_ids_for_signals
+
+                    for priority_doc_id in priority_doc_ids_for_signals(signals)[:8]:
+                        priority_filters: list[dict[str, str]] = [
+                            {"doc_id": priority_doc_id}
+                        ]
+                        if source_filter:
+                            priority_filters.insert(0, {"source": source_filter})
+                        priority_where: dict[str, Any] = (
+                            priority_filters[0]
+                            if len(priority_filters) == 1
+                            else {"$and": priority_filters}
+                        )
+                        priority_raw = safe_chroma_query(
+                            collection,
+                            query_embeddings=[vector],
+                            n_results=3,
+                            where=priority_where,
+                        )
+                        priority_ids = list(priority_raw.get("ids", [[]])[0])
+                        if priority_ids:
+                            query_candidate_ids.append(priority_ids)
+                        for cid, dist, meta, doc in zip(
+                            priority_ids,
+                            priority_raw.get("distances", [[]])[0],
+                            priority_raw.get("metadatas", [[]])[0],
+                            priority_raw.get("documents", [[]])[0],
+                        ):
+                            boost, penalty = meeting_outcome_metadata_adjustment(
+                                meta=meta or {},
+                                document=doc or "",
+                                signals=signals,
+                                question=question,
+                            )
+                            # Registry candidates are authoritative alternate
+                            # positives, so retain a modest routing advantage.
+                            score = float(dist) - boost + penalty - 0.45
+                            candidate = (score, meta or {}, doc or "", cid)
+                            previous = ranked_by_id.get(cid)
+                            if previous is None or score < previous[0]:
+                                ranked_by_id[cid] = candidate
                 # Preserve a few candidates from every sub-query before the
                 # global score order.  Otherwise the official report's most
                 # repetitive topic can occupy every slot and suppress MASS,
@@ -619,33 +665,67 @@ def retrieve_for_question(
     if len(sources) > 1:
         if timing is not None and hasattr(timing, "mark"):
             timing.mark("t_metadata_filter_start")
-        raw_all = query_with_hybrid_ranking(
-            collection,
-            question,
-            vector,
-            top_k=n_fetch * 2,
-            fetch_k=max(n_fetch * 15, 100),
-            timing=timing,
-        )
-        if raw_all.get("document_route"):
-            row["_text_document_route"] = raw_all["document_route"]
-        ids = raw_all["ids"][0]
-        metas = raw_all["metadatas"][0]
-        dists = raw_all["distances"][0]
-        docs = raw_all["documents"][0]
-        allowed = {s.upper() for s in sources}
-        filtered = [
-            (i, d, m, doc)
-            for i, d, m, doc in zip(ids, dists, metas, docs)
-            if str((m or {}).get("source", "")).upper() in allowed
-        ][:n_fetch]
-        if filtered:
+        per_source: list[tuple[str, dict[str, Any]]] = [(str(sources[0]).upper(), raw)]
+        route_logs: dict[str, Any] = {}
+        if raw.get("document_route"):
+            route_logs[str(sources[0]).upper()] = raw["document_route"]
+        for source in sources[1:]:
+            source_name = str(source).upper()
+            source_raw = query_with_hybrid_ranking(
+                collection,
+                question,
+                vector,
+                top_k=n_fetch,
+                fetch_k=max(n_fetch * 10, 80),
+                source=source_name,
+                doc_id=filter_doc_id,
+                timing=timing,
+            )
+            per_source.append((source_name, source_raw))
+            if source_raw.get("document_route"):
+                route_logs[source_name] = source_raw["document_route"]
+
+        # Round-robin is deliberate: integration questions need evidence from
+        # every named source before global similarity is allowed to dominate.
+        merged: list[tuple[str, float, dict, str]] = []
+        seen_ids: set[str] = set()
+        max_rows = max((len(item[1].get("ids", [[]])[0]) for item in per_source), default=0)
+        for rank_index in range(max_rows):
+            for source_name, source_raw in per_source:
+                ids = source_raw.get("ids", [[]])[0]
+                if rank_index >= len(ids):
+                    continue
+                chunk_id = ids[rank_index]
+                if chunk_id in seen_ids:
+                    continue
+                meta = source_raw.get("metadatas", [[]])[0][rank_index] or {}
+                if str(meta.get("source") or "").upper() != source_name:
+                    continue
+                seen_ids.add(chunk_id)
+                merged.append(
+                    (
+                        chunk_id,
+                        source_raw.get("distances", [[]])[0][rank_index],
+                        meta,
+                        source_raw.get("documents", [[]])[0][rank_index],
+                    )
+                )
+                if len(merged) >= n_fetch:
+                    break
+            if len(merged) >= n_fetch:
+                break
+        if merged:
             raw = {
-                "ids": [[x[0] for x in filtered]],
-                "distances": [[x[1] for x in filtered]],
-                "metadatas": [[x[2] for x in filtered]],
-                "documents": [[x[3] for x in filtered]],
+                "ids": [[item[0] for item in merged]],
+                "distances": [[item[1] for item in merged]],
+                "metadatas": [[item[2] for item in merged]],
+                "documents": [[item[3] for item in merged]],
             }
+        row["_multi_source_retrieval"] = {
+            "sources": [str(source).upper() for source in sources],
+            "allocation": "round_robin",
+            "document_routes": route_logs,
+        }
         if timing is not None and hasattr(timing, "mark"):
             timing.mark("t_metadata_filter_end")
 
@@ -1370,7 +1450,7 @@ def _execute_retrieval_core(
         )
         llm_k = llm_context_target_k(row, max(profile.top_k, 12))
         retrieved = refine_chunks_for_llm(selected, pool, row=row, target_k=llm_k)
-        retrieved = select_latest_environment_context(question, pool, target_k=llm_k)
+        retrieved = select_latest_environment_context(question, retrieved, target_k=llm_k)
         if timing is not None and hasattr(timing, "mark"):
             timing.mark("t_context_build_end")
         config = RetrievalRunConfig(
@@ -1515,7 +1595,10 @@ def _execute_retrieval_core(
 
     llm_k = llm_context_target_k(row, config.top_k)
     retrieved = refine_chunks_for_llm(selected, pool, row=row, target_k=llm_k)
-    retrieved = select_latest_environment_context(question, pool, target_k=llm_k)
+    # Keep the slot/diversity-refined list for ordinary questions.  Passing the
+    # raw pool here used to discard the entire final-selection stage whenever
+    # the query was not the special "latest MEPC environment" case.
+    retrieved = select_latest_environment_context(question, retrieved, target_k=llm_k)
     if category == "rule_lookup":
         from rule_lookup_context import enrich_rule_lookup_chunks
 
@@ -1849,6 +1932,219 @@ def _structured_meeting_answer_is_hollow(answer: str) -> bool:
     )
     meaningful = [b for b in bullets if not any(m in b for m in empty_markers)]
     return len(meaningful) == 0
+
+
+PREMISE_VERIFICATION_RE = re.compile(
+    r"(?:전제가\s*맞는지|전제(?:를|가)?\s*검증|사실인지\s*검증|틀리면\s*(?:문서\s*)?근거로\s*바로잡)",
+    re.I,
+)
+SPECIFIC_DOCUMENT_LOOKUP_RE = re.compile(
+    r"(?:찾아|확인).{0,80}(?:근거|인용)",
+    re.I,
+)
+
+
+def _generate_premise_verification_answer(
+    row: dict,
+    scaffold: str,
+    chunks: list[RetrievedChunk],
+    *,
+    model: str,
+    ollama_base: str,
+    num_ctx: int,
+    timing=None,
+    on_token=None,
+) -> str | None:
+    """Answer an explicit premise-check question before normal summarisation.
+
+    This path is selected solely from the user's wording.  It never reads eval
+    labels, gold answers, or forbidden-claim lists.  The deterministic meeting
+    scaffold is supplied as a factual aid, but every final claim must cite one
+    of the currently retrieved chunks.
+    """
+    question = str(row.get("question") or "")
+    ctx = list(chunks)[:10]
+    if not PREMISE_VERIFICATION_RE.search(question) or not ctx:
+        return None
+
+    context = build_context_block(ctx)
+    system = """당신은 해사 문서의 전제를 검증하는 근거 중심 분석가입니다.
+질문의 따옴표 안 전제를 검색 근거와 대조하세요.
+답변 첫 bullet은 반드시 다음 세 판정 중 하나로 시작하세요.
+- 전제는 맞습니다.
+- 전제는 맞지 않습니다.
+- 검색 근거만으로는 전제를 확인할 수 없습니다.
+틀린 전제라면 근거가 직접 보여 주는 사실만으로 바로잡으세요.
+각 사실 bullet 끝에는 [n] 인용을 붙이고, 근거에 없는 내용은 추정하지 마세요.
+답변은 한국어로 간결하되 판정 이유가 드러나는 1~3개 bullet로 작성하세요."""
+    user = f"""질문:
+{question}
+
+검증된 구조화 초안(보조 자료):
+{scaffold}
+
+검색 근거:
+{context}
+
+위 근거만으로 전제를 판정하고, 틀렸다면 정확한 사실로 교정하세요."""
+    drafted = call_ollama_chat_timed(
+        model,
+        system,
+        user,
+        ollama_base,
+        temperature=0.0,
+        num_predict=320,
+        num_ctx=min(num_ctx, 12288),
+        timing=timing,
+        on_token=on_token,
+    ).strip()
+    def valid_verdict(text: str) -> bool:
+        if not text:
+            return False
+        verdict = re.search(
+            r"전제.{0,40}(?:맞습니다|맞지\s*않|틀렸|틀립|옳지\s*않)|"
+            r"검색\s*근거만으로는\s*전제를\s*확인할\s*수\s*없습니다",
+            text,
+        )
+        citation_ids = [int(value) for value in re.findall(r"\[(\d+)\]", text)]
+        return bool(verdict and citation_ids) and all(
+            1 <= value <= len(ctx) for value in citation_ids
+        )
+
+    if not valid_verdict(drafted):
+        drafted = call_ollama_chat_timed(
+            model,
+            system,
+            f"""첫 답안이 판정 형식을 지키지 않았습니다. 아래 검색 근거를 다시 보고 답하세요.
+첫 줄은 반드시 정확히 세 문장 중 하나만 사용하세요:
+- 전제는 맞습니다.
+- 전제는 맞지 않습니다.
+- 검색 근거만으로는 전제를 확인할 수 없습니다.
+둘째 줄부터 교정 이유와 유효한 [n] 인용을 쓰세요.
+
+질문: {question}
+
+검색 근거:
+{context}""",
+            ollama_base,
+            temperature=0.0,
+            num_predict=220,
+            num_ctx=min(num_ctx, 12288),
+            timing=timing,
+            on_token=on_token,
+        ).strip()
+    if not valid_verdict(drafted):
+        return None
+    row["_answer_citation_chunks"] = ctx
+    row["_premise_verification"] = True
+    return drafted
+
+
+def _generate_specific_lookup_answer(
+    row: dict,
+    chunks: list[RetrievedChunk],
+    *,
+    model: str,
+    ollama_base: str,
+    num_ctx: int,
+    timing=None,
+    on_token=None,
+) -> str | None:
+    """Answer an exact datum lookup and explicitly reject absent evidence."""
+    question = str(row.get("question") or "")
+    ctx = list(chunks)[:10]
+    if not SPECIFIC_DOCUMENT_LOOKUP_RE.search(question) or not ctx:
+        return None
+    target_match = re.search(
+        r"(?:문서|가이드|규정|요건|requirements?|guide)?(?:에서|내에서)\s*"
+        r"(.+?)\s*(?:을|를)?\s*(?:찾아|확인)",
+        question,
+        re.I,
+    )
+    if target_match:
+        target = target_match.group(1)
+        stop = {
+            "문서", "근거", "함께", "관련", "내용", "정보", "선박", "해당",
+            "the", "for", "and", "with", "from",
+        }
+        target_terms = [
+            token.lower().rstrip("을를은는이가의")
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}|[가-힣]{2,}", target)
+            if token.lower() not in stop
+        ]
+        generic_lookup_terms = {
+            "code", "imo", "mass", "발효일", "일정", "날짜", "번호", "가격", "목록", "기록",
+        }
+        if any(term in generic_lookup_terms for term in target_terms):
+            target_terms = [
+                term for term in target_terms if term not in generic_lookup_terms
+            ]
+        evidence_blob = re.sub(
+            r"\s+", " ", " ".join(str(chunk.text or "") for chunk in ctx).lower()
+        )
+        matched_terms = [term for term in target_terms if term and term in evidence_blob]
+        minimum_hits = max(1, math.ceil(len(target_terms) * 0.6)) if target_terms else 1
+        if len(matched_terms) < minimum_hits:
+            row["_answer_citation_chunks"] = ctx
+            row["_specific_lookup_verification"] = True
+            row["_verified_structured_answer"] = True
+            return (
+                "- 검색 근거만으로는 요청한 정보를 확인할 수 없습니다.\n"
+                "- 지정 문서에서 직접 근거가 확인되지 않아 값을 추정하지 않습니다."
+            )
+    system = """당신은 지정 문서 안의 정확한 데이터를 찾는 해사 문서 분석가입니다.
+질문이 요구한 바로 그 데이터가 검색 근거에 직접 있을 때만 답하세요.
+직접 근거가 없으면 첫 bullet을 반드시 '- 검색 근거만으로는 요청한 정보를 확인할 수 없습니다.'로 쓰세요.
+유사한 데이터, 일반 제도 설명, 다른 문서의 수치를 대신 답하지 마세요.
+근거가 있으면 1~3개 bullet로 답하고 각 사실 끝에 [n] 인용을 붙이세요.
+근거가 없을 때는 가장 가까운 자료가 무엇을 다루는지만 인용해 설명할 수 있지만 값을 추정하면 안 됩니다."""
+    user = f"""질문:
+{question}
+
+검색 근거:
+{build_context_block(ctx)}
+
+요청 데이터의 존재 여부를 먼저 판단한 뒤 답하세요."""
+    drafted = call_ollama_chat_timed(
+        model,
+        system,
+        user,
+        ollama_base,
+        temperature=0.0,
+        num_predict=300,
+        num_ctx=min(num_ctx, 12288),
+        timing=timing,
+        on_token=on_token,
+    ).strip()
+    if not drafted:
+        return None
+    citation_ids = [int(value) for value in re.findall(r"\[(\d+)\]", drafted)]
+    rejected = bool(
+        "검색 근거만으로는 요청한 정보를 확인할 수 없습니다" in drafted
+        or re.search(
+            r"(?:직접(?:적인)?\s*)?(?:언급|근거|정보|자료).{0,30}(?:없|않|확인되지)|"
+            r"(?:찾|확인)할\s*수\s*없|"
+            r"(?:포함|수록|기재).{0,20}(?:되지|있지\s*않)",
+            drafted,
+        )
+    )
+    # This branch is a conservative rejection gate, not an alternate answer
+    # generator.  When the model finds positive evidence, let the normal
+    # structured path validate and present it instead.
+    if not rejected:
+        return None
+    if any(value < 1 or value > len(ctx) for value in citation_ids):
+        return None
+    # Once absence is established, do not pad the answer with unrelated
+    # clauses merely to fill the standard four-section template.
+    drafted = (
+        "- 검색 근거만으로는 요청한 정보를 확인할 수 없습니다.\n"
+        "- 지정 문서에서 직접 근거가 확인되지 않아 값을 추정하지 않습니다."
+    )
+    row["_answer_citation_chunks"] = ctx
+    row["_specific_lookup_verification"] = True
+    row["_verified_structured_answer"] = True
+    return drafted
 
 
 def _generate_question_grounded_answer(
@@ -2667,6 +2963,40 @@ def generate_answer(
         from question_classifier import classify_question_category
 
         cat = classify_question_category(str(row.get("question", "")), row)
+    from meeting_category_profile import uses_structured_meeting_answer
+
+    non_meeting_premise_check = (
+        PREMISE_VERIFICATION_RE.search(str(row.get("question") or ""))
+        and not uses_structured_meeting_answer(
+            row,
+            legacy_category=str(row.get("_eval_category") or row.get("category") or cat),
+        )
+    )
+    if non_meeting_premise_check:
+        premise_answer = _generate_premise_verification_answer(
+            row,
+            "",
+            list(retrieved),
+            model=model,
+            ollama_base=ollama_base,
+            num_ctx=num_ctx,
+            timing=timing,
+            on_token=on_token,
+        )
+        if premise_answer:
+            row["_verified_structured_answer"] = True
+            return premise_answer, "llm_premise_verification", model
+    specific_lookup = _generate_specific_lookup_answer(
+        row,
+        list(retrieved),
+        model=model,
+        ollama_base=ollama_base,
+        num_ctx=num_ctx,
+        timing=timing,
+        on_token=on_token,
+    )
+    if specific_lookup:
+        return specific_lookup, "llm_specific_lookup", model
     if cat == "rule_lookup":
         from rule_lookup_retrieval_log import save_rule_lookup_run_log
         from rule_lookup_structured_answer import (
@@ -2753,6 +3083,19 @@ def generate_answer(
             profile=mprofile,
             warning_flags=warnings,
         )
+        premise_answer = _generate_premise_verification_answer(
+            row,
+            answer,
+            ctx,
+            model=model,
+            ollama_base=ollama_base,
+            num_ctx=num_ctx,
+            timing=timing,
+            on_token=on_token,
+        )
+        if premise_answer:
+            row["_verified_structured_answer"] = True
+            return premise_answer, "llm_premise_verification", model
         answer = _add_meeting_practical_cards(answer, ctx, row)
         row["warning_flags"] = list(dict.fromkeys(warnings + ans_warnings))
         row["_meeting_answer_meta"] = meta

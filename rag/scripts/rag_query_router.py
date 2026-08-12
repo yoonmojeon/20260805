@@ -14,6 +14,7 @@ from question_classifier import CATEGORY_LABELS_KO, classify_question_category, 
 from retrieval_query_analysis import (
     analyze_query,
     detect_class_society_hint,
+    detect_named_sources,
     detect_meeting_source_hint,
     detect_table_source_hint,
 )
@@ -106,6 +107,9 @@ def resolve_pipeline_route(
             "selected_retrieval_label": "표 스키마→행·셀 조회",
             "selected_answer_mode": "table_qa",
             "detected_society": society,
+            "detected_sources": [society] if society else [],
+            "excluded_sources": list(signals.excluded_sources),
+            "constrained_sources": list(signals.constrained_sources),
             "detected_doc_type": "table",
             "hard_society_filter": False,
             "expanded_keywords": list(signals.expanded_terms or []),
@@ -120,17 +124,21 @@ def resolve_pipeline_route(
     mprof = build_meeting_retrieval_profile(question, work, legacy_category=cat)
     top = resolve_top_level_category(cat)
     signals = analyze_query(question)
-    society = str(
-        row.get("class_society_hint")
-        or detect_class_society_hint(question)
-        or detect_meeting_source_hint(question)
-    )
-    if not society and cat == "env_regulation" and signals.topics.intersection(
+    detected_sources = list(signals.named_sources or detect_named_sources(question))
+    if not detected_sources:
+        row_sources = [
+            str(source).upper()
+            for source in (row.get("retrieval_sources") or [])
+            if str(source).upper() not in set(signals.excluded_sources)
+        ]
+        detected_sources = list(dict.fromkeys(row_sources))
+    if not detected_sources and cat == "env_regulation" and signals.topics.intersection(
         {"cii", "ghg", "marpol", "alt_fuel"}
     ):
-        society = "MEPC"
-    elif not society and cat == "autonomous" and "mass" in signals.topics:
-        society = "MSC"
+        detected_sources = ["MEPC"]
+    elif not detected_sources and cat == "autonomous" and "mass" in signals.topics:
+        detected_sources = ["MSC"]
+    society = detected_sources[0] if len(detected_sources) == 1 else ""
     rule_guidance = is_rule_guidance_lookup(
         question,
         work,
@@ -154,6 +162,9 @@ def resolve_pipeline_route(
         "selected_retrieval_label": rprof.label_ko,
         "selected_answer_mode": answer_mode,
         "detected_society": society,
+        "detected_sources": detected_sources,
+        "excluded_sources": list(signals.excluded_sources),
+        "constrained_sources": list(signals.constrained_sources),
         "detected_doc_type": "rule_guidance" if rule_guidance else cat,
         "hard_society_filter": bool(society and rule_guidance),
         "expanded_keywords": list(signals.expanded_terms or []),
@@ -174,10 +185,20 @@ def enrich_row_for_routing(row: dict, *, latency_mode: str = "accurate") -> dict
         out["_table_qa"] = True
         out.pop("_rule_guidance_lookup", None)
         out.pop("_hard_society_filter", None)
+    if route["detected_sources"]:
+        out["retrieval_sources"] = list(route["detected_sources"])
+    elif route["excluded_sources"] and out.get("retrieval_sources"):
+        excluded = {str(source).upper() for source in route["excluded_sources"]}
+        out["retrieval_sources"] = [
+            source
+            for source in out["retrieval_sources"]
+            if str(source).upper() not in excluded
+        ]
     if route["detected_society"]:
         out["class_society_hint"] = route["detected_society"]
         # Replace (do not merge) so a prior KR default cannot block MEPC/MSC.
-        out["retrieval_sources"] = [route["detected_society"]]
+    elif len(route["detected_sources"]) > 1:
+        out.pop("class_society_hint", None)
     if route["rule_guidance_lookup"]:
         out["_hard_society_filter"] = route["hard_society_filter"]
         out["_rule_guidance_lookup"] = True

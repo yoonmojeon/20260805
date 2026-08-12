@@ -503,18 +503,59 @@ def run_answer_inprocess(
             or row.get("_rule_guidance_lookup")
         )
         if latency_mode == "accurate" and is_rule_guidance:
+            from rag_answer_lib import (
+                PREMISE_VERIFICATION_RE,
+                SPECIFIC_DOCUMENT_LOOKUP_RE,
+                _generate_premise_verification_answer,
+                _generate_specific_lookup_answer,
+            )
             from rule_guidance_accurate import generate_rule_guidance_accurate_answer
 
-            answer, provider, model, gen_meta = generate_rule_guidance_accurate_answer(
-                row,
-                generation_chunks,
-                pool=pool,
-                model=llm_model,
-                ollama_base=ollama_base,
-                timing=timing,
-                on_token=token_cb,
-                temperature=0.0,
-            )
+            question = str(row.get("question") or "")
+            special_answer = None
+            special_provider = None
+            if PREMISE_VERIFICATION_RE.search(question):
+                special_answer = _generate_premise_verification_answer(
+                    row,
+                    "",
+                    generation_chunks,
+                    model=llm_model,
+                    ollama_base=ollama_base,
+                    num_ctx=INTERACTIVE_ACCURATE_NUM_CTX,
+                    timing=timing,
+                    on_token=token_cb,
+                )
+                special_provider = "llm_premise_verification"
+            elif SPECIFIC_DOCUMENT_LOOKUP_RE.search(question):
+                special_answer = _generate_specific_lookup_answer(
+                    row,
+                    generation_chunks,
+                    model=llm_model,
+                    ollama_base=ollama_base,
+                    num_ctx=INTERACTIVE_ACCURATE_NUM_CTX,
+                    timing=timing,
+                    on_token=token_cb,
+                )
+                special_provider = "llm_specific_lookup"
+            if special_answer:
+                answer, provider, model = special_answer, special_provider, llm_model
+                gen_meta = {
+                    "answer_source": special_provider,
+                    "llm_used": True,
+                    "llm_context_chunks": len(generation_chunks),
+                    "llm_output_chars": len(answer),
+                }
+            else:
+                answer, provider, model, gen_meta = generate_rule_guidance_accurate_answer(
+                    row,
+                    generation_chunks,
+                    pool=pool,
+                    model=llm_model,
+                    ollama_base=ollama_base,
+                    timing=timing,
+                    on_token=token_cb,
+                    temperature=0.0,
+                )
             prompt_meta = {
                 "answer_mode": "rule_guidance_lookup",
                 "answer_generation": gen_meta,
@@ -644,6 +685,10 @@ def run_answer_inprocess(
     ) or answer_source == "direct_definition_extractive"
     grounded_dynamic_answer = bool(row.get("_grounded_dynamic_answer"))
     verified_structured_answer = bool(row.get("_verified_structured_answer"))
+    premise_verification_answer = bool(
+        row.get("_premise_verification") or row.get("_specific_lookup_verification")
+        or provider in {"llm_premise_verification", "llm_specific_lookup"}
+    )
     structured_meeting_answer = bool(
         provider == "structured_meeting" or row.get("_meeting_answer_meta")
     )
@@ -651,6 +696,7 @@ def run_answer_inprocess(
         not is_table_qa_row(row)
         and not direct_clause_answer
         and not grounded_dynamic_answer
+        and not premise_verification_answer
         and not verified_structured_answer
         and not structured_meeting_answer
     ):
@@ -688,6 +734,11 @@ def run_answer_inprocess(
         )
         row.setdefault("warning_flags", []).append(
             "semantic_refine_bypassed_grounded_dynamic"
+        )
+    elif premise_verification_answer:
+        row["_answer_scope_status"] = "premise_verification"
+        row.setdefault("warning_flags", []).append(
+            "semantic_refine_bypassed_premise_verification"
         )
     elif verified_structured_answer:
         row["_answer_scope_status"] = "verified_structured"
@@ -780,6 +831,47 @@ def run_answer_inprocess(
                 evidence_table=build_cited_evidence_table(answer, citation_chunks),
                 warnings=list(dict.fromkeys(contract.warnings + ["direct_clause_contract_preserved"])),
                 cited_ids=direct_ids,
+                valid=True,
+            )
+    elif premise_verification_answer and pre_contract_answer:
+        # The premise verifier already enforces a fixed verdict vocabulary and
+        # rejects missing/out-of-range citations.  The generic lexical filter
+        # can otherwise remove the short verdict sentence because words such
+        # as "전제" do not occur verbatim in the English source chunk.
+        from answer_contract import AnswerContractResult, build_cited_evidence_table
+
+        premise_ids: list[int] = []
+        for marker in re.findall(r"\[(\d+)\]", pre_contract_answer):
+            value = int(marker)
+            if 1 <= value <= len(citation_chunks) and value not in premise_ids:
+                premise_ids.append(value)
+        if premise_ids or provider in {"llm_premise_verification", "llm_specific_lookup"}:
+            answer = pre_contract_answer
+            contract = AnswerContractResult(
+                answer=answer,
+                evidence_table=build_cited_evidence_table(answer, citation_chunks),
+                warnings=list(
+                    dict.fromkeys(contract.warnings + ["premise_verification_contract_preserved"])
+                ),
+                cited_ids=premise_ids,
+                valid=True,
+            )
+        elif (
+            row.get("_specific_lookup_verification")
+            and "검색 근거만으로는 요청한 정보를 확인할 수 없습니다"
+            in pre_contract_answer
+        ):
+            # A negative lookup may legitimately have no positive citation:
+            # the absence statement itself must not be removed by a contract
+            # that is designed to validate positive factual claims.
+            answer = pre_contract_answer
+            contract = AnswerContractResult(
+                answer=answer,
+                evidence_table=[],
+                warnings=list(
+                    dict.fromkeys(contract.warnings + ["specific_lookup_rejection_preserved"])
+                ),
+                cited_ids=[],
                 valid=True,
             )
     elif (
