@@ -31,3 +31,31 @@ def test_handle_question_hybrid_route_only():
 
     d = route_question("올해 배출량이랑 환경규제 동시에 설명해줘", use_llm_fallback=False)
     assert d.route == "hybrid"
+
+
+def test_hybrid_preserves_both_answers_without_second_model_pass(monkeypatch):
+    import services.hybrid_service as hybrid
+
+    monkeypatch.delenv("MARITIME_HYBRID_SYNTHESIS", raising=False)
+    monkeypatch.setattr(
+        hybrid,
+        "run_ops_query",
+        lambda *_args, **_kwargs: {"answer": "속력 14.0kn, FOC 71.19 MT", "source": "ops"},
+    )
+    monkeypatch.setattr(
+        hybrid,
+        "run_rag_query",
+        lambda *_args, **_kwargs: {
+            "answer": "AER·cgDIST·EEOI, 2019년 대비 최대 10.8% 감소 [1]",
+            "source": "rag",
+            "evidence_table": [{"citation_id": 1}],
+            "meta": {"retrieval_mode": "text"},
+        },
+    )
+
+    out = hybrid.run_hybrid_query("운항 실적과 CII 문서를 비교해줘")
+
+    assert "14.0kn" in out["answer"]
+    assert "10.8%" in out["answer"]
+    assert out["meta"]["hybrid_synthesis_skipped"] is True
+    assert out["evidence_table"] == [{"citation_id": 1}]

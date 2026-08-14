@@ -59,7 +59,7 @@ def test_structured_table_modes():
         "chunk_id": "r",
         "element_type": "table",
         "chunk_type": "table_row",
-        "text": "row data",
+        "text": "열1=주강품 상태 | 열2=제품마다 시험재 2개",
     }
     include_types = frozenset({"text", "table", "picture"})
     included = filter_chunks_for_index([text, table], include_types, set(), 1, "include")

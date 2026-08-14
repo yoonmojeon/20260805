@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from services.ops_service import run_ops_query
@@ -123,20 +125,58 @@ def run_hybrid_query(
     model = normalize_llm_model(llm_model)
     ops_q = (ops_query or question).strip()
     rag_q = (rag_query or question).strip()
-    ops_result = run_ops_query(ops_q, history, llm_model=model)
-    rag_result = run_rag_query(
-        rag_q,
-        latency_mode=rag_latency_mode,
-        table_qa=table_qa,
-        retrieval_mode=retrieval_mode,
-        llm_model=model,
-    )
-    answer, synthesis_meta = _synthesize_hybrid_answer(
+    # LLM router splits can occasionally reduce the OPS half to generic topic
+    # labels.  When the original asks for current-voyage slots, regenerate only
+    # that branch with the deterministic slot-preserving splitter.
+    if re.search(r"현재|지금|이번\s*항차|현재\s*항차", question, re.I) and re.search(
+        r"속력|선속|\bSOG\b|연료|\bFOC\b|\bFGC\b|적재|Loading|위치|흘수",
         question,
-        str(ops_result.get("answer") or ""),
-        str(rag_result.get("answer") or ""),
-        model=model,
-    )
+        re.I,
+    ):
+        from router.rewrite import split_hybrid_queries
+
+        focused_ops, _focused_rag = split_hybrid_queries(question)
+        ops_q = focused_ops
+    # The two sources are independent and read-only.  Running them together
+    # keeps a hybrid question close to the latency of its slower branch rather
+    # than paying ops + RAG sequentially.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ops_future = pool.submit(run_ops_query, ops_q, history, llm_model=model)
+        rag_future = pool.submit(
+            run_rag_query,
+            rag_q,
+            latency_mode=rag_latency_mode,
+            table_qa=table_qa,
+            retrieval_mode=retrieval_mode,
+            llm_model=model,
+        )
+        ops_result = ops_future.result()
+        rag_result = rag_future.result()
+
+    ops_answer = str(ops_result.get("answer") or "")
+    rag_answer = str(rag_result.get("answer") or "")
+    synthesize = os.environ.get("MARITIME_HYBRID_SYNTHESIS", "0").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    if synthesize:
+        answer, synthesis_meta = _synthesize_hybrid_answer(
+            question, ops_answer, rag_answer, model=model
+        )
+    else:
+        # Preserve all DB figures and document citations.  A second model pass
+        # used to shorten correct branch answers and was the largest avoidable
+        # hybrid latency cost.
+        answer = merge_hybrid_answers(ops_answer, rag_answer)
+        synthesis_meta = {
+            "hybrid_synthesis_model": model,
+            "hybrid_synthesis_success": False,
+            "hybrid_synthesis_skipped": True,
+            "hybrid_synthesis_latency_ms": 0.0,
+            "hybrid_synthesis_empty": False,
+        }
     hist = list(history or [])
     hist.extend(
         [

@@ -17,6 +17,11 @@ DOCUMENT_ID_RE = re.compile(
     r"(?:\s*[-/]\s*[A-Za-z0-9.]+){1,5}(?![A-Za-z0-9])",
     re.I,
 )
+CLASS_DOCUMENT_ID_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:DNV|ABS|LR|KR)\s*[-_/ ]\s*"
+    r"(?:CG|RP|RU|CP|NV)\s*[-_/ ]?\s*[A-Za-z]*\d[A-Za-z0-9.-]*",
+    re.I,
+)
 ORG_RE = re.compile(
     r"(?<![A-Za-z0-9])(MSC|MEPC|DNV|LR|ABS|KR)(?![A-Za-z0-9])", re.I
 )
@@ -184,7 +189,10 @@ def analyze_requirements(question: str, row: dict | None = None) -> QuestionRequ
     document_identifiers = tuple(
         dict.fromkeys(
             re.sub(r"\s*[-/]\s*", "/", match.group(0)).strip().upper()
-            for match in DOCUMENT_ID_RE.finditer(q)
+            for match in [
+                *DOCUMENT_ID_RE.finditer(q),
+                *CLASS_DOCUMENT_ID_RE.finditer(q),
+            ]
         )
     )
 

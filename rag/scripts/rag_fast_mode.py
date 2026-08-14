@@ -386,7 +386,16 @@ def run_fast_retrieval_only(
             # A draft session report can legitimately support several distinct
             # outcomes.  Capping it at two chunks removed the third requested
             # MSC result and the MASS timeline evidence.
-            max_per_doc=max(int(cfg.get("max_chunks_per_doc", 2)), 5),
+            max_per_doc=max(
+                int(cfg.get("max_chunks_per_doc", 2)),
+                8
+                if len(
+                    ((row.get("_evidence_completion") or {}).get("plan") or {}).get("slots")
+                    or []
+                )
+                >= 4
+                else 5,
+            ),
         )
         fast_meta = {
             "fast_question_type": classify_fast_question_type(
@@ -396,6 +405,26 @@ def run_fast_retrieval_only(
             "fast_confidence": None,
             "fast_low_confidence": not bool(retrieved),
             "fast_confidence_reasons": [] if retrieved else ["meeting_evidence_empty"],
+            "evidence_completion": row.get("_evidence_completion") or {},
+        }
+    elif rule_guidance:
+        # Rule compound questions are completed document-locally above.  Keep
+        # those ordered scope/requirement/risk chunks instead of collapsing
+        # them back to two generic typed slots before answer construction.
+        retrieved = trim_fast_chunks(
+            pool,
+            max_chunks=int(cfg.get("top_k", 8)),
+            max_docs=int(cfg.get("max_docs", 3)),
+            max_per_doc=max(int(cfg.get("max_chunks_per_doc", 2)), 8),
+        )
+        fast_meta = {
+            "fast_question_type": classify_fast_question_type(
+                str(row.get("question", "")), row
+            ),
+            "fast_evidence_slots": ["rule_evidence_plan"] * len(retrieved),
+            "fast_confidence": None,
+            "fast_low_confidence": not bool(retrieved),
+            "fast_confidence_reasons": [] if retrieved else ["rule_evidence_empty"],
             "evidence_completion": row.get("_evidence_completion") or {},
         }
     else:
@@ -625,12 +654,38 @@ def generate_fast_answer(
         from rule_lookup_structured_answer import build_rule_lookup_structured_answer
 
         warnings = list(row.get("warning_flags") or [])
+        structured_citation_chunks: list[Any] = []
         answer, ans_warnings = build_rule_lookup_structured_answer(
             chunks,
             question=str(row.get("question") or ""),
             pool=pool,
             warning_flags=warnings,
+            selected_chunks_out=structured_citation_chunks,
         )
+        if structured_citation_chunks:
+            cited_numbers = sorted(
+                {
+                    int(value)
+                    for value in re.findall(r"\[(\d+)\]", answer or "")
+                    if 1 <= int(value) <= len(structured_citation_chunks)
+                }
+            )
+            if cited_numbers:
+                citation_remap = {
+                    old: new for new, old in enumerate(cited_numbers, start=1)
+                }
+                answer = re.sub(
+                    r"\[(\d+)\]",
+                    lambda match: f"[{citation_remap.get(int(match.group(1)), int(match.group(1)))}]",
+                    answer,
+                )
+                structured_citation_chunks = [
+                    structured_citation_chunks[index - 1]
+                    for index in cited_numbers
+                ]
+            row["_answer_citation_chunks"] = structured_citation_chunks
+            row["_rule_guidance_llm_chunks"] = structured_citation_chunks
+            row["_verified_structured_answer"] = True
         row["warning_flags"] = list(dict.fromkeys(warnings + ans_warnings))
         meta = dict(fast_meta or {})
         meta["answer_mode"] = "rule_guidance_lookup"

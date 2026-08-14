@@ -30,8 +30,24 @@ if str(ROOT.parent) not in sys.path:
 from hancomeqn_restore import PUA_RE, load_mapping, restore_inline
 from pdf_io import resolve_pdf_path
 
-cropper = importlib.import_module("49_vlm_table_pilot")
-snap = importlib.import_module("53_snap_tatr_to_pdf")
+# These visual extraction helpers are optional in the compact service
+# workspace.  Registry/serialization utilities remain importable and testable
+# without them; stages that actually crop or snap tables fail with a clear
+# message at call time instead of breaking pytest collection.
+try:
+    cropper = importlib.import_module("49_vlm_table_pilot")
+    snap = importlib.import_module("53_snap_tatr_to_pdf")
+except ModuleNotFoundError:
+    cropper = None
+    snap = None
+
+
+def _require_visual_helpers() -> None:
+    if cropper is None or snap is None:
+        raise RuntimeError(
+            "Precise-table visual stages require 49_vlm_table_pilot.py and "
+            "53_snap_tatr_to_pdf.py. The existing built table index remains usable."
+        )
 
 PARSER_VERSION = "tatr-v1.1+pdf-vector-snap+pymupdf-text+reviewed-hancomeqn-v1"
 DEFAULT_STAGES = "preprocess,prepare,tatr,snap,restore,segment,region-tatr,chunks,index"
@@ -120,6 +136,7 @@ def pua_codes(page: fitz.Page, clip: fitz.Rect) -> list[str]:
 
 
 def prepare(args: argparse.Namespace, docs: list[dict[str, str]], registry: dict[str, dict[str, Path]]) -> dict:
+    _require_visual_helpers()
     records: list[dict[str, Any]] = []
     missing_tables: list[str] = []
     for doc_index, doc_row in enumerate(docs, 1):
@@ -287,6 +304,7 @@ def crop_box_to_pdf(box: list[float], clip: fitz.Rect, crop_size: tuple[int, int
 def local_region_rows(page: fitz.Page, parent_clip: fitz.Rect, parent_size: tuple[int, int],
                       target: dict, structure_path: Path, mapping: dict) -> list[dict]:
     """Snap a region TATR grid to PDF vectors and assign native PDF words."""
+    _require_visual_helpers()
     if not structure_path.exists():
         return []
     structure = json.loads(structure_path.read_text(encoding="utf-8"))
@@ -337,6 +355,7 @@ def compound_rows(args: argparse.Namespace, item: dict, mapping: dict,
 
 
 def build_chunks(args: argparse.Namespace, docs: list[dict[str, str]], manifest: dict) -> None:
+    _require_visual_helpers()
     by_doc: dict[str, list[dict]] = defaultdict(list)
     audit: list[dict] = []
     documents: dict[str, fitz.Document] = {}

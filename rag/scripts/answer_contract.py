@@ -222,14 +222,18 @@ def build_cited_evidence_table(answer: str, citation_chunks: list[Any]) -> list[
 
 
 def _ensure_required_sections(answer: str) -> str:
-    """Keep section 1 always; keep 2–4 only when they have real (non-placeholder) body."""
+    """Keep the four-section UI contract and never expose an empty heading.
+
+    Structured generators and the UI both assume the same four sections.  If
+    claim verification removes a section body, replace it with a transparent
+    limitation instead of dropping the section or preserving a blank shell.
+    """
     defaults = {
         "## 1) 핵심 요약": "> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.",
         "## 2) 선박 운항/업무 영향": "> 검색 근거에서 직접 확인되는 별도 운항·업무 영향이 없습니다.",
         "## 3) 추후 확인 필요사항": "> 추가 확인 필요사항이 별도로 식별되지 않았습니다.",
         "## 4) 관련 선급 Rule / Guidance": "> 관련 선급 Rule / Guidance가 검색 근거에 없거나 해당하지 않습니다.",
     }
-    placeholders = {heading: body for heading, body in defaults.items() if heading != "## 1) 핵심 요약"}
     sections: dict[str, list[str]] = {}
     current = ""
     for line in (answer or "").splitlines():
@@ -239,19 +243,14 @@ def _ensure_required_sections(answer: str) -> str:
         elif current:
             sections[current].append(line)
     out: list[str] = []
-    # Section 1 is always present (fallback if empty).
-    h1 = "## 1) 핵심 요약"
-    body1 = "\n".join(sections.get(h1, [])).strip()
-    out.extend([h1, "", body1 or defaults[h1], ""])
     for heading in (
+        "## 1) 핵심 요약",
         "## 2) 선박 운항/업무 영향",
         "## 3) 추후 확인 필요사항",
         "## 4) 관련 선급 Rule / Guidance",
     ):
         body = "\n".join(sections.get(heading, [])).strip()
-        if not body or body == placeholders.get(heading):
-            continue
-        out.extend([heading, "", body, ""])
+        out.extend([heading, "", body or defaults[heading], ""])
     return "\n".join(out).strip()
 
 

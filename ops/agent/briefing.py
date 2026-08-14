@@ -112,6 +112,7 @@ def format_current_status(d: dict) -> str:
     p2 = (
         f"【위치·운항】 {_pos_text(lat, lon)}. "
         f"Loading 상태는 {d.get('loading_status', '미제공')}입니다. "
+        "흘수는 원본 운항 DB에 해당 컬럼이 없어 확인할 수 없습니다. "
         f"현재 선속(SOG)은 {_fmt(d.get('sog_kts'), 1, ' 노트')}, "
         f"평균 선속은 {_fmt(d.get('avg_sog_kts'), 1, ' 노트')}입니다. "
         f"M/E RPM은 {d.get('me_rpm_note', '미측정')}이며, "
@@ -133,7 +134,7 @@ def format_current_status(d: dict) -> str:
     p4 = f"【CII】 {_cii_text(cii)} (연초~현재 YTD 기준, 현재 항차와 기간이 다릅니다.)"
 
     p5 = (
-        "【데이터 한계】 원본에 항만명·RPM·기상 정보가 없습니다. "
+        "【데이터 한계】 원본에 흘수·RPM·기상 정보가 없습니다. "
         "경도(lon=0) 구간은 위치·지도에 제한이 있습니다."
     )
 
@@ -179,7 +180,7 @@ def format_voyage_analysis(d: dict, period: str = "current") -> str:
     )
     p2 = (
         f"【운항 KPI】 평균 선속 {_fmt(d.get('avg_sog_kts'), 1, ' 노트')}. "
-        f"Loading 상태는 미제공, M/E RPM은 미측정입니다. "
+        f"Loading 상태는 {d.get('loading_status', '미제공')}, M/E RPM은 미측정입니다. "
         f"FOC {_fmt(d.get('foc_oil_mt'), 2, ' MT')}, "
         f"FGC {_fmt(d.get('fgc_gas_mt'), 2, ' MT')}, "
         f"일평균 연료 {_fmt(d.get('foc_per_day_mt'), 2, ' MT/일')}입니다."

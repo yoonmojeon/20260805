@@ -99,6 +99,75 @@ def test_korean_abs_risk_question_adds_bilingual_specific_clause_terms():
     assert "consequences of failure" in slot.terms
 
 
+def test_mepc_iswg_briefing_uses_four_named_evidence_facets():
+    plan = build_evidence_plan(
+        "MEPC 84 ISWG-GHG 논의를 중심으로 환경규제 대응 핵심만 정리해줘.",
+        {},
+    )
+    slots = {slot.name for slot in plan.slots}
+    assert {
+        "sfcs_label",
+        "gfi_compliance",
+        "gfi_reporting",
+        "lca_method",
+    }.issubset(slots)
+
+
+def test_mass_training_question_adds_three_step_evidence_slot():
+    plan = build_evidence_plan(
+        "MSC 111의 MASS Code 결정과 원격운항자 훈련 접근법, 경험축적, 2030년 일정을 설명해줘.",
+        {"_internal_intent": "mass_code_timeline"},
+    )
+    assert "remote_operator_training" in {slot.name for slot in plan.slots}
+
+
+def test_abs_compound_risk_question_keeps_both_risk_facets():
+    plan = build_evidence_plan(
+        "ABS Requirements에서 기능 위험범주 기준과 상위 위험 기능의 추가 검증을 설명해줘.",
+        {},
+    )
+    slots = {slot.name for slot in plan.slots}
+    assert "specific_clause" not in slots
+    assert {"risk_classification_basis", "higher_risk_verification"}.issubset(slots)
+
+
+def test_dnv_0264_compound_question_keeps_scope_pra_and_qualification_facets():
+    plan = build_evidence_plan(
+        "DNV-CG-0264의 적용범위, 위험성 평가 요구사항과 Concept Qualification 역할을 설명해줘.",
+        {},
+    )
+    slots = {slot.name for slot in plan.slots}
+    assert "specific_clause" not in slots
+    assert {"scope", "concept_qualification_role", "preliminary_risk_assessment"}.issubset(slots)
+    assert plan.document_identifiers == ("DNV/CG/0264",)
+
+
+def test_abs_external_mass_fact_does_not_enter_msc_timeline_plan():
+    plan = build_evidence_plan(
+        "ABS Requirements에서 IMO mandatory MASS Code의 확정 발효일과 결의번호를 찾아줘.",
+        {},
+    )
+    assert plan.session_org == "ABS"
+    assert plan.intent == "rule_lookup"
+    assert "mandatory_adoption_target" not in {slot.name for slot in plan.slots}
+
+
+def test_mepc_measurement_briefing_covers_method_metric_value_and_scope():
+    plan = build_evidence_plan(
+        "MEPC 84/6/2 CII fleet report 기준으로 운항·보고 영향을 정리해줘.",
+        {},
+    )
+    slots = {slot.name for slot in plan.slots}
+    assert {
+        "question_scope",
+        "question_method",
+        "question_metric",
+        "question_comparison",
+        "question_value",
+        "question_impact",
+    }.issubset(slots)
+
+
 def test_integration_gold_follows_the_second_named_society():
     msc = {"source": "MSC", "secondary_scenario": "V07"}
     assert integration_secondary_id(

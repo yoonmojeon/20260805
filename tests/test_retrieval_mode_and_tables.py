@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from services.rag_service import fuse_evidence
+from services.rag_service import _abs_comparison_from_pool, fuse_evidence
 from services.retrieval_mode import RetrievalMode, classify_retrieval_mode
 from services.table_render import parse_row_cells, rows_to_markdown, strip_embed_header
 
@@ -186,6 +186,70 @@ def test_fuse_evidence_keeps_text_and_table_with_caps():
     assert "text" in sources and "table" in sources
     assert sources.count("text") <= 4
     assert sources.count("table") <= 5
+
+
+def test_abs_named_two_document_comparison_uses_existing_pool_without_llm():
+    def chunk(cid: str, file_name: str, text: str, page: int):
+        return SimpleNamespace(
+            chunk_id=cid,
+            doc_id=cid,
+            file_name=file_name,
+            page_number=page,
+            text=text,
+        )
+
+    guide_name = "GuideforSmartFunctionsforMarineVesselsandOffshoreUnits-v8.pdf"
+    req_name = "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf"
+    pool = [
+        chunk(
+            "r1",
+            req_name,
+            "Marine vessels fitted with autonomous or remote control functions are "
+            "eligible for AUTONOMOUS or REMOTE-CON notations.",
+            3,
+        ),
+        chunk(
+            "r2",
+            req_name,
+            "Low, medium and high risk category levels use operations supervision "
+            "level and consequences of failure.",
+            23,
+        ),
+        chunk(
+            "g1",
+            guide_name,
+            "This Guide is applicable to all marine vessels and offshore units. "
+            "Optional notations include SMART (INF), SMART (SHM) and SMART (MHM).",
+            17,
+        ),
+        chunk(
+            "r3",
+            req_name,
+            "Medium and high functions require computer based system category iii.",
+            52,
+        ),
+        chunk(
+            "g2",
+            guide_name,
+            "This Guide uses a risk-informed approach. Risk is assigned by the "
+            "submitter from safety factors and consequences of failure.",
+            23,
+        ),
+    ]
+    out = {"search_out": {"retrieval_pool": pool}}
+    question = (
+        "ABS Guide for Smart Functions와 ABS Requirements for Autonomous and Remote "
+        "Control Functions를 위험정보 평가, 기능 위험범주, 검증 관점에서 비교해줘."
+    )
+
+    rendered = _abs_comparison_from_pool(question, out)
+
+    assert rendered is not None
+    answer, evidence = rendered
+    assert "SMART (INF)" in answer
+    assert "Low·Medium·High" in answer
+    assert "Category III" in answer
+    assert len(evidence) == 5
 
 
 def test_dual_retrieval_defaults_on_when_env_unset():

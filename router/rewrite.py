@@ -64,7 +64,24 @@ def _ops_focus(question: str, state: DialogueState | None) -> str:
         entities = list(dict.fromkeys([*entities, *state.last_entities]))[:4]
         if not ops_topics and state.last_topic in {"cii", "voyage", "fuel", "position", "report", "seemp"}:
             ops_topics = [state.last_topic]
-    label = " ".join(ops_topics or ["운항 수치"])
+    # Preserve requested DB slots in natural Korean.  Topic labels alone (for
+    # example "cii voyage fuel position") are too vague for the deterministic
+    # current-voyage tool and invite the agent to omit fields.
+    slot_patterns = (
+        (r"현재|지금|이번\s*항차|현재\s*항차", "현재 항차"),
+        (r"위치", "위치"),
+        (r"선속|속력|\bSOG\b", "선속"),
+        (r"연료|\bFOC\b|\bFGC\b", "연료소비"),
+        (r"적재|Loading", "적재상태"),
+        (r"흘수", "흘수"),
+        (r"다음\s*항|도착\s*항|목적지", "도착항"),
+        (r"\bCII\b|탄소집약", "CII"),
+    )
+    slots = [label for pattern, label in slot_patterns if re.search(pattern, question, re.I)]
+    if slots:
+        label = "·".join(dict.fromkeys(slots)) + " 조회"
+    else:
+        label = " ".join(ops_topics or ["운항 수치"])
     ship = "올해 우리 선박" if re.search(r"올해", question or "") else "우리 선박"
     extra = " ".join(entities)
     return f"{ship} {label} {extra}".strip()

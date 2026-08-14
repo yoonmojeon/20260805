@@ -162,23 +162,24 @@ Do not invent a requirement, an operational consequence, a date, a document,
 or a cross-reference. Preserve SHALL/MUST/SHOULD/CONSIDER/MAY strength.
 Every factual bullet must end with a supplied citation such as [1]."""
 
-# Keep the prompt ASCII-safe.  The prior Korean literal had been saved with a
-# damaged encoding in some local environments, causing the model to ignore the
-# requested four-section, clause-first contract.
-RULE_GUIDANCE_SYSTEM_PROMPT = """You are a classification-society rule research assistant.
-Use only the supplied evidence chunks. Answer the specific technical question,
-not the document's generic purpose or scope. Prefer the clause whose wording
-directly matches the user's technical terms. Do not invent requirements.
+# Keep the active answer contract in Korean so a local model does not mirror
+# English source prose simply because most retrieved clauses are English.
+RULE_GUIDANCE_SYSTEM_PROMPT = """너는 선급 규정의 근거를 확인하는 해사 문서 분석 보조자다.
+제공된 검색 근거만 사용해 사용자의 구체적인 기술 질문에 답한다. 문서의 일반 목적이나
+소개를 반복하지 말고 질문의 기술 용어와 직접 맞는 조항을 우선한다. 근거에 없는 요건,
+업무 영향, 날짜, 문서 또는 상호참조는 만들지 않는다.
 
-Write Korean and use exactly these sections:
-## 1) \ud575\uc2ec \uc694\uc57d
-## 2) \uc120\ubc15 \uc6b4\ud56d/\uc5c5\ubb34 \uc601\ud5a5
-## 3) \ucd94\ud6c4 \ud655\uc778 \ud544\uc694\uc0ac\ud56d
-## 4) \uad00\ub828 \uc120\uae09 Rule / Guidance
+답변 본문은 반드시 자연스러운 한국어로 작성한다. 영문 문서명·규정명·약어·notation은
+그대로 둘 수 있지만, 영문 원문 문장을 완성된 답변 문장으로 복사하지 않는다.
 
-Every factual bullet must end with matching [n] citations. Include document,
-page, and clause where present. If only one clause is evidenced, state that
-limit rather than replacing it with a broad document overview."""
+다음 네 제목을 정확히 사용한다.
+## 1) 핵심 요약
+## 2) 선박 운항/업무 영향
+## 3) 추후 확인 필요사항
+## 4) 관련 선급 Rule / Guidance
+
+모든 사실 bullet 끝에는 대응하는 [n] 인용을 붙인다. 근거에 페이지와 조항이 있으면
+함께 적는다. 한 조항만 확인되면 일반적인 문서 설명으로 넓히지 말고 그 한계를 밝힌다."""
 
 
 def _is_substantive_chunk(c: Any) -> bool:
@@ -461,6 +462,7 @@ def _broad_rule_korean_citation_contract(answer: str, chunks: list[Any]) -> bool
         return False
     valid_ids = set(range(1, len(chunks) + 1))
     factual = korean = 0
+    section = 0
     safe_limitations = (
         "\uac80\uc0c9 \uadfc\uac70\uc5d0\uc11c \uc9c1\uc811 \ud655\uc778",
         "\ucd94\uac00 \ud655\uc778\ud544\uc694\uc0ac\ud56d\uc774 \uc5c6",
@@ -468,6 +470,10 @@ def _broad_rule_korean_citation_contract(answer: str, chunks: list[Any]) -> bool
     )
     for raw in text.splitlines():
         line = raw.strip()
+        heading = re.match(r"##\s*(\d)\)", line)
+        if heading:
+            section = int(heading.group(1))
+            continue
         if not line.startswith(("-", "*")):
             continue
         if re.search(r"file=|folder=|doc_type=|chunk[_ ]?id=", line, re.I):
@@ -481,8 +487,14 @@ def _broad_rule_korean_citation_contract(answer: str, chunks: list[Any]) -> bool
         if not ids.issubset(valid_ids):
             return False
         factual += 1
-        if re.search("[\uac00-\ud7a3]", prose):
+        hangul_count = len(re.findall(r"[\uac00-\ud7a3]", prose))
+        if hangul_count:
             korean += 1
+        # Sections 1-3 are explanatory prose.  A bare English source sentence
+        # is never an acceptable user-facing answer there; section 4 may retain
+        # an official English document title.
+        if section in {1, 2, 3} and hangul_count < 5:
+            return False
         if len(re.findall(r"[A-Za-z]{3,}", prose)) > 18:
             return False
     return factual >= 2 and korean >= 2
@@ -1210,6 +1222,42 @@ def generate_rule_guidance_accurate_answer(
             evidence_draft = structured_draft[:1200]
     except Exception:
         pass
+
+    planned_slot_names = set(
+        ((row.get("_evidence_completion") or {}).get("slot_hits") or {}).keys()
+    )
+    verified_compound_outline = bool(
+        {"risk_classification_basis", "higher_risk_verification"}.issubset(
+            planned_slot_names
+        )
+        or {
+            "scope",
+            "concept_qualification_role",
+            "preliminary_risk_assessment",
+        }.issubset(planned_slot_names)
+    )
+    if structured_draft and verified_compound_outline and not direct_clause_found:
+        answer = _practical_rule_fallback(structured_draft, list(evidence_chunks))
+        answer = _ensure_practical_rule_section(answer, list(evidence_chunks))
+        answer = _ensure_rule_reference_section(
+            answer, list(evidence_chunks), force=True
+        )
+        row["_rule_guidance_llm_chunks"] = list(evidence_chunks)
+        row["_answer_citation_chunks"] = list(evidence_chunks)
+        row["_rule_guidance_skip_heavy_postprocess"] = True
+        row["_verified_structured_answer"] = True
+        gen_meta.update(
+            {
+                "answer_source": "verified_compound_structured_answer",
+                "llm_used": False,
+                "llm_context_chunks": len(evidence_chunks),
+                "llm_output_chars": len(answer),
+                "llm_grounded_check_pass": True,
+                "fallback_reason": None,
+            }
+        )
+        row["_answer_generation"] = gen_meta
+        return answer, "rule_guidance_lookup", "none", gen_meta
 
     llm_chunks, evidence_block = trim_chunks_for_llm(
         evidence_chunks,
