@@ -68,8 +68,8 @@ def render_evidence_table_html(rows: list[dict[str, Any]] | None) -> str:
         )
     return (
         "<div class='evidence-block'>"
-        "<div class='evidence-title'>Evidence Table "
-        "<span class='evidence-hint'>답변의 [n] = 아래 각주</span></div>"
+        "<div class='evidence-title'>인용 근거 "
+        "<span class='evidence-hint'>답변의 [n]과 연결되는 문서 근거</span></div>"
         "<div class='evidence-scroll'><table class='evidence-table'>"
         "<thead><tr>"
         "<th>각주</th><th>문서</th><th>페이지</th><th>인용 근거 청크</th>"

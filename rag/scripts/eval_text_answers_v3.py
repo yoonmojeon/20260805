@@ -206,6 +206,7 @@ def run_one(
     embed_model: str,
     manifest: dict,
     llm_model: str,
+    latency_mode: str,
     index: int,
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -216,7 +217,7 @@ def run_one(
         manifest=manifest,
         index_dir=ROOT / "data/processed/index",
         chunks_dir=ROOT / "data/processed/chunks",
-        latency_mode="accurate",
+        latency_mode=latency_mode,
         start_type="warm",
         run_index=index,
     )
@@ -244,7 +245,7 @@ def run_one(
         fetch_k=120,
         start_type="warm",
         run_index=index,
-        latency_mode="accurate",
+        latency_mode=latency_mode,
         auto_llm_warm=True,
         skip_ollama_probe=True,
     )
@@ -372,6 +373,7 @@ def main() -> int:
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--llm-model", default="gemma4:12b")
+    parser.add_argument("--latency-mode", choices=("accurate", "fast"), default="accurate")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--test-type", action="append", default=[])
@@ -409,8 +411,9 @@ def main() -> int:
                     collection=collection,
                     embed_model=embed_model,
                     manifest=manifest,
-                    llm_model=args.llm_model,
-                    index=index,
+                llm_model=args.llm_model,
+                latency_mode=args.latency_mode,
+                index=index,
                 )
             except Exception as exc:
                 record = {

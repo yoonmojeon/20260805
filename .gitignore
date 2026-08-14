@@ -6,6 +6,7 @@ venv/
 .env
 .pytest_cache/
 .test-tmp*/
+data/pytest_*/
 
 # Ops sensor Excel / SQLite
 data/ho_data/*.xlsx

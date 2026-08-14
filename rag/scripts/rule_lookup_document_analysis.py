@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from bm25_index import extract_document_codes
@@ -54,7 +55,11 @@ def doc_code_from_file_name(file_name: str) -> str:
         return re.sub(r"\s+", "-", m.group(0).strip())
     for code in extract_document_codes(fn):
         return code
-    return fn.replace(".pdf", "").strip()
+    stem = fn.replace(".pdf", "").strip()
+    # ``-v4``/``-v8`` is a document version suffix, not the instrument name.
+    # Displaying only the suffix ("4", "8") after the generic English-leak
+    # scrubber made valid ABS documents look like unidentified candidates.
+    return re.sub(r"[-_ ]v\d+(?:\.\d+)*$", "", stem, flags=re.I).strip("-_ ")
 
 
 def infer_doc_type(file_name: str, body: str = "") -> str:
@@ -100,6 +105,20 @@ def relevance_score(body: str, file_name: str, question: str) -> float:
     base = _topic_hits(body, question) / max(len(question.split()), 1)
     fn = file_name.lower()
     ql = question.lower()
+    normalized_question = re.sub(r"[^a-z0-9]", "", ql)
+    normalized_stem = re.sub(
+        r"v\d+$",
+        "",
+        re.sub(r"[^a-z0-9]", "", Path(file_name).stem.lower()),
+    )
+    normalized_code = re.sub(
+        r"[^a-z0-9]", "", doc_code_from_file_name(file_name).lower()
+    )
+    if (
+        (len(normalized_code) >= 6 and normalized_code in normalized_question)
+        or (len(normalized_stem) >= 12 and normalized_stem in normalized_question)
+    ):
+        base += 3.0
     if "cg-0264" in fn and AUTONOMOUS_QUERY_RE.search(question):
         base += 2.0
     if "autonomous" in body.lower() or "remotely" in body.lower():
@@ -126,7 +145,11 @@ def confirmation_status(
         return "후보"
     if negative:
         return "추가 확인 필요"
-    linked = doc_code_in_corpus(doc_code, {file_name}) or doc_code.replace("-", "") in file_name.replace("-", "")
+    normalized_code = re.sub(r"[^a-z0-9]", "", doc_code.lower())
+    normalized_file = re.sub(r"[^a-z0-9]", "", file_name.lower())
+    linked = doc_code_in_corpus(doc_code, {file_name}) or (
+        bool(normalized_code) and normalized_code in normalized_file
+    )
     if not linked:
         return "후보"
     if relevance < 1.2:
@@ -262,6 +285,11 @@ def analyze_documents(
         cites = pick_citations(
             cite_source, fn, max_cites=2, fallback_pool=citation_fallback
         )
+        reference_chunk = (
+            cite_source[cites[0] - 1]
+            if cites and 0 <= cites[0] - 1 < len(cite_source)
+            else best
+        )
         warnings: list[str] = []
         if negative:
             warnings.append("negative_applicability_clause")
@@ -274,8 +302,12 @@ def analyze_documents(
                 source=str(getattr(best, "source", "") or ""),
                 doc_code=doc_code,
                 doc_type=dtype,
-                page=getattr(best, "page_number", None),
-                clause=str(getattr(best, "clause_number", "") or getattr(best, "caption", "") or ""),
+                page=getattr(reference_chunk, "page_number", None),
+                clause=str(
+                    getattr(reference_chunk, "clause_number", "")
+                    or getattr(reference_chunk, "caption", "")
+                    or ""
+                ),
                 citation_ids=cites,
                 body=body,
                 negative_applicability=negative,

@@ -1173,7 +1173,42 @@ def query_with_hybrid_ranking(
         score -= scoped_sparse_ratios.get(cid, 0.0) * 0.32
         return score
 
-    ranked = sorted(merged_ids, key=final_distance)[:top_k]
+    ranked_all = sorted(merged_ids, key=final_distance)
+    ranked = ranked_all[:top_k]
+
+    # An explicitly named multi-document comparison must retain evidence from
+    # every named document.  Global top-k can otherwise be filled by several
+    # near-duplicate intro chunks from only one ABS guide.  The candidates are
+    # already loaded above; this is a zero-I/O quota over the existing ranking.
+    direct_rule_ids = _direct_priority_rule_doc_ids(query, signals)
+    if len(direct_rule_ids) >= 2 and top_k >= len(direct_rule_ids):
+        per_doc = max(1, top_k // len(direct_rule_ids))
+        forced: set[str] = set()
+        for direct_doc_id in direct_rule_ids:
+            matches = [
+                cid
+                for cid in ranked_all
+                if str((merged_meta.get(cid) or {}).get("doc_id") or "")
+                == direct_doc_id
+            ]
+            forced.update(matches[:per_doc])
+        if forced:
+            selected = [cid for cid in ranked_all if cid in forced]
+            selected.extend(cid for cid in ranked_all if cid not in forced)
+            ranked = selected[:top_k]
+            document_route["direct_document_quota"] = {
+                "doc_ids": direct_rule_ids,
+                "per_doc": per_doc,
+                "retained": {
+                    direct_doc_id: sum(
+                        1
+                        for cid in ranked
+                        if str((merged_meta.get(cid) or {}).get("doc_id") or "")
+                        == direct_doc_id
+                    )
+                    for direct_doc_id in direct_rule_ids
+                },
+            }
 
     if timing is not None and hasattr(timing, "mark"):
         timing.mark("t_rerank_end")

@@ -136,7 +136,13 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
     intent = str(row.get("_internal_intent") or row.get("internal_intent") or "")
     requested = _requested_count(q, row)
     rule_requested = bool(
-        re.search(r"rule|guidance|class guideline|notice|requirement|요구사항|선급|규칙|지침", q, re.I)
+        re.search(
+            r"rule|guidance|class guideline|notice|requirement|section\s*\d+|"
+            r"요구사항|요구하는|적용범위|선급|규칙|지침",
+            q,
+            re.I,
+        )
+        and org in {"DNV", "LR", "ABS", "KR"}
     )
     plan = EvidencePlan(
         intent=intent,
@@ -222,6 +228,73 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
         ]
         return plan
 
+    # An ISWG-GHG briefing is a fixed *evidence shape*, not a single semantic
+    # similarity target.  Retrieve the certification, GFI compliance,
+    # reporting/verification and LCA propositions independently so one highly
+    # ranked introductory paragraph cannot occupy the whole context.
+    is_iswg_environment_briefing = bool(
+        org == "MEPC"
+        and re.search(r"ISWG[-/ ]?GHG|환경\s*규제|GHG", q, re.I)
+        and re.search(r"정리|요약|브리핑|핵심|대응", q, re.I)
+        and not requirements.document_identifiers
+    )
+    if is_iswg_environment_briefing:
+        plan.intent = "iswg_ghg_briefing"
+        plan.slots = [
+            EvidenceSlot(
+                "sfcs_label",
+                "지속가능연료 인증·라벨",
+                (
+                    "sustainable fuels certification schemes",
+                    "SFCS",
+                    "Fuel Life Cycle Label",
+                    "1 March 2027",
+                ),
+                (("SFCS", "sustainable fuels certification"), ("Fuel Life Cycle Label",)),
+                date_preferred=True,
+            ),
+            EvidenceSlot(
+                "gfi_compliance",
+                "GFI 준수·규칙 36",
+                (
+                    "GFI compliance",
+                    "draft regulation 36",
+                    "regulation 36",
+                    "new obligations",
+                    "should not introduce",
+                ),
+                (("GFI compliance", "regulation 36"),),
+                max_hits=2,
+            ),
+            EvidenceSlot(
+                "gfi_reporting",
+                "GFI 보고·검증·SEEMP",
+                (
+                    "GFI reporting and verification",
+                    "draft regulation 37",
+                    "regulation 37",
+                    "SEEMP Guidelines",
+                    "ISWG-GHG 20/2/1",
+                ),
+                (("regulation 37",), ("SEEMP", "reporting and verification")),
+                max_hits=2,
+            ),
+            EvidenceSlot(
+                "lca_method",
+                "연료 전과정평가 방법론",
+                (
+                    "LCA Guidelines",
+                    "life cycle GHG intensity",
+                    "well-to-tank",
+                    "tank-to-wake",
+                    "fuel certification",
+                ),
+                (("LCA", "life cycle"),),
+                max_hits=2,
+            ),
+        ]
+        return plan
+
     if org == "MEPC" and requirements.is_concrete:
         topic_terms = tuple(requirements.topic_terms[:18])
         facet_terms = {
@@ -239,8 +312,45 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
             "impact": ("reporting", "submission", "verification", "operation", "compliance", "approval"),
             "reason": ("reason", "rationale", "basis", "considering"),
         }
+        facets = list(requirements.facets or ("fact",))
+        # A briefing/summary asks for document coverage, even when its wording
+        # happens to expose only one explicit facet (for example "operational
+        # impact").  Treating that single facet as the whole retrieval plan
+        # returned two good passages and then filled the remaining context with
+        # unrelated high-ranked documents.  Expand only the evidence plan; this
+        # reuses the already loaded document-local candidates and adds no dense
+        # query or LLM call.
+        briefing_request = bool(
+            re.search(
+                r"정리|요약|브리핑|핵심|요점|한눈|종합|묶어|summary|brief|overview",
+                q,
+                re.I,
+            )
+        )
+        if briefing_request:
+            topic_blob = " ".join(topic_terms).lower()
+            measurement_report = any(
+                marker in topic_blob
+                for marker in (
+                    "carbon intensity",
+                    "cii",
+                    "aer",
+                    "cgdist",
+                    "eeoi",
+                    "fuel oil consumption",
+                    "imo dcs",
+                    "gisis",
+                )
+            )
+            coverage_facets = (
+                ("document", "scope", "method", "metric", "comparison", "value", "impact")
+                if measurement_report
+                else ("document", "status", "requirement", "period", "method", "impact")
+            )
+            facets = list(dict.fromkeys([*facets, *coverage_facets]))
+
         slots: list[EvidenceSlot] = []
-        for facet in requirements.facets or ("fact",):
+        for facet in facets:
             specific = facet_terms.get(facet, ())
             terms = tuple(dict.fromkeys((*topic_terms, *specific)))
             slots.append(
@@ -258,8 +368,9 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
         plan.slots = slots
         return plan
 
-    if intent == "mass_code_timeline" or (
-        "mass" in ql and any(term in ql for term in ("mandatory", "timeline", "일정"))
+    if (org in {"", "MSC", "MEPC"}) and (
+        intent == "mass_code_timeline"
+        or ("mass" in ql and any(term in ql for term in ("mandatory", "timeline", "일정")))
     ):
         plan.slots = [
             EvidenceSlot(
@@ -299,6 +410,23 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
                 (("experience-building", "experience building", "ebp"),),
             ),
         ]
+        if re.search(r"원격\s*운항자|원격운항자|remote\s+operator|훈련|training", q, re.I):
+            plan.slots.insert(
+                1,
+                EvidenceSlot(
+                    "remote_operator_training",
+                    "원격운항자 훈련 접근법",
+                    (
+                        "three-step approach",
+                        "training requirements for remote operators",
+                        "high level training provisions",
+                        "guidance for the training certification and watchkeeping",
+                        "standards for the training certification and watchkeeping",
+                    ),
+                    (("three-step approach",), ("remote operators", "training")),
+                    max_hits=2,
+                ),
+            )
         return plan
 
     if not rule_requested and (
@@ -515,7 +643,23 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
         asks_for_specific_clause = any(
             facet != "document" for facet in requirements.facets
         ) or definition_lookup
-        if direct_terms and asks_for_specific_clause:
+        compound_rule_query = bool(
+            len(requirements.facets) >= 3
+            or (
+                re.search(r"위험\s*범주|risk\s+categor", q, re.I)
+                and re.search(r"추가\s*검증|additional\s+verification", q, re.I)
+            )
+            or (
+                re.search(r"대체연료|저인화점|alternative\s+fuel|low[- ]flashpoint", q, re.I)
+                and re.search(r"적용\s*범위|안전\s*평가|정리|scope", q, re.I)
+            )
+            or (
+                org == "DNV"
+                and re.search(r"DNV\s*[-_/ ]?\s*CG\s*[-_/ ]?\s*0264", q, re.I)
+                and re.search(r"Concept\s+Qualification|위험성\s*평가", q, re.I)
+            )
+        )
+        if direct_terms and asks_for_specific_clause and not compound_rule_query:
             plan.slots.append(
                 EvidenceSlot(
                     "specific_clause",
@@ -553,6 +697,78 @@ def build_evidence_plan(question: str, row: dict) -> EvidencePlan:
                     ),
                     max_hits=3,
                 )
+            )
+        if re.search(r"위험\s*범주|risk\s+categor", q, re.I):
+            plan.slots.extend(
+                [
+                    EvidenceSlot(
+                        "risk_classification_basis",
+                        "기능 위험범주 분류 기준",
+                        (
+                            "risk category level",
+                            "operations supervision level",
+                            "consequences of failure",
+                            "low risk",
+                            "medium risk",
+                            "high risk",
+                        ),
+                        (
+                            ("operations supervision level",),
+                            ("consequences of failure",),
+                        ),
+                        max_hits=2,
+                    ),
+                    EvidenceSlot(
+                        "higher_risk_verification",
+                        "상위 위험 기능의 추가 검증",
+                        (
+                            "high risk category level",
+                            "medium and high risk",
+                            "simulation and physical testing",
+                            "Computer Based System Category III",
+                            "model evaluation",
+                            "risk assessment",
+                        ),
+                        (("high risk", "medium and high risk"),),
+                        max_hits=3,
+                    ),
+                ]
+            )
+        if org == "DNV" and re.search(
+            r"DNV\s*[-_/ ]?\s*CG\s*[-_/ ]?\s*0264|Concept\s+Qualification|위험성\s*평가",
+            q,
+            re.I,
+        ):
+            plan.slots.extend(
+                [
+                    EvidenceSlot(
+                        "concept_qualification_role",
+                        "Concept Qualification의 역할",
+                        (
+                            "concept qualification",
+                            "concept and system qualification",
+                            "documenting equivalence",
+                            "submitter",
+                            "flag authority",
+                            "approval process",
+                        ),
+                        (("concept qualification", "concept and system qualification"),),
+                        max_hits=2,
+                    ),
+                    EvidenceSlot(
+                        "preliminary_risk_assessment",
+                        "예비 위험성 평가 요구사항",
+                        (
+                            "preliminary risk assessment",
+                            "potential showstoppers",
+                            "remove hazards",
+                            "reduce risk",
+                            "verification and validation",
+                        ),
+                        (("preliminary risk assessment",),),
+                        max_hits=2,
+                    ),
+                ]
             )
         return plan
     if semantic.task == "operational_impact" and topic_terms:
@@ -670,7 +886,12 @@ def _document_id_matches(file_name: str, plan: EvidencePlan) -> bool:
         return True
     name = file_name or ""
     for document_id in plan.document_identifiers:
-        parts = [part for part in document_id.split("/") if part]
+        normalized_id = re.sub(r"[_\s]+", "-", document_id.strip())
+        id_alnum = re.sub(r"[^a-z0-9]", "", normalized_id.lower())
+        name_alnum = re.sub(r"[^a-z0-9]", "", name.lower())
+        if id_alnum and id_alnum in name_alnum:
+            return True
+        parts = [part for part in re.split(r"[/_-]", document_id) if part]
         if not parts:
             continue
         pattern = r"\s*[-/]?\s*".join(re.escape(part) for part in parts)
@@ -680,6 +901,9 @@ def _document_id_matches(file_name: str, plan: EvidencePlan) -> bool:
 
 
 def _candidate_chunks(collection, pool: list[RetrievedChunk], plan: EvidencePlan) -> list[RetrievedChunk]:
+    bounded_meeting_briefing = (
+        plan.session_org in {"MEPC", "MSC"} and len(plan.slots) >= 4
+    )
     file_names: list[str] = []
     for chunk in pool:
         # A society-scoped question must never expand documents returned for
@@ -700,6 +924,27 @@ def _candidate_chunks(collection, pool: list[RetrievedChunk], plan: EvidencePlan
         ):
             file_names.append(name)
 
+    # A "latest" query does not need a full-source expansion when the dense
+    # pool already contains session-labelled documents.  Infer the newest
+    # session represented in that pool and keep the completion pass bounded to
+    # it.  This preserves freshness while avoiding scoring every MEPC/MSC chunk
+    # once per evidence facet.
+    if bounded_meeting_briefing and plan.latest_requested and not plan.session_number:
+        numbered_names: list[tuple[int, str]] = []
+        for name in file_names:
+            match = re.search(
+                rf"\b{re.escape(plan.session_org)}\s*[-/]?\s*(\d{{1,3}})\b",
+                name,
+                re.I,
+            )
+            if match:
+                numbered_names.append((int(match.group(1)), name))
+        if numbered_names:
+            latest_in_pool = max(number for number, _ in numbered_names)
+            file_names = [
+                name for number, name in numbered_names if number == latest_in_pool
+            ]
+
     # Search within the most authoritative session-level documents first.
     original_position = {name: pos for pos, name in enumerate(file_names)}
 
@@ -716,7 +961,10 @@ def _candidate_chunks(collection, pool: list[RetrievedChunk], plan: EvidencePlan
     # If dense retrieval did not discover enough documents, use a metadata
     # scoped fallback for the requested organization/session.
     if plan.session_org and (
-        not candidates or len(file_names) < 2 or plan.latest_requested
+        not candidates
+        or len(file_names) < 2
+        or plan.latest_requested
+        or bounded_meeting_briefing
     ):
         scoped = _source_chunks(collection, plan.session_org)
         if plan.latest_requested and not plan.session_number:
@@ -740,12 +988,71 @@ def _candidate_chunks(collection, pool: list[RetrievedChunk], plan: EvidencePlan
                         re.I,
                     )
                 ]
-        candidates.extend(
+        scoped = [
             chunk
             for chunk in scoped
             if _session_matches(chunk.file_name, plan)
             and _document_id_matches(chunk.file_name, plan)
-        )
+        ]
+        # Discover missing latest-session documents from metadata, but do not
+        # score the whole source once for every evidence slot.  Rank filenames
+        # with the same topic vocabulary used by the plan and expand only a
+        # small document set.  This is the bounded alternative to both a full
+        # source scan (slow) and trusting the initial dense pool completely
+        # (fragile).
+        if bounded_meeting_briefing:
+            scoped_names = list(
+                dict.fromkeys(str(chunk.file_name or "") for chunk in scoped if chunk.file_name)
+            )
+            scoped_name_position = {name: index for index, name in enumerate(scoped_names)}
+            plan_terms = tuple(
+                dict.fromkeys(
+                    term.lower()
+                    for slot in plan.slots
+                    for term in slot.terms
+                    if len(term.strip()) >= 3
+                )
+            )
+        if bounded_meeting_briefing:
+            initial_names = set(file_names)
+            # The relevant phrase is often deep inside a report and absent
+            # from its filename (for example remote-operator training on one
+            # page of an MSC report).  Aggregate bounded document-level term
+            # coverage while the source rows are already in memory.
+            scoped_term_hits: dict[str, set[str]] = {
+                name: set() for name in scoped_names
+            }
+            for chunk in scoped:
+                name = str(chunk.file_name or "")
+                if name not in scoped_term_hits:
+                    continue
+                blob = f"{name} {chunk.text}".lower()
+                scoped_term_hits[name].update(
+                    term for term in plan_terms if term in blob
+                )
+
+            def scoped_name_score(name: str) -> tuple[float, int]:
+                low = name.lower().replace("_", " ").replace("-", " ")
+                topic_hits = len(scoped_term_hits.get(name, set()))
+                report_bonus = 3.0 if any(
+                    marker in low
+                    for marker in ("report of", "annual report", "draft report", "working group")
+                ) else 0.0
+                secretariat_bonus = 1.0 if "secretariat" in low else 0.0
+                pool_bonus = 4.0 if name in initial_names else 0.0
+                return (
+                    topic_hits * 2.0 + report_bonus + secretariat_bonus + pool_bonus,
+                    -scoped_name_position[name],
+                )
+
+            selected_scoped_names = set(
+                sorted(scoped_names, key=scoped_name_score, reverse=True)[:8]
+            )
+            candidates.extend(
+                chunk for chunk in scoped if chunk.file_name in selected_scoped_names
+            )
+        else:
+            candidates.extend(scoped)
 
     deduped: list[RetrievedChunk] = []
     seen: set[str] = set()
@@ -815,6 +1122,59 @@ def _score_slot(chunk: RetrievedChunk, slot: EvidenceSlot, question_terms: set[s
                 score += 5.0
                 if position <= 220:
                     score += 3.0
+    if slot.name == "scope":
+        body = re.sub(r"^\s*\[[^\]]+\]\s*", "", str(chunk.text or "")).lower()
+        if re.search(r"(?:^|\n)\s*3\s+scope\b", body):
+            score += 24.0
+        if "systems used on board" in body and "remote operations centre" in body:
+            score += 24.0
+        if re.search(r"(?:^|\n)\s*(?:4(?:\.1)?)\s+(?:application|new operational concepts)\b", body):
+            score += 14.0
+    if slot.name == "rule_identity":
+        body = re.sub(r"^\s*\[[^\]]+\]\s*", "", str(chunk.text or "")).lower()
+        if "objective of this document" in body and "provide guidance" in body:
+            score += 22.0
+        if "class guideline" in body and re.search(r"autonomous|smart functions", body):
+            score += 18.0
+    if slot.name in {"question_metric", "question_comparison"}:
+        metric_hits = sum(
+            marker in text for marker in ("aer", "cgdist", "eeoi")
+        )
+        score += metric_hits * 5.0
+        if metric_hits == 3:
+            score += 10.0
+        if "2019" in text and "2024" in text:
+            score += 8.0
+    if slot.name == "risk_classification_basis":
+        score += 7.0 * sum(
+            marker in text
+            for marker in ("operations supervision", "consequences of failure", "risk category")
+        )
+    if slot.name == "higher_risk_verification":
+        score += 6.0 * sum(
+            marker in text
+            for marker in (
+                "medium and high risk",
+                "high risk category level",
+                "simulation and physical testing",
+                "computer based system category iii",
+                "model evaluation",
+            )
+        )
+    if slot.name == "lca_method":
+        lca_markers = sum(
+            marker in text
+            for marker in (
+                "lca guidelines",
+                "well-to-tank",
+                "tank-to-wake",
+                "fuel certification",
+                "entire life cycle",
+            )
+        )
+        score += lca_markers * 6.0
+        if lca_markers >= 4:
+            score += 12.0
     if slot.outcome_preferred and OUTCOME_RE.search(text):
         score += 4.0
     if slot.date_preferred and DATE_RE.search(text):

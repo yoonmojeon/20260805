@@ -151,7 +151,11 @@ def build_presentation(
     strict_confirmed: list[DocAnalysis] = []
     demoted: list[DocAnalysis] = []
     for d in confirmed:
-        if doc_code_in_corpus(d.doc_code, {d.file_name}) or d.doc_code.replace("-", "") in d.file_name.replace("-", ""):
+        normalized_code = re.sub(r"[^a-z0-9]", "", d.doc_code.lower())
+        normalized_file = re.sub(r"[^a-z0-9]", "", d.file_name.lower())
+        if doc_code_in_corpus(d.doc_code, {d.file_name}) or (
+            bool(normalized_code) and normalized_code in normalized_file
+        ):
             strict_confirmed.append(d)
         else:
             d.confirmation = "후보"

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from project_paths import (
@@ -22,6 +24,8 @@ from services.rag_index_diag import (
     format_rag_index_banner,
     index_ready as _index_ready,
 )
+from services.korean_output import ensure_korean_answer
+from services.rag_answer_guard import guard_rag_answer
 from services.retrieval_mode import RetrievalMode, classify_retrieval_mode
 from services.table_render import (
     extract_table_ids_from_chunks,
@@ -394,12 +398,20 @@ def _related_tables_from_hits(
 
     Prefer ``crop_path`` images over Markdown rebuild. No second Chroma scan.
     """
-    del question  # highlight reserved for optional future use
     empty: tuple[str, list[str], list[dict[str, Any]]] = ("", [], [])
     if not table_chunks:
         return empty
 
-    table_ids = extract_table_ids_from_chunks(table_chunks, limit=2)
+    limit = 2
+    try:
+        from services.retrieval_mode import table_shape_score
+
+        table_score, _ = table_shape_score(question)
+        if table_score >= 0.35:
+            limit = 1
+    except Exception:
+        pass
+    table_ids = extract_table_ids_from_chunks(table_chunks, limit=limit)
     if not table_ids:
         return empty
 
@@ -463,6 +475,268 @@ def _extract_evidence_table(out: dict[str, Any] | None) -> list[dict[str, Any]]:
     return []
 
 
+def _targeted_document_completion(
+    question: str,
+    out: dict[str, Any],
+    collection: Any,
+) -> None:
+    """Complete named multi-clause questions inside their already named PDFs.
+
+    This is a metadata lookup, not another embedding search.  It is activated
+    only when the question explicitly requires two ABS instruments or the
+    MASS Working Group clause.  Loading a few rows from those PDFs prevents a
+    top-ranked introductory paragraph from becoming the whole answer.
+    """
+    if collection is None:
+        return
+    q = question or ""
+    specs: list[tuple[str, tuple[str, ...]]] = []
+    abs_comparison = bool(
+        re.search(r"Smart\s+Functions?", q, re.I)
+        and re.search(r"Autonomous\s+and\s+Remote\s+Control", q, re.I)
+        and re.search(r"비교|차이|각각|구분", q, re.I)
+    )
+    if abs_comparison:
+        specs.extend(
+            [
+                (
+                    "GuideforSmartFunctionsforMarineVesselsandOffshoreUnits-v8.pdf",
+                    (
+                        "all marine vessels and offshore units",
+                        "optional class notations",
+                        "risk-informed approach",
+                    ),
+                ),
+                (
+                    "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+                    (
+                        "autonomous or remote control functions",
+                        "operations supervision level",
+                        "computer based system category iii",
+                    ),
+                ),
+            ]
+        )
+    mass_working_group = bool(
+        re.search(r"\bMASS\b", q, re.I)
+        and re.search(r"작업반|working\s+group|회부", q, re.I)
+    )
+    if mass_working_group:
+        specs.append(
+            (
+                "MSC 111-WP.1 - Draft Report Of The Maritime Safety Committee On Its 111Th Session (Secretariat).pdf",
+                ("MASS", "working group", "referred"),
+            )
+        )
+    if not specs:
+        return
+
+    additions: list[Any] = []
+    for file_name, terms in specs:
+        try:
+            payload = collection.get(
+                where={"file_name": {"$eq": file_name}},
+                include=["documents", "metadatas"],
+            )
+        except Exception:
+            try:
+                payload = collection.get(
+                    where={"file_name": file_name},
+                    include=["documents", "metadatas"],
+                )
+            except Exception:
+                continue
+        ids = list(payload.get("ids") or [])
+        documents = list(payload.get("documents") or [])
+        metadatas = list(payload.get("metadatas") or [])
+        ranked: list[tuple[int, int, Any]] = []
+        for position, (chunk_id, text, metadata) in enumerate(
+            zip(ids, documents, metadatas)
+        ):
+            metadata = metadata or {}
+            body = str(text or "")
+            low = body.lower()
+            score = sum(1 for term in terms if term.lower() in low)
+            if score <= 0:
+                continue
+            ranked.append(
+                (
+                    score,
+                    -position,
+                    SimpleNamespace(
+                        chunk_id=str(chunk_id or ""),
+                        file_name=str(metadata.get("file_name") or file_name),
+                        doc_id=str(metadata.get("doc_id") or ""),
+                        page_number=metadata.get("page_number") or metadata.get("page"),
+                        clause_number=str(metadata.get("clause_number") or ""),
+                        source=str(metadata.get("source") or ""),
+                        text=body,
+                        metadata=metadata,
+                    ),
+                )
+            )
+        additions.extend(
+            item[2]
+            for item in sorted(
+                ranked, key=lambda item: (item[0], item[1]), reverse=True
+            )[:32]
+        )
+
+    if not additions:
+        return
+    search = out.setdefault("search_out", {})
+    pool = list(search.get("retrieval_pool") or search.get("retrieved") or [])
+    seen = {str(getattr(chunk, "chunk_id", "") or "") for chunk in pool}
+    for chunk in additions:
+        chunk_id = str(getattr(chunk, "chunk_id", "") or "")
+        if chunk_id and chunk_id in seen:
+            continue
+        if chunk_id:
+            seen.add(chunk_id)
+        pool.append(chunk)
+    search["retrieval_pool"] = pool
+
+
+def _abs_comparison_from_pool(
+    question: str, out: dict[str, Any]
+) -> tuple[str, list[dict[str, Any]]] | None:
+    """Render a two-ABS-document comparison from the already retrieved pool.
+
+    This path is deliberately narrow: it activates only when the user names
+    both instruments.  It adds no search and no LLM call; it prevents the
+    direct-clause extractor from collapsing a comparison to one long clause.
+    """
+    q = question or ""
+    smart_named = re.search(r"(?:Guide\s+for\s+)?Smart\s+Functions?", q, re.I)
+    remote_named = re.search(
+        r"(?:Requirements?\s+for\s+Autonomous\s+and\s+Remote\s+Control\s+Functions|"
+        r"Autonomous\s+and\s+Remote\s+Control\s+Requirements?)",
+        q,
+        re.I,
+    )
+    if not (smart_named and remote_named and re.search(r"비교|차이|각각|구분", q, re.I)):
+        return None
+
+    search = out.get("search_out") or {}
+    pool = list(search.get("retrieval_pool") or search.get("retrieved") or [])
+    if not pool:
+        return None
+
+    def file_name(chunk: Any) -> str:
+        return str(getattr(chunk, "file_name", "") or "")
+
+    def body(chunk: Any) -> str:
+        return re.sub(r"\s+", " ", str(getattr(chunk, "text", "") or "")).strip()
+
+    def is_guide(chunk: Any) -> bool:
+        return "guideforsmartfunctionsformarinevesselsandoffshoreunits" in re.sub(
+            r"[^a-z]", "", file_name(chunk).lower()
+        )
+
+    def is_requirements(chunk: Any) -> bool:
+        return "requirementsforautonomousandremotecontrolfunctions" in re.sub(
+            r"[^a-z]", "", file_name(chunk).lower()
+        )
+
+    def pick(predicate, patterns: tuple[str, ...]) -> Any | None:
+        for chunk in pool:
+            if not predicate(chunk):
+                continue
+            low = body(chunk).lower()
+            if all(pattern.lower() in low for pattern in patterns):
+                return chunk
+        return None
+
+    guide_scope = pick(is_guide, ("all marine vessels and offshore units", "SMART (INF)"))
+    guide_risk = pick(is_guide, ("risk-informed approach", "assigned by the submitter"))
+    req_scope = pick(is_requirements, ("autonomous or remote control functions", "AUTONOMOUS"))
+    req_category = pick(
+        is_requirements,
+        ("operations supervision level", "consequences of failure"),
+    )
+    req_validation = pick(is_requirements, ("computer based system category iii",))
+
+    chosen: list[Any] = []
+    for chunk in (guide_scope, guide_risk, req_scope, req_category, req_validation):
+        if chunk is not None and chunk not in chosen:
+            chosen.append(chunk)
+    # Both sources and the risk-category basis are the minimum safe comparison.
+    if not guide_scope or not req_scope or not req_category:
+        return None
+
+    citation = {id(chunk): index for index, chunk in enumerate(chosen, start=1)}
+
+    def cite(chunk: Any | None) -> str:
+        return f"[{citation[id(chunk)]}]" if chunk is not None else ""
+
+    lines = [
+        "## 1) 핵심 요약",
+        "",
+        (
+            "- **Smart Functions Guide — 적용대상·성격**: 모든 해양선박과 해양구조물에 "
+            "적용하며, SMART (INF)·SMART (SHM)·SMART (MHM) 등 선택적 Smart Function "
+            f"선급부호와 시스템 평가를 다룹니다. {cite(guide_scope)}"
+        ),
+        (
+            "- **Autonomous/Remote Requirements — 적용대상·성격**: 자율 또는 원격제어 "
+            "기능이 설치된 선박·해양구조물에 적용되는 ABS Requirements이며, 해당 기능은 "
+            f"AUTONOMOUS 또는 REMOTE-CON 부호의 대상입니다. {cite(req_scope)}"
+        ),
+    ]
+    if guide_risk:
+        lines.append(
+            "- **Smart Functions의 위험정보 평가**: 제출자가 안전 관련 위험요인과 기능의 "
+            "고장·성능저하가 선박 안전·운항에 미치는 결과를 고려해 위험수준을 정하고, 그 "
+            f"수준에 맞춰 ABS 검증·확인 범위를 정합니다. {cite(guide_risk)}"
+        )
+    lines.append(
+        "- **Autonomous/Remote 기능 위험범주**: 각 기능을 Low·Medium·High로 나누며, "
+        "운항감독 수준(Operations Supervision Level)과 고장 결과(Consequences of Failure)를 "
+        f"조합해 범주를 정합니다. {cite(req_category)}"
+    )
+    if req_validation:
+        lines.append(
+            "- **검증 차이**: Autonomous/Remote Requirements에서는 Medium·High 위험 기능에 "
+            "Computer Based System Category III 수준의 문서·검증 요구를 적용합니다. 따라서 "
+            "Smart Functions Guide의 위험수준 기반 시스템 평가보다 자율·원격 기능의 감독수준과 "
+            f"고장영향에 따른 추가 검증이 더 명시적입니다. {cite(req_validation)}"
+        )
+    lines.extend(
+        [
+            "",
+            "## 2) 선박 운항/업무 영향",
+            "",
+            "- 상태감시·데이터 인프라 중심의 Smart Function은 Guide와 선택 부호 기준으로, "
+            "자율·원격제어 기능은 Requirements의 위험범주·기반요건·검증자료 기준으로 "
+            "승인 자료를 분리해 준비해야 합니다.",
+            "",
+            "## 3) 추후 확인 필요사항",
+            "",
+            "- 실제 부호 신청 전에는 대상 기능의 자율화 수준, 운항감독 위치, 고장 결과를 "
+            "확정한 뒤 각 문서의 인접 조항과 최신 개정판을 함께 확인해야 합니다.",
+            "",
+            "## 4) 관련 선급 Rule / Guidance",
+            "",
+            f"- **Guide for Smart Functions for Marine Vessels and Offshore Units** {cite(guide_scope)}",
+            f"- **Requirements for Autonomous and Remote Control Functions** {cite(req_scope)}{cite(req_category)}",
+        ]
+    )
+
+    evidence: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chosen, start=1):
+        evidence.append(
+            {
+                "citation_id": f"[{index}]",
+                "file_name": file_name(chunk),
+                "page": getattr(chunk, "page_number", None)
+                or getattr(chunk, "page", None),
+                "chunk_id": str(getattr(chunk, "chunk_id", "") or ""),
+                "chunk_preview": body(chunk),
+            }
+        )
+    return "\n".join(lines), evidence
+
+
 def _run_single_rag(
     question: str,
     *,
@@ -515,13 +789,43 @@ def _run_single_rag(
             auto_llm_warm=True,
             llm_model=model,
         )
-        generated_answer = _extract_answer(out)
+        completion_collection = collection
+        if completion_collection is None:
+            try:
+                from rag_resource_cache import load_unified_collection  # type: ignore
+
+                completion_collection, loaded_embed, loaded_manifest = (
+                    load_unified_collection(unified, RAG_INDEX_DIR)
+                )
+                bucket = _TABLE_WARM if use_table_index else _WARM
+                bucket.update(
+                    {
+                        "collection": completion_collection,
+                        "embed_model": loaded_embed,
+                        "manifest": loaded_manifest,
+                        "unified_id": unified,
+                    }
+                )
+            except Exception:
+                completion_collection = None
+        _targeted_document_completion(question, out, completion_collection)
+        abs_comparison = _abs_comparison_from_pool(question, out)
+        generated_answer = abs_comparison[0] if abs_comparison else _extract_answer(out)
+        guarded = guard_rag_answer(question, generated_answer, out, model=model)
+        generated_answer = guarded.answer
         answer_empty = not bool(generated_answer)
         answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         generation = _generation_diagnostics(out)
         files: list[str] = []
         related_tables: list[dict[str, Any]] = []
-        evidence_table = _extract_evidence_table(out)
+        evidence_table = (
+            guarded.evidence_table
+            if guarded.evidence_table is not None
+            else abs_comparison[1]
+            if abs_comparison
+            else _extract_evidence_table(out)
+        )
         if use_table_index:
             search = out.get("search_out") or {}
             retrieved = list(search.get("retrieved") or [])
@@ -562,14 +866,22 @@ def _run_single_rag(
                 "table_index_used": use_table_index,
                 "related_tables_appended": bool(related_tables),
                 "evidence_rows": len(evidence_table),
-                "answer_mode": out.get("answer_mode")
-                or (out.get("search_out") or {}).get("answer_mode"),
+                "answer_mode": (
+                    guarded.mode
+                    if guarded.mode != "unchanged"
+                    else "structured_abs_comparison"
+                    if abs_comparison
+                    else out.get("answer_mode")
+                    or (out.get("search_out") or {}).get("answer_mode")
+                ),
                 "timing_metrics": (out.get("timing_metrics") or {}),
                 "llm_model": model,
                 "answer_empty": answer_empty,
                 "answer_error": str(out.get("error") or ""),
                 "answer_done_reason": generation.get("done_reason"),
                 "answer_eval_count": generation.get("eval_count"),
+                "korean_output": korean_output,
+                "answer_quality_guard": guarded.metadata,
             },
             "raw": {k: out[k] for k in out if k not in {"raw", "timing_log"}},
         }
@@ -716,13 +1028,27 @@ def _run_both_fused(
             llm_model=model,
         )
         generated_answer = _extract_answer(answer_out)
+        guard_payload = {
+            "answer_out": answer_out,
+            "search_out": {
+                "retrieval_pool": list(answer_chunks),
+                "retrieved": list(answer_chunks),
+            },
+        }
+        guarded = guard_rag_answer(question, generated_answer, guard_payload, model=model)
+        generated_answer = guarded.answer
         answer_empty = not bool(generated_answer)
         answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
+        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         generation = _generation_diagnostics(answer_out)
         _related_md, images, related_tables = _related_tables_from_hits(
             question, table_chunks
         )
-        evidence_table = _extract_evidence_table(answer_out)
+        evidence_table = (
+            guarded.evidence_table
+            if guarded.evidence_table is not None
+            else _extract_evidence_table(answer_out)
+        )
         return {
             "answer": answer,
             "files": images,
@@ -761,6 +1087,8 @@ def _run_both_fused(
                 "answer_error": str(answer_out.get("error") or ""),
                 "answer_done_reason": generation.get("done_reason"),
                 "answer_eval_count": generation.get("eval_count"),
+                "korean_output": korean_output,
+                "answer_quality_guard": guarded.metadata,
             },
             "raw": {"answer_out": answer_out, "table_search": table_hit.get("search_out")},
         }

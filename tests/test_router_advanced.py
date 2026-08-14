@@ -1,6 +1,10 @@
 from router.intent_router import route_question
 from router.rewrite import split_hybrid_queries
 from tests.router_heldout_cases import ADVANCED_SINGLE, HELDOUT_SINGLE, MULTITURN_SCENARIOS
+from services.rag_service import _ensure_rag_path
+
+_ensure_rag_path()
+from retrieval_query_analysis import analyze_query
 
 
 def test_seemp_ship_health_is_ops():
@@ -42,6 +46,26 @@ def test_hybrid_split_uses_each_side():
     ops_q, rag_q = split_hybrid_queries("우리 CII랑 MEPC 규제 같이 알려줘")
     assert "CII" in ops_q.upper()
     assert "MEPC" in rag_q.upper()
+
+
+def test_named_cii_report_expands_result_and_method_terms_first():
+    signals = analyze_query("MEPC 84/6/2 CII 선대 보고서를 설명해줘")
+    joined = " ".join(signals.expanded_terms[:8])
+    assert "10.8%" in joined
+    assert "AER" in joined
+    assert "EEOI" in joined
+
+
+def test_abs_two_document_comparison_keeps_both_document_hints():
+    signals = analyze_query(
+        "ABS Guide for Smart Functions와 Requirements for Autonomous and "
+        "Remote Control Functions를 위험범주와 검증 관점에서 비교해줘"
+    )
+    assert "ABS-Smart-Functions-Guide" in signals.rule_doc_hints
+    assert "ABS-Autonomous-Remote-Requirements" in signals.rule_doc_hints
+    joined = " ".join(signals.expanded_terms[:8]).lower()
+    assert "optional class notation" in joined
+    assert "operations supervision" in joined
 
 
 def test_dialogue_state_keeps_topic():

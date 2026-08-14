@@ -44,8 +44,17 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
             answer, _show = formatted
             return {"answer": answer, "tool": "calculate_cii_rating"}
 
-    # Current status summary
-    if re.search(r"현재\s*(운항\s*)?상태|운항\s*상태\s*요약|지금\s*운항", q, re.I):
+    # Current status / requested live voyage slots.  These are already
+    # calculated by the SQLite tools, so routing them through a generative
+    # model only adds latency and can truncate the last requested fields.
+    current_scope = re.search(r"현재|지금|이번\s*항차|현재\s*항차", q, re.I)
+    current_slots = re.search(
+        r"운항\s*상태|위치|선속|속력|\bSOG\b|흘수|연료|\bFOC\b|\bFGC\b|"
+        r"적재|Loading|다음\s*항|도착\s*항|목적지",
+        q,
+        re.I,
+    )
+    if current_scope and current_slots:
         result = get_current_voyage_status()
         formatted = build_answer_from_tools(
             [("get_current_voyage_status", {}, result)]
@@ -117,7 +126,7 @@ def run_ops_query(
     model = normalize_llm_model(llm_model)
 
     deterministic = _try_deterministic_ops(question)
-    shortcut_on = os.environ.get("MARITIME_OPS_DETERMINISTIC_SHORTCUTS", "0").strip().lower() in {
+    shortcut_on = os.environ.get("MARITIME_OPS_DETERMINISTIC_SHORTCUTS", "1").strip().lower() in {
         "1",
         "true",
         "on",

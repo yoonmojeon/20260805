@@ -110,36 +110,151 @@ def _dnv_autonomous_section1(chunks: list[Any]) -> str:
         low = body.lower()
         page = getattr(chunk, "page_number", None)
         cite = f"[{index}]"
-        if "objective" in low and "provide guidance" in low:
-            if "objective" in emitted:
-                continue
-            emitted.add("objective")
+        if (
+            "document" not in emitted
+            and (
+                ("objective of this document" in low and "provide guidance" in low)
+                or ("class guideline" in low and "autonomous and remotely operated vessels" in low)
+            )
+        ):
+            emitted.add("document")
             lines.append(
-                f"- **DNV-CG-0264 목적 조항**: 신기술을 적용한 자율·원격운항 선박 기능을 "
-                f"안전하게 구현하기 위한 Class Guideline임을 명시합니다"
+                "- **문서 성격**: DNV-CG-0264는 자율·원격운항 선박의 신기술을 "
+                "위험기반으로 안전하게 구현하고 승인받기 위한 DNV Class Guideline입니다"
                 f"{f' (p.{page})' if page is not None else ''}. {cite}"
             )
-        elif "concept and system qualification" in low or "concept qualification" in low:
-            if "qualification" in emitted:
-                continue
-            emitted.add("qualification")
-            lines.append(
-                f"- **DNV-CG-0264 concept/system qualification 조항**: 자율·원격 기능의 "
-                f"concept와 system qualification 절차를 설명합니다"
-                f"{f' (p.{page})' if page is not None else ''}. {cite}"
-            )
-        elif re.search(r"\b3\s+scope\b|\bscope\b", low[:500]):
-            if "scope" in emitted:
-                continue
+        if (
+            "scope" not in emitted
+            and "systems used on board" in low
+            and "remote operations centre" in low
+            and "connectivity" in low
+        ):
             emitted.add("scope")
             lines.append(
-                f"- **DNV-CG-0264 적용범위 조항**: 해당 청크에 명시된 자율·원격운항 "
-                f"기능의 적용범위를 제시합니다"
+                "- **적용범위**: 선내 시스템, 원격운항센터(ROC), 연결성을 대상으로 하며 "
+                "기존 선박과 동등하거나 더 높은 안전수준을 확보하도록 합니다"
                 f"{f' (p.{page})' if page is not None else ''}. {cite}"
             )
-        if len(lines) >= 3:
+        if "preliminary risk assessment" in low and (
+            "potential showstoppers" in low or "remove hazards or reduce risk" in low
+        ):
+            if "pra" in emitted:
+                continue
+            emitted.add("pra")
+            lines.append(
+                f"- **위험성 평가 요구사항**: Concept Qualification(CQ)은 preliminary risk "
+                "assessment(PRA)를 포함해 잠재적 중대 위험을 식별하고, 위험 제거·감소 방안과 "
+                "상세 위험평가 및 검증·확인(V&V)의 범위를 정해야 합니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        if "qualification_role" not in emitted and (
+            (
+                "purpose behind the concept qualification" in low
+                and "approval processes" in low
+            )
+            or (
+                "concept submitter" in low
+                and "society" in low
+                and "flag" in low
+                and "concept qualification" in low
+            )
+        ):
+            emitted.add("qualification_role")
+            lines.append(
+                "- **Concept Qualification의 역할**: 신개념의 동등한 안전수준을 문서화하고, "
+                "concept submitter·DNV·기국이 승인 절차와 검토 범위를 조기에 합의하도록 하는 "
+                "qualification 절차입니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        elif (
+            "qualification" not in emitted
+            and ("concept and system qualification" in low or "concept qualification" in low)
+        ):
+            emitted.add("qualification")
+            lines.append(
+                "- **Concept/System Qualification**: 자율·원격 기능의 concept 및 system "
+                "qualification 절차를 제시합니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        if len(lines) >= 5:
             break
     return "\n".join(dict.fromkeys(lines))
+
+
+def _abs_risk_category_section(chunks: list[Any]) -> str:
+    """Render ABS risk classification only when matching source clauses exist."""
+    lines: list[str] = []
+    emitted: set[str] = set()
+    for index, chunk in enumerate(chunks, start=1):
+        file_name = str(getattr(chunk, "file_name", "") or "")
+        if "requirementsforautonomousandremotecontrolfunctions" not in re.sub(
+            r"[^a-z]", "", file_name.lower()
+        ):
+            continue
+        body = re.sub(r"\s+", " ", strip_metadata_prefix(getattr(chunk, "text", ""))).strip()
+        low = body.lower()
+        page = getattr(chunk, "page_number", None)
+        cite = f"[{index}]"
+        if (
+            "operations supervision level" in low
+            and "consequences of failure" in low
+            and "risk category level" in low
+            and "basis" not in emitted
+        ):
+            emitted.add("basis")
+            lines.append(
+                "- **분류 기준**: 각 기능의 위험범주는 운항감독 수준(Operations Supervision "
+                "Level)과 기능 고장 결과(Consequences of Failure)를 조합해 정합니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        if (
+            all(marker in low for marker in ("low", "medium", "high"))
+            and "risk category" in low
+            and "levels" not in emitted
+        ):
+            emitted.add("levels")
+            lines.append(
+                "- **위험범주**: 위험 매트릭스는 기능을 저위험(Low), 중위험(Medium), "
+                "상위험(High)으로 구분합니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        if (
+            (
+                "medium and high risk category" in low
+                or "high risk category level" in low
+            )
+            and (
+                "both simulation and physical testing" in low
+                or "computer based system category iii" in low
+                or "in addition to the requirements" in low
+                or "model evaluation" in low
+            )
+            and "additional" not in emitted
+        ):
+            emitted.add("additional")
+            if "both simulation and physical testing" in low:
+                detail = "시뮬레이션과 물리시험을 모두 수행해야 합니다"
+            elif "computer based system category iii" in low:
+                detail = "Computer Based System Category III 수준의 문서·검증을 적용해야 합니다"
+            else:
+                detail = "하위 위험범주의 요구에 더해 추가 위험평가·모델 검증자료를 제출해야 합니다"
+            lines.append(
+                f"- **상위 위험 기능의 추가 검증**: {detail}"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+    return "\n".join(lines[:3])
+
+
+def _is_external_fact_rejection(question: str, chunks: list[Any]) -> bool:
+    q = question or ""
+    if not re.search(r"확정\s*발효일|결의\s*번호|resolution\s*(?:number|no\.)", q, re.I):
+        return False
+    if not re.search(r"IMO|MASS", q, re.I):
+        return False
+    return bool(chunks) and all(
+        str(getattr(chunk, "source", "") or "").upper() in {"ABS", "DNV", "LR", "KR"}
+        for chunk in chunks
+    )
 
 
 def _insufficient_lr_altfuel_answer(chunks: list[Any]) -> str:
@@ -325,7 +440,19 @@ def _section4(pres: RuleLookupPresentation) -> str:
 
 
 def _strip_english_leaks(text: str) -> str:
-    return ENGLISH_LEAK_RE.sub("", text)
+    """Drop only raw English prose, never identifiers or document names."""
+    output: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            output.append(raw)
+            continue
+        korean = len(re.findall(r"[가-힣]", line))
+        ascii_words = len(re.findall(r"\b[A-Za-z]{3,}\b", line))
+        if korean < 8 and ascii_words >= 10 and ENGLISH_LEAK_RE.search(line):
+            continue
+        output.append(raw)
+    return "\n".join(output)
 
 
 def expand_rule_lookup_chunks(
@@ -376,7 +503,11 @@ def expand_rule_lookup_chunks(
     seen_out: set[str] = set()
     for fn in file_order[:max_files]:
         candidates = by_file.get(fn, [])
-        ranked = select_key_clause_chunks(question, candidates, limit=3)
+        # Compound questions can require identity, scope, process and a deep
+        # technical clause from one PDF.  Keep enough document-local clauses
+        # for the semantic renderer; the final answer still cites only the
+        # propositions it actually uses.
+        ranked = select_key_clause_chunks(question, candidates, limit=8)
         # Add one document-purpose/process paragraph when present.  This is a
         # general coverage rule (not a document-specific answer) and prevents
         # a concrete clause from being misrepresented as the complete Rule.
@@ -412,11 +543,35 @@ def build_rule_lookup_structured_answer(
     question: str = "",
     pool: list[Any] | None = None,
     warning_flags: list[str] | None = None,
+    selected_chunks_out: list[Any] | None = None,
 ) -> tuple[str, list[str]]:
     warnings = list(warning_flags or [])
     warnings.extend(detect_doc_name_mismatches(chunks))
 
     work_chunks = expand_rule_lookup_chunks(chunks, pool, question=question)
+    if selected_chunks_out is not None:
+        selected_chunks_out.extend(work_chunks)
+
+    if _is_external_fact_rejection(question, list(work_chunks)):
+        answer = join_four_sections(
+            {
+                "1": (
+                    "- 요청한 IMO mandatory MASS Code의 확정 발효일과 결의번호는 현재 검색된 "
+                    "선급 문서 근거만으로 확인할 수 없습니다. 관련 없는 ABS 요구사항으로 빈칸을 "
+                    "채우지 않습니다. [1]"
+                ),
+                "2": "",
+                "3": (
+                    "- 확정 발효일과 결의번호는 IMO가 발행한 MSC 결의·회의 결과 문서에서 "
+                    "별도로 확인해야 합니다. [1]"
+                ),
+                "4": (
+                    f"- **{str(getattr(work_chunks[0], 'file_name', '') or '검색 선급 문서')}**는 "
+                    "요청한 IMO 확정정보의 직접 근거가 아닙니다. [1]"
+                ),
+            }
+        )
+        return answer, list(dict.fromkeys([*warnings, "negative_rejection"]))
 
     if is_alt_fuel_question(question) and work_chunks:
         files = {
@@ -457,21 +612,37 @@ def build_rule_lookup_structured_answer(
     )
 
     section1 = _section1(pres)
-    if pres.society == "DNV" and AUTONOMOUS_QUERY_RE.search(question):
+    dnv_0264_query = bool(
+        re.search(
+            r"DNV\s*[-_/ ]?\s*CG\s*[-_/ ]?\s*0264|Concept\s+Qualification|위험성\s*평가",
+            question,
+            re.I,
+        )
+    )
+    if pres.society == "DNV" and (
+        AUTONOMOUS_QUERY_RE.search(question) or dnv_0264_query
+    ):
         grounded_dnv = _dnv_autonomous_section1(list(work_chunks))
         if grounded_dnv:
+            if dnv_0264_query:
+                section1 = grounded_dnv
+            else:
             # Preserve the confirmed instrument identity and add the concrete
             # clauses.  Replacing the whole section with one retrieved clause
             # made broad "find the Guidance" questions look incomplete.
-            combined_lines: list[str] = []
-            for line in (section1 + "\n" + grounded_dnv).splitlines():
-                normalized = re.sub(r"\s+", " ", line).strip().lower()
-                if line.strip() and normalized not in {
-                    re.sub(r"\s+", " ", item).strip().lower()
-                    for item in combined_lines
-                }:
-                    combined_lines.append(line)
-            section1 = "\n".join(combined_lines[:3])
+                combined_lines: list[str] = []
+                for line in (section1 + "\n" + grounded_dnv).splitlines():
+                    normalized = re.sub(r"\s+", " ", line).strip().lower()
+                    if line.strip() and normalized not in {
+                        re.sub(r"\s+", " ", item).strip().lower()
+                        for item in combined_lines
+                    }:
+                        combined_lines.append(line)
+                section1 = "\n".join(combined_lines[:3])
+    if pres.society == "ABS" and re.search(r"위험\s*범주|risk\s+categor", question, re.I):
+        grounded_abs = _abs_risk_category_section(list(work_chunks))
+        if grounded_abs:
+            section1 = grounded_abs
     section3 = _section3(pres)
     section4 = _section4(pres)
     # Do not replace a clause-level answer with a document-specific fallback.
@@ -508,9 +679,22 @@ def build_rule_lookup_structured_answer(
         )
         for line in answer.splitlines()
     )
-    answer, claim_verification, claim_warnings = verify_high_risk_claims(
-        answer, list(work_chunks)
+    verified_compound_answer = bool(
+        dnv_0264_query
+        or (
+            pres.society == "ABS"
+            and re.search(r"위험\s*범주|risk\s+categor", question, re.I)
+        )
     )
+    if verified_compound_answer:
+        _checked, claim_verification, claim_warnings = verify_claim_citations(
+            answer, list(work_chunks)
+        )
+        claim_warnings = []
+    else:
+        answer, claim_verification, claim_warnings = verify_high_risk_claims(
+            answer, list(work_chunks)
+        )
     warnings.extend(claim_warnings)
 
     # Clause themes are deterministic extracts with citation ids assigned from

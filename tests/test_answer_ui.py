@@ -17,7 +17,7 @@ def test_evidence_table_maps_citation_to_location() -> None:
             }
         ]
     )
-    assert "Evidence Table" in html
+    assert "인용 근거" in html
     assert "[2]" in html
     assert "MEPC 84-6-2.pdf" in html
     assert "5" in html
