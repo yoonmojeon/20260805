@@ -41,8 +41,12 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
             [("calculate_cii_rating", {"year": year}, result)]
         )
         if formatted:
-            answer, _show = formatted
-            return {"answer": answer, "tool": "calculate_cii_rating"}
+            answer, show_map = formatted
+            return {
+                "answer": answer,
+                "tool": "calculate_cii_rating",
+                "show_map": show_map,
+            }
 
     # Current status / requested live voyage slots.  These are already
     # calculated by the SQLite tools, so routing them through a generative
@@ -60,8 +64,12 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
             [("get_current_voyage_status", {}, result)]
         )
         if formatted:
-            answer, _show = formatted
-            return {"answer": answer, "tool": "get_current_voyage_status"}
+            answer, show_map = formatted
+            return {
+                "answer": answer,
+                "tool": "get_current_voyage_status",
+                "show_map": show_map,
+            }
 
     # Voyage analysis: 이전/현재/올해 + optional Laden/Ballast
     if re.search(
@@ -90,8 +98,12 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
             [("get_voyage_analysis", {"period": period, "voyage_id": fake_id}, result)]
         )
         if formatted:
-            answer, _show = formatted
-            return {"answer": answer, "tool": "get_voyage_analysis"}
+            answer, show_map = formatted
+            return {
+                "answer": answer,
+                "tool": "get_voyage_analysis",
+                "show_map": show_map,
+            }
 
     return None
 
@@ -134,6 +146,8 @@ def run_ops_query(
     }
     if shortcut_on and deterministic and deterministic.get("answer"):
         answer = str(deterministic["answer"])
+        show_map = bool(deterministic.get("show_map"))
+        map_html = render_voyage_map() if show_map else ""
         new_history = list(history or []) + [
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
@@ -142,8 +156,8 @@ def run_ops_query(
             "answer": answer,
             "history": new_history,
             "files": [],
-            "show_map": False,
-            "map_html": "",
+            "show_map": show_map,
+            "map_html": map_html,
             "source": "ops",
             "reports_dir": str(REPORTS_DIR),
             "deterministic_tool": deterministic.get("tool"),
@@ -163,6 +177,7 @@ def run_ops_query(
             {"role": "assistant", "content": answer},
         ]
         answer_fallback_used = True
+        show_map = show_map or bool(deterministic.get("show_map"))
     map_html = ""
     if show_map:
         try:
