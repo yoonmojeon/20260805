@@ -24,6 +24,30 @@ def _pos_text(lat: float, lon: float) -> str:
     return f"위도 {lat_s}, 경도 {lon_s}"
 
 
+def _position_value(lat: float, lon: float) -> str:
+    """KPI 표에 넣을 수 있도록 위치를 한 줄로 표현한다."""
+    lat_s = f"{lat:.3f}°N" if lat else "미제공"
+    lon_s = f"{lon:.3f}°E" if lon else "미제공"
+    return f"{lat_s} / {lon_s}"
+
+
+def _display_port(value: object) -> str:
+    text = str(value or "").strip()
+    return text if text and text.lower() != "unknown" else "미제공"
+
+
+def _period_definitions(reference_time: str) -> str:
+    year = reference_time[:4] if len(reference_time) >= 4 else CURRENT_DATE[:4]
+    return "\n".join(
+        [
+            "## 3. 시점 기준 정의",
+            "- **현재**: 현재 항차 시작일 ~ 최신 센서 시각",
+            "- **이전**: 직전 완료 항차",
+            f"- **올해**: {year}-01-01 ~ 최신 센서 시각",
+        ]
+    )
+
+
 _CII_SCOPE_LABEL = {
     "annual":         "공식 연간 CII",
     "current_voyage": "현재 항차 잠정(Indicative) CII",
@@ -99,46 +123,69 @@ def format_current_status(d: dict) -> str:
     lon = float(pos.get("longitude", 0) or 0)
     cii = d.get("cii_ytd", {})
 
-    p1 = (
-        f"【시점 기준】 현재 = 항차 {d.get('current_voyage_id', '')} "
-        f"(Voyage No 기준, {d.get('voyage_start', '')} ~ {d.get('voyage_end', '')}) 구간, "
-        f"최신 센서 시각 {d.get('last_reading_time', CURRENT_DATE)} 기준입니다. "
-        f"선박 {d.get('ship_name', '')}(IMO {d.get('ship_imo', '')})은 "
-        f"{d.get('departure_port', '미제공')}에서 {d.get('arrival_port', '미제공')} 방향으로 "
-        f"운항 중이며, 항해 일수는 {_fmt(d.get('days_at_sea'), 1)}일입니다. "
-        f"{_distance_text(d)}"
+    reference_time = str(d.get("last_reading_time") or CURRENT_DATE)
+    voyage_start = str(d.get("voyage_start") or "미제공")
+    voyage_end = str(d.get("voyage_end") or reference_time)
+    me_rpm = d.get("me_rpm")
+    me_rpm_value = (
+        _fmt(me_rpm, 1, " rpm")
+        if me_rpm not in (None, "")
+        else d.get("me_rpm_note", "미측정")
+    )
+    cii_value = "산출 불가"
+    if cii.get("status") == "success":
+        cii_value = (
+            f"{cii.get('rating', '미제공')} "
+            f"(Attained {_fmt(cii.get('attained_cii'), 3)} / "
+            f"Required {_fmt(cii.get('required_cii'), 3)})"
+        )
+
+    summary = (
+        "# 운항 브리핑\n\n"
+        f"> **기준 시각** {reference_time} · **현재 항차** "
+        f"{d.get('current_voyage_id', '미제공')} · "
+        f"**Loading** {d.get('loading_status', '미제공')}"
+    )
+    kpi = "\n".join(
+        [
+            "## 1. 선박 KPI",
+            "| 항목 | 값 | 산정 기준 |",
+            "|---|---:|---|",
+            f"| 위도 / 경도 | {_position_value(lat, lon)} | 최신 유효 센서 |",
+            f"| Loading 상태 | {d.get('loading_status', '미제공')} | 현재 항차 |",
+            f"| SOG(선속) | {_fmt(d.get('sog_kts'), 1, ' kn')} (항차 평균 {_fmt(d.get('avg_sog_kts'), 1, ' kn')}) | 최신 센서 / 항차 평균 |",
+            f"| M/E RPM | {me_rpm_value} | 최신 센서 |",
+            f"| FOC | {_fmt(d.get('voyage_foc_oil_mt'), 2, ' MT')} (현재 {_fmt(d.get('foc_oil_rate_mt_h'), 4, ' MT/h')}) | 현재 항차 누계 / 순간 |",
+            f"| FGC | {_fmt(d.get('voyage_fgc_gas_mt'), 2, ' MT')} (현재 {_fmt(d.get('fgc_gas_rate_mt_h'), 4, ' MT/h')}) | 현재 항차 누계 / 순간 |",
+            f"| CO₂ | {_fmt(d.get('voyage_co2_mt'), 2, ' MT')} | 현재 항차 누계 |",
+            f"| CH₄ | {_fmt(d.get('voyage_ch4_mt'), 4, ' MT')} | 현재 항차 누계 |",
+            f"| CO₂e | {_fmt(d.get('voyage_co2e_mt'), 2, ' MT')} | 현재 항차 누계 |",
+            f"| CII 등급 | {cii_value} | {reference_time[:4]}-01-01 ~ {reference_time[:10]} 잠정 YTD |",
+        ]
+    )
+    route = "\n".join(
+        [
+            "## 2. 현재 위치 및 항차 이동 경로",
+            f"- **현재 위치**: {_pos_text(lat, lon)}",
+            f"- **항차 구간**: {voyage_start} ~ {voyage_end} "
+            f"({_display_port(d.get('departure_port'))} → {_display_port(d.get('arrival_port'))})",
+            f"- **운항 실적**: {_fmt(d.get('days_at_sea'), 1, '일')} · {_distance_text(d)}",
+            "- 아래 지도에 원본 DB에서 확인되는 유효 좌표의 이동 경로와 현재 위치를 표시합니다.",
+        ]
+    )
+    limits = "\n".join(
+        [
+            "## 4. 데이터 유의사항",
+            f"- CII는 {reference_time[:4]}-01-01 ~ {reference_time[:10]} 누계로 산정한 "
+            f"잠정 YTD 값이며, 연도 종료 후 확정되는 공식 연간 CII와 구분해야 합니다.",
+            "- 원본 DB에 흘수·RPM·기상 컬럼이 없어 해당 값은 추정하지 않습니다.",
+            "- 원본에서 경도가 0인 구간은 지도 경로에서 제외하므로 실제 항적보다 짧게 보일 수 있습니다.",
+        ]
     )
 
-    p2 = (
-        f"【위치·운항】 {_pos_text(lat, lon)}. "
-        f"Loading 상태는 {d.get('loading_status', '미제공')}입니다. "
-        "흘수는 원본 운항 DB에 해당 컬럼이 없어 확인할 수 없습니다. "
-        f"현재 선속(SOG)은 {_fmt(d.get('sog_kts'), 1, ' 노트')}, "
-        f"평균 선속은 {_fmt(d.get('avg_sog_kts'), 1, ' 노트')}입니다. "
-        f"M/E RPM은 {d.get('me_rpm_note', '미측정')}이며, "
-        f"주기관 출력은 {_fmt(d.get('me_power_kw'), 0, ' kW')}입니다."
+    return "\n\n".join(
+        [summary, kpi, route, _period_definitions(reference_time), limits]
     )
-
-    p3 = (
-        f"【연료·배출 (항차 누계)】 "
-        f"FOC(Oil) {_fmt(d.get('voyage_foc_oil_mt'), 2, ' MT')}, "
-        f"FGC(Gas) {_fmt(d.get('voyage_fgc_gas_mt'), 2, ' MT')}, "
-        f"CO₂ {_fmt(d.get('voyage_co2_mt'), 2, ' MT')}, "
-        f"CH₄ {_fmt(d.get('voyage_ch4_mt'), 4, ' MT')}, "
-        f"CO₂e {_fmt(d.get('voyage_co2e_mt'), 2, ' MT')}입니다. "
-        f"순간 소비율은 Oil {_fmt(d.get('foc_oil_rate_mt_h'), 4, ' MT/h')}, "
-        f"Gas {_fmt(d.get('fgc_gas_rate_mt_h'), 4, ' MT/h')}, "
-        f"CO₂ {_fmt(d.get('co2_rate_mt_h'), 4, ' MT/h')}입니다."
-    )
-
-    p4 = f"【CII】 {_cii_text(cii)} (연초~현재 YTD 기준, 현재 항차와 기간이 다릅니다.)"
-
-    p5 = (
-        "【데이터 한계】 원본에 흘수·RPM·기상 정보가 없습니다. "
-        "경도(lon=0) 구간은 위치·지도에 제한이 있습니다."
-    )
-
-    return "\n\n".join([p1, p2, p3, p4, p5])
 
 
 def format_voyage_analysis(d: dict, period: str = "current") -> str:

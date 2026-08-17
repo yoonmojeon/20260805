@@ -407,8 +407,6 @@ body, .gradio-container {
 }
 .brand-copy h1 { margin: 0; color: #fff; font-size: 21px; line-height: 1.2; letter-spacing: -.02em; }
 .brand-copy p { margin: 5px 0 0; color: #9fb4c2; font-size: 11px; letter-spacing: .12em; }
-.vessel-context { display: flex; gap: 8px; align-items: center; color: #c6d4dc; font-size: 13px; }
-.context-pill { padding: 7px 10px; background: #0e2c41; border: 1px solid #24465b; border-radius: 999px; color: #c6d4dc !important; }
 .ready-state { display: inline-flex; align-items: center; gap: 8px; color: #d9f3ee; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .ready-state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #42d3a6; box-shadow: 0 0 0 4px rgba(66, 211, 166, .12); }
 .control-bar { margin: 12px 0 14px !important; align-items: stretch !important; gap: 12px !important; flex-wrap: nowrap !important; }
@@ -542,7 +540,6 @@ footer { display: none !important; }
   .app-shell-header { align-items: flex-start; flex-direction: column; }
   .control-bar { flex-wrap: wrap !important; }
   .control-bar > div:last-child { flex: 1 1 auto !important; max-width: none !important; }
-  .vessel-context { flex-wrap: wrap; }
   .model-control { max-width: none; }
   .page-intro { flex-direction: column; }
   .report-card { align-items: flex-start; }
@@ -563,11 +560,6 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
               <h1>MaritimeOps AI</h1>
               <p>선원 업무 지원 코파일럿</p>
             </div>
-          </div>
-          <div class="vessel-context">
-            <span class="context-pill">선박 H2521</span>
-            <span class="context-pill">벌크선</span>
-            <span class="context-pill">로컬 업무공간</span>
           </div>
           <span class="ready-state">{ready_label}</span>
         </header>
@@ -696,12 +688,12 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                 _page_intro(
                     "운항 데이터",
                     "운항 정보",
-                    "로컬 운항 DB의 실제 항차, 속력, 연료, 배출량, CII를 조회하고 보고서를 생성합니다.",
+                    "현재 항차 KPI, 연료·배출량, 잠정 CII와 이동 경로를 한 화면에서 조회하고 보고서를 생성합니다.",
                     "운항 DB 고정",
                 )
             )
             ops_examples = [
-                "현재 운항 중인 항차 번호와 적재 상태를 알려줘.",
+                "현재 운항 브리핑을 보여줘.",
                 "현재 Ballast 항차의 누적 운항거리는 몇 해리야?",
                 "2026년 누적 잠정 CII attained, required와 등급은?",
             ]

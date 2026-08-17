@@ -36,3 +36,31 @@ def test_current_status_shortcut_includes_map():
     assert result["deterministic_tool"] == "get_current_voyage_status"
     assert result["show_map"] is True
     assert 'title="현재 항차 이동 경로 지도"' in result["map_html"]
+
+
+def test_operation_briefing_contains_requested_kpis_and_period_definitions():
+    result = run_ops_query("현재 운항 브리핑을 보여줘.", llm_model="gemma4:12b")
+    answer = result["answer"]
+
+    assert result["deterministic_tool"] == "get_current_voyage_status"
+    assert result["show_map"] is True
+    assert "# 운항 브리핑" in answer
+    assert "## 1. 선박 KPI" in answer
+    for field in (
+        "위도 / 경도",
+        "Loading 상태",
+        "SOG(선속)",
+        "M/E RPM",
+        "FOC",
+        "FGC",
+        "CO₂",
+        "CH₄",
+        "CO₂e",
+        "CII 등급",
+    ):
+        assert field in answer
+    assert "## 2. 현재 위치 및 항차 이동 경로" in answer
+    assert "## 3. 시점 기준 정의" in answer
+    assert "**현재**: 현재 항차 시작일 ~ 최신 센서 시각" in answer
+    assert "**이전**: 직전 완료 항차" in answer
+    assert "**올해**:" in answer
