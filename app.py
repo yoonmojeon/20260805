@@ -653,7 +653,7 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                 )
             )
             document_examples = [
-                "과도한 부식의 정의는 무엇인가?",
+                "ABS Requirements for Autonomous and Remote Control Functions의 적용대상과 기능 위험범주 산정 기준, 중·상위 위험 기능의 추가 검증 요구를 핵심 요약하고, 선박 업무 영향·추후 확인사항·관련 Rule/Guidance로 나눠 설명해줘.",
                 "구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?",
                 "형상이 복잡하거나 한 개의 중량이 10톤을 넘는 주강품은 제품마다 시험재가 몇 개 필요한가?",
             ]
