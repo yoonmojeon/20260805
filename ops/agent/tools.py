@@ -2,6 +2,7 @@
 Maritime Ops Agent - Tool 정의
 LLM이 호출하는 7개 도구 + 지도 렌더링
 """
+import base64
 import math
 import re
 import sys
@@ -429,16 +430,42 @@ def render_voyage_map(voyage_id: str = "") -> str:
 
         center_lat = float(track["lat"].mean())
         center_lon = float(track["lon"].mean())
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=4)
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=5,
+            tiles="CartoDB positron",
+            control_scale=True,
+        )
 
         coords = list(zip(track["lat"].astype(float), track["lon"].astype(float)))
-        folium.PolyLine(coords, color="#1E88E5", weight=2.5, opacity=0.8).add_to(m)
+        folium.PolyLine(coords, color="#0F766E", weight=4, opacity=0.9).add_to(m)
 
         if coords:
-            folium.Marker(coords[0],  popup="출발", icon=folium.Icon(color="green")).add_to(m)
-            folium.Marker(coords[-1], popup="최신위치", icon=folium.Icon(color="red")).add_to(m)
+            folium.Marker(
+                coords[0], popup="출발 위치", tooltip="출발", icon=folium.Icon(color="green")
+            ).add_to(m)
+            folium.Marker(
+                coords[-1],
+                popup="최신 유효 좌표",
+                tooltip="최신 유효 좌표",
+                icon=folium.Icon(color="red"),
+            ).add_to(m)
+            if len(coords) > 1:
+                m.fit_bounds(coords, padding=(24, 24))
 
-        return m._repr_html_()
+        # Folium's notebook representation contains a "Trust Notebook" fallback
+        # that Gradio leaves visible while removing its srcdoc.  A standalone
+        # map document in a sandboxed data-URL iframe renders reliably in gr.HTML.
+        map_document = m.get_root().render()
+        encoded = base64.b64encode(map_document.encode("utf-8")).decode("ascii")
+        return (
+            '<div style="margin:0 0 8px;color:#52606d;font-size:12px">'
+            '위도·경도가 모두 기록된 유효 좌표 구간만 표시합니다.</div>'
+            '<iframe title="현재 항차 이동 경로 지도" '
+            f'src="data:text/html;base64,{encoded}" '
+            'style="width:100%;height:430px;border:0;border-radius:12px;display:block" '
+            'sandbox="allow-scripts allow-same-origin" loading="lazy"></iframe>'
+        )
     except Exception as e:
         return f"<p>지도 오류: {e}</p>"
 

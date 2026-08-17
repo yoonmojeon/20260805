@@ -517,6 +517,21 @@ def _targeted_document_completion(
                 ),
             ]
         )
+    abs_requirements_detail = bool(
+        re.search(r"Autonomous\s+and\s+Remote\s+Control", q, re.I)
+        and re.search(r"위험|risk|검증|verification|적용\s*대상", q, re.I)
+    )
+    if abs_requirements_detail and not abs_comparison:
+        specs.append(
+            (
+                "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+                (
+                    "autonomous or remote control functions",
+                    "operations supervision level",
+                    "computer based system category iii",
+                ),
+            )
+        )
     mass_working_group = bool(
         re.search(r"\bMASS\b", q, re.I)
         and re.search(r"작업반|working\s+group|회부", q, re.I)
@@ -826,6 +841,11 @@ def _run_single_rag(
             if abs_comparison
             else _extract_evidence_table(out)
         )
+        from services.rag_presentation import compact_citations
+
+        answer, evidence_table, citation_mapping = compact_citations(
+            answer, evidence_table
+        )
         if use_table_index:
             search = out.get("search_out") or {}
             retrieved = list(search.get("retrieved") or [])
@@ -882,6 +902,9 @@ def _run_single_rag(
                 "answer_eval_count": generation.get("eval_count"),
                 "korean_output": korean_output,
                 "answer_quality_guard": guarded.metadata,
+                "citation_order_normalized": any(
+                    old != new for old, new in citation_mapping.items()
+                ),
             },
             "raw": {k: out[k] for k in out if k not in {"raw", "timing_log"}},
         }
@@ -1049,6 +1072,11 @@ def _run_both_fused(
             if guarded.evidence_table is not None
             else _extract_evidence_table(answer_out)
         )
+        from services.rag_presentation import compact_citations
+
+        answer, evidence_table, citation_mapping = compact_citations(
+            answer, evidence_table
+        )
         return {
             "answer": answer,
             "files": images,
@@ -1089,6 +1117,9 @@ def _run_both_fused(
                 "answer_eval_count": generation.get("eval_count"),
                 "korean_output": korean_output,
                 "answer_quality_guard": guarded.metadata,
+                "citation_order_normalized": any(
+                    old != new for old, new in citation_mapping.items()
+                ),
             },
             "raw": {"answer_out": answer_out, "table_search": table_hit.get("search_out")},
         }

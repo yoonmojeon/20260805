@@ -297,8 +297,31 @@ def _abs_risk_answer(question: str, pool: list[Any]) -> GuardResult | None:
             "medium and high risk category",
         ),
     )
-    chunks = [basis] + ([additional] if additional is not None and additional is not basis else [])
+    scope = _pick(
+        pool,
+        file_pattern=file_pattern,
+        all_terms=("autonomous or remote control functions", "AUTONOMOUS"),
+        any_terms=("vessels", "offshore units", "REMOTE-CON"),
+    )
+    chunks = [basis]
+    for candidate in (additional, scope):
+        if candidate is not None and candidate not in chunks:
+            chunks.append(candidate)
+
+    def cite(chunk: Any | None) -> str:
+        if chunk is None or chunk not in chunks:
+            return ""
+        return f"[{chunks.index(chunk) + 1}]"
+
     summary = [
+        *(
+            [
+                "- **적용대상**: 자율 또는 원격제어 기능이 설치된 선박·해양구조물에 "
+                f"적용되며, 해당 기능은 AUTONOMOUS 또는 REMOTE-CON 부호 대상입니다. {cite(scope)}"
+            ]
+            if scope is not None
+            else []
+        ),
         "- **분류 기준**: 각 자율·원격제어 기능의 위험범주는 운항감독 수준"
         "(Operations Supervision Level)과 기능 고장 결과(Consequences of Failure)를 조합해 정합니다. [1]",
         "- **범주**: 위험 매트릭스에 따라 저위험(Low)·중위험(Medium)·상위험(High) 중 하나를 배정합니다. [1]",
@@ -311,14 +334,31 @@ def _abs_risk_answer(question: str, pool: list[Any]) -> GuardResult | None:
         )
     if additional is not None:
         summary.append(
-            "- **추가 검증**: 중·상위 위험 기능에는 하위 범주의 관련 요건에 더해 "
-            "추가 위험평가와 검증·확인 자료가 요구됩니다. [2]"
+            "- **추가 검증**: 저위험 기능은 Computer Based System Category II, "
+            f"중·상위 위험 기능은 Category III에 해당하는 검토 문서를 제출해야 합니다. {cite(additional)}"
         )
     answer = _four_sections(
         summary,
-        impact="- 기능별 감독방식과 고장영향을 먼저 정의한 뒤 해당 위험범주에 맞는 설계·시험·승인 자료를 준비해야 합니다. [1]",
-        followup="- 최종 적용 시 위험 매트릭스의 인접 조항과 기능별 추가 검증 요구를 함께 대조해야 합니다. [1]",
-        references=[f"- **{_file_name(basis)}**, p.{_page(basis) or '?'} [1]"],
+        impact=(
+            "- 기능별 운항감독 방식과 고장영향을 먼저 정의하고, 배정된 위험범주에 따라 "
+            "Category II 또는 III의 설계·검토 자료를 준비해야 합니다. [1][2]"
+            if additional is not None
+            else "- 기능별 감독방식과 고장영향을 먼저 정의한 뒤 해당 위험범주에 맞는 설계·시험·승인 자료를 준비해야 합니다. [1]"
+        ),
+        followup=(
+            "- 최종 적용 시 위험 매트릭스와 Marine Vessel Rules 4-9-3의 "
+            "Category II·III 제출자료 목록을 함께 대조해야 합니다. [2]"
+            if additional is not None
+            else "- 최종 적용 시 위험 매트릭스의 인접 조항과 기능별 추가 검증 요구를 함께 대조해야 합니다. [1]"
+        ),
+        references=(
+            [
+                f"- **{_file_name(basis)}**, p.{_page(basis) or '?'} — 위험범주 기준 [1]",
+                f"- **{_file_name(additional)}**, p.{_page(additional) or '?'} — Category II·III 제출자료 {cite(additional)}",
+            ]
+            if additional is not None
+            else [f"- **{_file_name(basis)}**, p.{_page(basis) or '?'} [1]"]
+        ),
     )
     return GuardResult(
         answer=answer,
