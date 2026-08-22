@@ -108,6 +108,12 @@ def _sort_key(chunk: Any, category: str, *, society: str = "") -> tuple[float, f
 
 
 def llm_context_target_k(row: dict, top_k: int) -> int:
+    from compound_regulatory import is_compound_regulatory_class_question
+
+    if row.get("_compound_regulatory_class") or is_compound_regulatory_class_question(
+        str(row.get("question") or "")
+    ):
+        return max(top_k, 12)
     category = str(row.get("category") or "")
     if not category:
         from retrieval_verification import effective_question_category

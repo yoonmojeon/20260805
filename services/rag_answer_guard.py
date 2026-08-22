@@ -148,7 +148,9 @@ def _fill_empty_sections(answer: str) -> tuple[str, bool]:
     return rebuilt, changed
 
 
-def _finalize(result: GuardResult) -> GuardResult:
+def _finalize(result: GuardResult, *, compact_fact: bool = False) -> GuardResult:
+    if compact_fact:
+        return result
     answer, changed = _fill_empty_sections(result.answer)
     if not changed:
         return result
@@ -437,11 +439,12 @@ def _needs_repair(question: str, answer: str) -> bool:
     body = _section_one_body(answer)
     if not body or not re.search(r"^-\s+\S", body, re.M):
         return True
+    # An answer that the contract stripped down to a notice has no "- " bullet
+    # in section one, so the check above already flags it.
     bad = (
         "한국어 변환을 완료하지 못했습니다",
         "확정 Rule로 단정하기엔 근거·적용 범위 확인 필요",
         "관련 키워드는 있으나",
-        "인용으로 검증되지 않은 문장은 답변에서 제외",
     )
     if any(marker in answer for marker in bad):
         return True
@@ -587,6 +590,13 @@ def guard_rag_answer(
     model: str,
 ) -> GuardResult:
     """Return the unchanged answer or a grounded, citation-stable repair."""
+    length_contract = (
+        ((payload.get("answer_out") or {}).get("verification_summary") or {}).get(
+            "answer_length_contract"
+        )
+        or {}
+    )
+    compact_fact = length_contract.get("answer_profile") == "exact_rule_fact"
     pool = _retrieval_pool(payload)
     for builder in (
         _negative_lookup_answer,
@@ -597,13 +607,13 @@ def guard_rag_answer(
     ):
         result = builder(question, pool)
         if result is not None:
-            return _finalize(result)
+            return _finalize(result, compact_fact=compact_fact)
     repaired = _llm_repair(question, answer, pool, model)
     if repaired is not None:
-        return _finalize(repaired)
+        return _finalize(repaired, compact_fact=compact_fact)
     return _finalize(GuardResult(
         answer=answer,
         evidence_table=None,
         mode="unchanged",
         metadata={"triggered": False},
-    ))
+    ), compact_fact=compact_fact)

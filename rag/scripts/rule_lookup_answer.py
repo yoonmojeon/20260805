@@ -134,6 +134,23 @@ def _direct_anchor_terms(question: str) -> list[str]:
     return out
 
 
+SENTENCE_END_RE = re.compile(r"(?:다\.|한다\.|있다\.|\.)\s")
+
+
+def _anchor_sentences(body: str, position: int, *, sentences: int = 3) -> str:
+    """The few sentences around the matched term, not the whole glossary page.
+
+    A merged glossary page holds a dozen unrelated definitions; returning the
+    full window made the answer bullet an unreadable wall of text even though
+    the right definition was the first sentence in it.
+    """
+    ends = [m.end() for m in SENTENCE_END_RE.finditer(body)]
+    start = next((e for e in reversed(ends) if e <= position), 0)
+    following = [e for e in ends if e > position]
+    end = following[min(sentences, len(following)) - 1] if following else len(body)
+    return body[start:end].strip()
+
+
 def _direct_fact_passage(question: str, text: str, *, max_chars: int = 1200) -> str:
     body = re.sub(r"\s+", " ", strip_metadata_prefix(text or "")).strip()
     if len(body) <= max_chars:
@@ -149,6 +166,9 @@ def _direct_fact_passage(question: str, text: str, *, max_chars: int = 1200) -> 
     ]
     if matches:
         _length, position, _anchor = max(matches)
+        focused = _anchor_sentences(body, position)
+        if len(focused) >= 60:
+            return focused
         start = max(0, position - 260)
         end = min(len(body), start + max_chars)
         start = max(0, end - max_chars)
@@ -244,6 +264,28 @@ def build_direct_rule_fact_answer(
     from retrieval_search import rank_scoped_sparse_rows
 
     signals = analyze_query(question)
+    planned_direct_terms: tuple[str, ...] = ()
+    try:
+        from evidence_planner import build_evidence_plan
+
+        plan = build_evidence_plan(
+            question,
+            {
+                "_internal_intent": "rule_lookup",
+                "class_society_hint": signals.class_society_hint,
+            },
+        )
+        planned_direct_terms = tuple(
+            dict.fromkeys(
+                term.lower()
+                for slot in plan.slots
+                if slot.name == "specific_clause"
+                for term in slot.terms
+                if len(term.strip()) >= 4
+            )
+        )
+    except Exception:
+        planned_direct_terms = ()
     # KR Part 1 terminology is repeated in machinery/approval guides and in
     # other societies' English glossaries.  When no society is explicitly
     # named, keep the routed KR Part 1 document scope if it is present in the
@@ -287,6 +329,16 @@ def build_direct_rule_fact_answer(
         score, _cid, metadata, document = item
         text_lower = str(document or "").lower()
         adjusted = float(score)
+        # The evidence planner carries terminology aliases that are not
+        # present verbatim in the question (for example legacy MRC -> current
+        # fallback state).  Reward the clause covering multiple planned terms
+        # so a generic risk-assessment paragraph cannot outrank it.
+        planned_matches = sum(
+            1 for term in planned_direct_terms if term in text_lower
+        )
+        adjusted += 14.0 * planned_matches
+        if planned_matches >= 2:
+            adjusted += 12.0
         for anchor in anchors:
             if anchor in text_lower:
                 adjusted += 7.0 if re.search(r"\d|[a-z]", anchor) else 5.0

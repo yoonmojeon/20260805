@@ -11,6 +11,7 @@ strings.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 
@@ -58,6 +59,11 @@ def select_planned_evidence(
     }
     completion = row.get("_evidence_completion") or {}
     slot_hits = completion.get("slot_hits") or {}
+    from compound_regulatory import is_compound_regulatory_class_question
+
+    compound_regulatory_class = is_compound_regulatory_class_question(
+        str(row.get("question") or "")
+    )
 
     selected: list[Any] = []
     seen: set[str] = set()
@@ -73,6 +79,40 @@ def select_planned_evidence(
             selected_by_slot.setdefault(str(slot_name), []).append(identity)
         return True
 
+    # Literal feature recovery is used only after dense retrieval returned no
+    # occurrence of a distinctive query noun.  Keep its strongest exact hit
+    # in the one evidence list shared by generation, citations and the UI;
+    # otherwise a later slot planner can undo the retrieval repair.
+    feature_terms = list(
+        ((row.get("_text_document_route") or {}).get("feature_fallback_terms") or [])
+    )
+    feature_hits: list[Any] = []
+    if feature_terms:
+        from retrieval_search import feature_fallback_relevance_score
+
+        feature_hits = [
+            chunk
+            for chunk in candidates
+            if any(
+                str(term or "").lower()
+                in str(getattr(chunk, "text", "") or "").lower()
+                for term in feature_terms
+            )
+        ]
+        feature_hits.sort(
+            key=lambda chunk: max(
+                feature_fallback_relevance_score(
+                    str(row.get("question") or ""),
+                    str(getattr(chunk, "text", "") or ""),
+                    str(term or ""),
+                )
+                for term in feature_terms
+            ),
+            reverse=True,
+        )
+        if feature_hits and not compound_regulatory_class:
+            add(feature_hits[0], "literal_feature")
+
     # Guarantee breadth before depth.
     for slot_name, chunk_ids in slot_hits.items():
         for chunk_id in list(chunk_ids or [])[:1]:
@@ -80,12 +120,121 @@ def select_planned_evidence(
             if chunk is not None:
                 add(chunk, str(slot_name))
 
+    if feature_hits and compound_regulatory_class:
+        # Two-lane slot coverage is more important than a duplicate literal
+        # noun hit.  Keeping the literal hit after the decision/class slots
+        # makes citation [1] the authoritative final decision instead of an
+        # arbitrary class page that merely repeats the fuel name.
+        add(feature_hits[0], "literal_feature")
+
+    if compound_regulatory_class:
+        # Keep the Committee's final position when an immediately preceding
+        # paragraph only records delegations' objections.  This prevents a
+        # compound answer from reporting the objection (e.g. an "unrealistic"
+        # timeline) without the later "nevertheless agreed" outcome.
+        final_position_markers = (
+            "notwithstanding the above",
+            "nevertheless agreed",
+            "continue working towards the target year",
+            "endorsed the revised road map",
+            "the committee approved",
+            "the committee adopted",
+        )
+        question_text = str(row.get("question") or "")
+        question_numbers = set(re.findall(r"\d{4}", question_text))
+        from compound_regulatory import compound_topic_terms
+
+        topic_terms = tuple(
+            term.lower()
+            for term in compound_topic_terms(question_text)
+            if len(term.strip()) >= 3
+        )
+        final_positions = [
+            chunk
+            for chunk in candidates
+            if str(getattr(chunk, "source", "") or "").upper()
+            in {"MSC", "MEPC", "IMO"}
+            and any(
+                marker in str(getattr(chunk, "text", "") or "").lower()
+                for marker in final_position_markers
+            )
+            and (
+                any(
+                    term in str(getattr(chunk, "text", "") or "").lower()
+                    for term in topic_terms
+                )
+                or any(
+                    number in str(getattr(chunk, "text", "") or "")
+                    for number in question_numbers
+                )
+            )
+        ]
+        final_positions.sort(
+            key=lambda chunk: sum(
+                marker in str(getattr(chunk, "text", "") or "").lower()
+                for marker in final_position_markers
+            ),
+            reverse=True,
+        )
+        for final_position in final_positions:
+            if add(final_position, "compound_final_position"):
+                break
+
+        # The evidence-completion pool may contain exact notation hits that
+        # rank below generic engine clauses. Keep one literal instrument per
+        # class society before the 12-chunk cutoff used by generation.
+        from compound_regulatory import compound_exact_phrases
+
+        exact_phrases = tuple(
+            phrase.lower()
+            for phrase in compound_exact_phrases(str(row.get("question") or ""))
+            if phrase.strip()
+        )
+        for source in ("DNV", "KR", "ABS", "LR"):
+            literal = next(
+                (
+                    chunk
+                    for chunk in candidates
+                    if str(getattr(chunk, "source", "") or "").upper() == source
+                    and any(
+                        phrase in str(getattr(chunk, "text", "") or "").lower()
+                        for phrase in exact_phrases
+                    )
+                ),
+                None,
+            )
+            if literal is not None:
+                add(literal, f"compound_literal_instrument:{source}")
+
     # Retain additional propositions for slots that explicitly requested them.
     for slot_name, chunk_ids in slot_hits.items():
         for chunk_id in list(chunk_ids or [])[1:]:
             chunk = by_id.get(str(chunk_id))
             if chunk is not None:
                 add(chunk, str(slot_name))
+
+    # When no specialised slot exists (or after the slots are satisfied), keep
+    # the strongest direct question matches before filling by retrieval rank.
+    # This mirrors the production Accurate focus pass and prevents a correct
+    # clause sitting later in the candidate pool from being cut off by twelve
+    # generic introductory chunks from the same PDF.
+    if candidates:
+        from fast_context import question_focus_score
+
+        question = str(row.get("question") or "")
+        focused = [
+            (
+                question_focus_score(str(getattr(chunk, "text", "") or ""), question),
+                index,
+                chunk,
+            )
+            for index, chunk in enumerate(candidates)
+        ]
+        focused = [item for item in focused if item[0] > 0]
+        focused.sort(key=lambda item: (-item[0], item[1]))
+        focus_budget = 3 if not slot_hits else 2
+        for _score, _index, chunk in focused[:focus_budget]:
+            add(chunk, "question_focus")
 
     for chunk in candidates:
         if len(selected) >= max_chunks:

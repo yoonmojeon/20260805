@@ -26,6 +26,7 @@ def _pos_text(lat: float, lon: float) -> str:
 
 _CII_SCOPE_LABEL = {
     "annual":         "공식 연간 CII",
+    "ytd":            "연초~DB 최신일 잠정(YTD) CII",
     "current_voyage": "현재 항차 잠정(Indicative) CII",
     "voyage":         "항차 참고(Indicative Voyage) CII",
 }
@@ -233,16 +234,25 @@ def format_report_result(tool_name: str, d: dict) -> str:
         return f"보고서 생성에 실패했습니다. ({d['error']})"
 
     if tool_name == "generate_noon_report":
+        pos = d.get("position") or {}
+        lat = float(pos.get("latitude") or 0)
+        lon = float(pos.get("longitude") or 0)
+        coverage = (
+            f"부분일 누계, {int(d.get('record_count', 0) or 0)}건"
+            if d.get("partial_day")
+            else f"일일 누계, {int(d.get('record_count', 0) or 0)}건"
+        )
         return (
-            f"Noon Report를 생성했습니다. 보고일 {d.get('report_date', '')}, "
-            f"위치 {d.get('position', '')}, "
-            f"FOC {_fmt(d.get('foc_oil_mt'), 3, ' MT')}, "
+            f"Noon Report 초안을 생성했습니다. 로컬 운항 DB 최신 기록 시각은 "
+            f"{d.get('report_timestamp', '')} UTC이며, 집계 구간은 "
+            f"{d.get('aggregation_period', '')} ({coverage})입니다. "
+            f"위치는 {_pos_text(lat, lon)}입니다. "
+            f"집계 구간 누계는 FOC {_fmt(d.get('foc_oil_mt'), 3, ' MT')}, "
             f"FGC {_fmt(d.get('fgc_gas_mt'), 3, ' MT')}, "
-            f"CO₂ {_fmt(d.get('co2_mt'), 2, ' MT')}."
+            f"CO₂ {_fmt(d.get('co2_mt'), 2, ' MT')}입니다."
             f"{_report_cii_line(d)} "
-            f"아래에서 Word 파일을 다운로드하세요. "
-            f"(Position, Heading, Sailed Distance, Displacement, M/E RPM, "
-            f"Ship speed, Wind/Wave, M/E FOC·FGC, 잠정 CII 포함)"
+            f"경도·COG·기상 정보는 원본 DB에 없어 보고서에 미제공으로 표시했습니다. "
+            f"아래에서 Word 파일을 다운로드해 검토하세요."
         )
     if tool_name == "generate_mrv_voyage_report":
         return (

@@ -8,21 +8,9 @@ from embedding_policy import embed_texts_local
 from retrieval_search import _merge_where, enrich_query_for_embedding, safe_chroma_query
 
 TABLE_QUESTION_KEYWORDS = [
-    "표",
-    "수치",
-    "값",
-    "항목",
-    "열",
-    "행",
-    "비교",
     "몇 년",
     "선령",
     "percentage",
-    "factor",
-    "requirement",
-    "regulation",
-    "reporting",
-    "verification",
     "최소 두께",
     "판두께",
     "선박 길이",
@@ -74,10 +62,25 @@ INSPECTION_COLUMN_TERMS = (
 
 def is_table_question(question: str) -> bool:
     q = question.lower()
+    # One-syllable substring checks (``표``, ``행``, ``열``, ``값``) produced
+    # broad false positives such as 발표, 통행, 실행 and 영향.  Likewise,
+    # generic English words such as requirement/regulation/reporting occur in
+    # ordinary rule prose.  Require an explicit tabular expression, while
+    # retaining the domain-specific fields that are predominantly stored in
+    # rule tables.
+    if re.search(r"\btable\b", q, re.IGNORECASE):
+        return True
+    if re.search(
+        r"(?<![가-힣])표(?:\s|$|\d|에서|의|를|가|는|로|에|상|내)|"
+        r"(?<![가-힣])(?:행|열)(?:\s|$|\d|에서|의|을|이|별)|"
+        r"(?:몇|제?\d+)\s*(?:행|열)\b|셀(?:\s|$|에서|의|값)",
+        q,
+    ):
+        return True
     for kw in TABLE_QUESTION_KEYWORDS:
         if kw.lower() in q:
             return True
-    return bool(re.search(r"\btable\b", q, re.IGNORECASE))
+    return False
 
 
 def extract_page_hints(question: str) -> list[int]:

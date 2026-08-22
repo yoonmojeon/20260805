@@ -87,7 +87,14 @@ class FastAnswerPipelineContext:
 
 
 def _uses_evidence_first(fast_type: str) -> bool:
-    return fast_type in {"meeting_summary", "meeting_outcome_question", "broad_summary_question"}
+    # Claim extraction is tuned for meeting/outcome prose.  On dense technical
+    # clauses it can select a neighbouring requirement and hide the sentence
+    # that directly answers the question, so general/rule facts use raw context.
+    return fast_type in {
+        "meeting_summary",
+        "meeting_outcome_question",
+        "broad_summary_question",
+    }
 
 
 def _primary_doc_from_chunks(chunks: list[RetrievedChunk], ctx: MeetingSummaryContext | None) -> str | None:

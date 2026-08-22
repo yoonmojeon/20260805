@@ -124,12 +124,44 @@ class RetrievalRunConfig:
     retrieval_profile_id: str = ""
     retrieval_profile_label: str = ""
     retrieval_profile_notes: list[str] = field(default_factory=list)
+    # Query-focused clauses recovered by the bounded document/source sparse
+    # pass.  These IDs are execution metadata, not gold labels: carrying them
+    # into the answer phase lets a small local model see the best direct clause
+    # before semantically adjacent sibling provisions.
+    priority_local_chunk_ids: list[str] = field(default_factory=list)
+    priority_local_scope: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 def detect_narrow_doc_id(question: str, row: dict) -> str | None:
+    from imo_doc_registry import exact_doc_ids_for_query
+    from retrieval_query_analysis import analyze_query
+
+    manifest_ids = exact_doc_ids_for_query(question)
+    signals = analyze_query(question)
+    excluded = {str(source).upper() for source in signals.excluded_sources}
+    constrained = {str(source).upper() for source in signals.constrained_sources}
+    disallowed_named_code = any(
+        (
+            match.group(1).upper() in excluded
+            or (
+                constrained
+                and match.group(1).upper() not in constrained
+            )
+        )
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9])(DNV|LR|ABS|KR|MEPC|MSC)"
+            r"(?=\s*[-–/]\s*(?:[A-Z]{1,4}\s*[-–/]\s*)?\d)",
+            question or "",
+            re.I,
+        )
+    )
+    if disallowed_named_code:
+        manifest_ids = []
+    if len(manifest_ids) == 1:
+        return manifest_ids[0]
     q = question
     ql = q.lower()
     has_narrow_signal = any(re.search(p, ql, re.I) for p in NARROW_SIGNAL_PATTERNS)

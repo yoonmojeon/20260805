@@ -1,0 +1,67 @@
+{
+  "schema_version": "maritime-accurate-official-six-v1",
+  "question_set": "data\\eval\\accurate_eval_150.jsonl",
+  "sample_size": 150,
+  "sample_seed": 260821,
+  "generation": {
+    "model": "gemma4:12b",
+    "temperature": 0.1,
+    "top_k_context": 10
+  },
+  "metrics": {
+    "A": {
+      "Document Hit@10": 0.924812030075188,
+      "Evidence Recall@10": 0.34022556390977443,
+      "Citation Page Accuracy": 0.282703007518797,
+      "Answer Pass Rate": 0.96,
+      "Groundedness": 0.7466666666666667,
+      "Avg E2E Latency": 9.955995333333334,
+      "debug": {
+        "completed": 150,
+        "errors": 0,
+        "p95_e2e_seconds": 19.1812,
+        "mean_completeness": 0.556390977443609
+      }
+    },
+    "B": {
+      "Document Hit@10": 0.9172932330827067,
+      "Evidence Recall@10": 0.38345864661654133,
+      "Citation Page Accuracy": 0.28332932330827065,
+      "Answer Pass Rate": 0.96,
+      "Groundedness": 0.7466666666666667,
+      "Avg E2E Latency": 12.454951333333334,
+      "debug": {
+        "completed": 150,
+        "errors": 0,
+        "p95_e2e_seconds": 21.2898,
+        "mean_completeness": 0.5469924812030075
+      }
+    },
+    "C": {
+      "Document Hit@10": 0.9172932330827067,
+      "Evidence Recall@10": 0.38345864661654133,
+      "Citation Page Accuracy": 0.28332932330827065,
+      "Answer Pass Rate": 0.96,
+      "Groundedness": 0.7466666666666667,
+      "Avg E2E Latency": 12.451722,
+      "debug": {
+        "completed": 150,
+        "errors": 0,
+        "p95_e2e_seconds": 20.9161,
+        "mean_completeness": 0.5469924812030075
+      }
+    }
+  },
+  "decision": {
+    "selected": "A Legacy Accurate",
+    "A": "GO/default",
+    "B": "NO-GO",
+    "C": "NO-GO",
+    "reason": "B/C did not improve final answer quality and added latency; document hit also regressed."
+  },
+  "regression_files": [
+    "reports\\regressions_B_vs_A.csv",
+    "reports\\regressions_C_vs_A.csv"
+  ],
+  "groundedness_note": "Automated citation-contract proxy: factual bullet citation coverage, answer-contract validity and forbidden-claim cleanliness; expert review still required."
+}

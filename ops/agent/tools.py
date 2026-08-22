@@ -334,25 +334,34 @@ def generate_noon_report(report_date: str = "") -> dict:
     """최신 또는 지정 날짜의 Noon Report Word 파일 생성"""
     store  = get_store()
     noon   = store.get_noon_by_date(report_date) if report_date else store.latest_noon()
-    voyage = store.current_voyage()
+    voyage = store.get_voyage(noon.get("voyage_id", "")) or store.current_voyage()
     vessel = store.get_vessel()
 
     if not noon:
         return {"error": "Noon Report 데이터 없음"}
 
     report_year = int(str(noon.get("report_datetime", CURRENT_DATE))[:4])
-    cii = _annual_cii_result(report_year, scope="current_voyage")
+    cii = _annual_cii_result(report_year, scope="ytd")
 
     path = generate_noon_report_docx(noon, voyage, vessel, cii)
     return {
         "status":      "생성 완료",
         "file_path":   str(path),
         "report_date": str(noon.get("report_datetime", ""))[:10],
-        "position":    f"{noon.get('lat', 0):.4f}N, {noon.get('lon', 0):.4f}E",
+        "report_timestamp": str(noon.get("report_datetime", ""))[:16],
+        "aggregation_period": noon.get("aggregation_period", ""),
+        "record_count": noon.get("record_count", 0),
+        "partial_day": noon.get("partial_day", False),
+        "position": {
+            "latitude": noon.get("lat"),
+            "longitude": noon.get("lon"),
+            "note": noon.get("position_note", ""),
+        },
         "foc_oil_mt":  noon.get("foc_oil_mt", 0),
         "fgc_gas_mt":  noon.get("fgc_gas_mt", 0),
         "co2_mt":      noon.get("co2_mt",     0),
-        "data_source": "sensor",
+        "weather_source": noon.get("weather_source", ""),
+        "data_source": "sensor_log (1시간 간격 로컬 운항 DB)",
         "cii":         cii,
     }
 

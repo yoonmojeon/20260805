@@ -46,6 +46,36 @@ _TABLE_WARM: dict[str, Any] = {
     "unified_id": None,
 }
 
+# Interactive Accurate is deliberately wider than the evaluator's legacy
+# defaults.  Fast remains the low-latency option; Accurate may use roughly
+# 20–25 seconds to improve document recall and answer completeness.
+_ACCURATE_UI_SEARCH = {
+    "top_k": 14,
+    "fetch_k": 150,
+    "max_doc": 5,
+    "max_docs": 12,
+    "use_rerank": True,
+}
+
+_ADVANCED_UI_SEARCH = {
+    "top_k": 18,
+    "fetch_k": 180,
+    "max_doc": 6,
+    "max_docs": 14,
+    "use_rerank": True,
+}
+
+
+def _ui_search_budget(latency_mode: str) -> dict[str, Any]:
+    if latency_mode == "advanced":
+        return dict(_ADVANCED_UI_SEARCH)
+    return dict(_ACCURATE_UI_SEARCH) if latency_mode == "accurate" else {}
+
+
+def _pipeline_latency_mode(latency_mode: str) -> str:
+    """Advanced inherits every validated Accurate generation contract."""
+    return "fast" if str(latency_mode).lower() == "fast" else "accurate"
+
 
 def _ensure_rag_path() -> None:
     if str(RAG_SCRIPTS_DIR) not in sys.path:
@@ -228,6 +258,144 @@ def _extract_answer(out: dict[str, Any]) -> str:
         search = out.get("search_out") or {}
         answer = search.get("answer") or ""
     return str(answer or "").strip()
+
+
+def _advanced_review_answer(
+    question: str,
+    answer: str,
+    evidence_table: list[dict[str, Any]],
+    *,
+    model: str,
+    confidence: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Run the local Advanced auditor; failure safely preserves Accurate."""
+    try:
+        _ensure_rag_path()
+        from advanced_mode import review_answer  # type: ignore
+
+        return review_answer(
+            question,
+            answer,
+            evidence_table,
+            model=model,
+            confidence=confidence,
+        )
+    except Exception as exc:
+        return answer, {
+            "used": False,
+            "reason": "exception_fallback",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _advanced_review_evidence(
+    base_rows: list[dict[str, Any]], chunks: list[Any], *, max_rows: int = 18
+) -> list[dict[str, Any]]:
+    """Append reranked evidence without changing existing citation numbers."""
+    rows = [dict(row) for row in (base_rows or [])]
+    seen_ids = {str(row.get("chunk_id") or "") for row in rows if row.get("chunk_id")}
+    seen_fallback = {
+        (
+            str(row.get("file_name") or row.get("document") or ""),
+            str(row.get("page") or row.get("page_number") or ""),
+            str(row.get("chunk_preview") or row.get("evidence") or "")[:120],
+        )
+        for row in rows
+    }
+    used_citations = []
+    for position, row in enumerate(rows, 1):
+        found = re.search(
+            r"\[(\d+)\]", str(row.get("citation_id") or row.get("citation") or position)
+        )
+        if found:
+            used_citations.append(int(found.group(1)))
+    next_citation = max(used_citations, default=0) + 1
+    for chunk in chunks:
+        if len(rows) >= max_rows:
+            break
+        chunk_id = str(getattr(chunk, "chunk_id", "") or "")
+        text = re.sub(r"\s+", " ", str(getattr(chunk, "text", "") or "")).strip()
+        if len(text) < 45 or (chunk_id and chunk_id in seen_ids):
+            continue
+        file_name = str(getattr(chunk, "file_name", "") or "")
+        page = getattr(chunk, "page_number", None) or getattr(chunk, "page", None)
+        fallback = (file_name, str(page or ""), text[:120])
+        if fallback in seen_fallback:
+            continue
+        rows.append(
+            {
+                "citation_id": f"[{next_citation}]",
+                "file_name": file_name,
+                "page": page,
+                "clause_number": str(getattr(chunk, "clause_number", "") or ""),
+                "chunk_id": chunk_id,
+                "chunk_preview": text[:1800],
+                "review_text": text[:4200],
+                "document_status": str(
+                    getattr(chunk, "document_status", "") or "unknown"
+                ),
+            }
+        )
+        next_citation += 1
+        if chunk_id:
+            seen_ids.add(chunk_id)
+        seen_fallback.add(fallback)
+    return rows
+
+
+def _cited_rows(answer: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cited = {int(value) for value in re.findall(r"\[(\d+)\]", answer or "")}
+    if not cited:
+        return []
+    selected = []
+    for position, row in enumerate(rows, 1):
+        found = re.search(
+            r"\[(\d+)\]", str(row.get("citation_id") or row.get("citation") or position)
+        )
+        citation_id = int(found.group(1)) if found else position
+        if citation_id in cited:
+            selected.append(row)
+    return selected
+
+
+def _claim_evidence_map(answer: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map each factual answer bullet to the exact displayed evidence rows."""
+    by_citation: dict[int, dict[str, Any]] = {}
+    for position, row in enumerate(rows, 1):
+        found = re.search(
+            r"\[(\d+)\]", str(row.get("citation_id") or row.get("citation") or position)
+        )
+        citation_id = int(found.group(1)) if found else position
+        by_citation[citation_id] = row
+    mappings: list[dict[str, Any]] = []
+    for raw in str(answer or "").splitlines():
+        line = raw.strip()
+        if not re.match(r"^(?:[-*•]|\d+[.)])\s+", line):
+            continue
+        citations = list(dict.fromkeys(int(value) for value in re.findall(r"\[(\d+)\]", line)))
+        mappings.append(
+            {
+                "claim": re.sub(r"\s*\[\d+\]", "", line).strip(),
+                "citations": citations,
+                "evidence": [
+                    {
+                        "citation": citation,
+                        "file_name": by_citation[citation].get("file_name")
+                        or by_citation[citation].get("document"),
+                        "page": by_citation[citation].get("page")
+                        or by_citation[citation].get("page_number"),
+                        "clause": by_citation[citation].get("clause_number")
+                        or by_citation[citation].get("clause"),
+                        "chunk_id": by_citation[citation].get("chunk_id"),
+                    }
+                    for citation in citations
+                    if citation in by_citation
+                ],
+                "citation_complete": bool(citations)
+                and all(citation in by_citation for citation in citations),
+            }
+        )
+    return mappings
 
 
 def _generation_diagnostics(payload: Any, depth: int = 0) -> dict[str, Any]:
@@ -747,6 +915,9 @@ def _run_single_rag(
     from services.llm_models import normalize_llm_model
 
     model = normalize_llm_model(llm_model)
+    requested_latency_mode = str(latency_mode or "accurate").strip().lower()
+    advanced_mode = requested_latency_mode == "advanced"
+    pipeline_latency_mode = _pipeline_latency_mode(requested_latency_mode)
     want_table = mode == RetrievalMode.TABLE
     use_table_index = want_table and rag_index_ready(DEFAULT_TABLE_COLLECTION)
     target = DEFAULT_TABLE_COLLECTION if use_table_index else DEFAULT_RAG_COLLECTION
@@ -771,6 +942,9 @@ def _run_single_rag(
         from rag_inprocess import run_full_inprocess  # type: ignore
 
         row = _build_rag_row(question, table_qa=want_table)
+        if advanced_mode:
+            row["_advanced_mode"] = True
+            row["_advanced_llm_model"] = model
         unified, chunks_dir = _index_for(mode if want_table else RetrievalMode.TEXT)
         collection, embed_model, manifest = _warm_handles(
             unified, table_side=use_table_index
@@ -781,13 +955,14 @@ def _run_single_rag(
             unified_id=unified,
             index_dir=RAG_INDEX_DIR,
             chunks_dir=chunks_dir,
-            latency_mode=latency_mode,
+            latency_mode=pipeline_latency_mode,
             skip_llm=False,
             collection=collection,
             embed_model=embed_model,
             manifest=manifest,
             auto_llm_warm=True,
             llm_model=model,
+            **_ui_search_budget(requested_latency_mode),
         )
         completion_collection = collection
         if completion_collection is None:
@@ -811,21 +986,60 @@ def _run_single_rag(
         _targeted_document_completion(question, out, completion_collection)
         abs_comparison = _abs_comparison_from_pool(question, out)
         generated_answer = abs_comparison[0] if abs_comparison else _extract_answer(out)
-        guarded = guard_rag_answer(question, generated_answer, out, model=model)
-        generated_answer = guarded.answer
+        if advanced_mode:
+            # run_full_inprocess has already applied its citation/claim
+            # contract.  The legacy UI repair is valuable for Accurate but can
+            # reinterpret a correctly grounded short fact after listwise order
+            # changes.  Advanced uses its stricter evidence-table auditor
+            # below instead of running that repair a second time.
+            guarded_answer = generated_answer
+            guarded_evidence_table = None
+            guarded_mode = "advanced_internal_contract"
+            guarded_metadata = {
+                "triggered": False,
+                "reason": "advanced_uses_internal_contract_and_final_auditor",
+            }
+        else:
+            guarded = guard_rag_answer(question, generated_answer, out, model=model)
+            guarded_answer = guarded.answer
+            guarded_evidence_table = guarded.evidence_table
+            guarded_mode = guarded.mode
+            guarded_metadata = guarded.metadata
+        generated_answer = guarded_answer
         answer_empty = not bool(generated_answer)
         answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
-        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         generation = _generation_diagnostics(out)
+        verification_summary = (
+            ((out.get("answer_out") or {}).get("verification_summary") or {})
+            if isinstance(out, dict)
+            else {}
+        )
         files: list[str] = []
         related_tables: list[dict[str, Any]] = []
         evidence_table = (
-            guarded.evidence_table
-            if guarded.evidence_table is not None
+            guarded_evidence_table
+            if guarded_evidence_table is not None
             else abs_comparison[1]
             if abs_comparison
             else _extract_evidence_table(out)
         )
+        advanced_answer_review: dict[str, Any] = {}
+        if advanced_mode:
+            review_evidence = _advanced_review_evidence(
+                evidence_table, list((out.get("search_out") or {}).get("retrieved") or [])
+            )
+            reviewed_answer, advanced_answer_review = _advanced_review_answer(
+                question,
+                answer,
+                review_evidence,
+                model=model,
+                confidence=(out.get("search_out") or {}).get("advanced_confidence")
+                or {},
+            )
+            if reviewed_answer != answer:
+                answer = reviewed_answer
+                evidence_table = _cited_rows(answer, review_evidence)
+        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         if use_table_index:
             search = out.get("search_out") or {}
             retrieved = list(search.get("retrieved") or [])
@@ -859,7 +1073,7 @@ def _run_single_rag(
             "ready": True,
             "meta": {
                 "unified_id": unified,
-                "latency_mode": latency_mode,
+                "latency_mode": requested_latency_mode,
                 "category": row.get("category"),
                 "retrieval_mode": mode.value,
                 "table_qa_requested": want_table,
@@ -867,8 +1081,8 @@ def _run_single_rag(
                 "related_tables_appended": bool(related_tables),
                 "evidence_rows": len(evidence_table),
                 "answer_mode": (
-                    guarded.mode
-                    if guarded.mode != "unchanged"
+                    guarded_mode
+                    if guarded_mode != "unchanged"
                     else "structured_abs_comparison"
                     if abs_comparison
                     else out.get("answer_mode")
@@ -880,8 +1094,27 @@ def _run_single_rag(
                 "answer_error": str(out.get("error") or ""),
                 "answer_done_reason": generation.get("done_reason"),
                 "answer_eval_count": generation.get("eval_count"),
+                "answer_generation": verification_summary.get("answer_generation"),
+                "scaffold_synthesis_debug": verification_summary.get(
+                    "scaffold_synthesis_debug"
+                ),
                 "korean_output": korean_output,
-                "answer_quality_guard": guarded.metadata,
+                "answer_quality_guard": guarded_metadata,
+                "advanced_mode": advanced_mode,
+                "advanced_retrieval": (out.get("search_out") or {}).get(
+                    "advanced_retrieval"
+                )
+                or {},
+                "advanced_rerank": (out.get("search_out") or {}).get(
+                    "advanced_rerank"
+                )
+                or {},
+                "advanced_confidence": (out.get("search_out") or {}).get(
+                    "advanced_confidence"
+                )
+                or {},
+                "claim_evidence_map": _claim_evidence_map(answer, evidence_table),
+                "advanced_answer_review": advanced_answer_review,
             },
             "raw": {k: out[k] for k in out if k not in {"raw", "timing_log"}},
         }
@@ -912,7 +1145,14 @@ def _run_search_only(
         os.chdir(RAG_DIR)
         from rag_inprocess import run_full_inprocess  # type: ignore
 
+        requested_latency_mode = str(latency_mode or "accurate").strip().lower()
+        pipeline_latency_mode = _pipeline_latency_mode(requested_latency_mode)
         row = _build_rag_row(question, table_qa=table_side)
+        if requested_latency_mode == "advanced":
+            row["_advanced_mode"] = True
+            row["_advanced_llm_model"] = os.environ.get(
+                "MARITIME_ADVANCED_RERANK_MODEL", "gemma4:12b"
+            )
         mode = RetrievalMode.TABLE if table_side else RetrievalMode.TEXT
         unified, chunks_dir = _index_for(mode)
         collection, embed_model, manifest = _warm_handles(
@@ -923,12 +1163,13 @@ def _run_search_only(
             unified_id=unified,
             index_dir=RAG_INDEX_DIR,
             chunks_dir=chunks_dir,
-            latency_mode=latency_mode,
+            latency_mode=pipeline_latency_mode,
             skip_llm=True,
             collection=collection,
             embed_model=embed_model,
             manifest=manifest,
             auto_llm_warm=False,
+            **_ui_search_budget(requested_latency_mode),
         )
         search = out.get("search_out") or {}
         return {
@@ -938,6 +1179,7 @@ def _run_search_only(
             "retrieved": list(search.get("retrieved") or []),
             "timing_metrics": out.get("timing_metrics") or {},
             "evidence_source": "table" if table_side else "text",
+            "advanced_rerank": search.get("advanced_rerank") or {},
         }
     finally:
         os.chdir(prev)
@@ -954,6 +1196,9 @@ def _run_both_fused(
     from services.llm_models import normalize_llm_model
 
     model = normalize_llm_model(llm_model)
+    requested_latency_mode = str(latency_mode or "accurate").strip().lower()
+    advanced_mode = requested_latency_mode == "advanced"
+    pipeline_latency_mode = _pipeline_latency_mode(requested_latency_mode)
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut_table = pool.submit(
             _run_search_only, question, latency_mode=latency_mode, table_side=True
@@ -1011,6 +1256,10 @@ def _run_both_fused(
             (table_hit.get("row") if use_table_answer else text_hit.get("row"))
             or _build_rag_row(question, table_qa=use_table_answer)
         )
+        if advanced_mode:
+            row = dict(row)
+            row["_advanced_mode"] = True
+            row["_advanced_llm_model"] = model
         base_search = table_hit.get("search_out") if use_table_answer else text_hit.get("search_out")
         base_search = base_search or {}
         answer_out = run_answer_inprocess(
@@ -1023,7 +1272,7 @@ def _run_both_fused(
             answer_mode=base_search.get("answer_mode")
             or ("table_qa" if use_table_answer else "rag"),
             question_category=("table_qa" if use_table_answer else row.get("category")),
-            latency_mode=latency_mode,
+            latency_mode=pipeline_latency_mode,
             auto_llm_warm=True,
             llm_model=model,
         )
@@ -1035,20 +1284,48 @@ def _run_both_fused(
                 "retrieved": list(answer_chunks),
             },
         }
-        guarded = guard_rag_answer(question, generated_answer, guard_payload, model=model)
-        generated_answer = guarded.answer
+        if advanced_mode:
+            guarded_answer = generated_answer
+            guarded_evidence_table = None
+            guarded_metadata = {
+                "triggered": False,
+                "reason": "advanced_uses_internal_contract_and_final_auditor",
+            }
+        else:
+            guarded = guard_rag_answer(
+                question, generated_answer, guard_payload, model=model
+            )
+            guarded_answer = guarded.answer
+            guarded_evidence_table = guarded.evidence_table
+            guarded_metadata = guarded.metadata
+        generated_answer = guarded_answer
         answer_empty = not bool(generated_answer)
         answer = generated_answer or "검색은 완료되었으나 답변 텍스트를 찾지 못했습니다."
-        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         generation = _generation_diagnostics(answer_out)
         _related_md, images, related_tables = _related_tables_from_hits(
             question, table_chunks
         )
         evidence_table = (
-            guarded.evidence_table
-            if guarded.evidence_table is not None
+            guarded_evidence_table
+            if guarded_evidence_table is not None
             else _extract_evidence_table(answer_out)
         )
+        advanced_answer_review: dict[str, Any] = {}
+        if advanced_mode:
+            review_evidence = _advanced_review_evidence(
+                evidence_table, list(answer_chunks)
+            )
+            reviewed_answer, advanced_answer_review = _advanced_review_answer(
+                question,
+                answer,
+                review_evidence,
+                model=model,
+                confidence=text_hit.get("advanced_confidence") or {},
+            )
+            if reviewed_answer != answer:
+                answer = reviewed_answer
+                evidence_table = _cited_rows(answer, review_evidence)
+        answer, korean_output = ensure_korean_answer(question, answer, model=model)
         return {
             "answer": answer,
             "files": images,
@@ -1067,7 +1344,7 @@ def _run_both_fused(
                 "n_merged_chunks": len(merged_chunks),
                 "text_collection": DEFAULT_RAG_COLLECTION,
                 "table_collection": DEFAULT_TABLE_COLLECTION,
-                "latency_mode": latency_mode,
+                "latency_mode": requested_latency_mode,
                 "table_index_used": True,
                 "related_tables_appended": bool(related_tables),
                 "evidence_rows": len(evidence_table),
@@ -1088,7 +1365,13 @@ def _run_both_fused(
                 "answer_done_reason": generation.get("done_reason"),
                 "answer_eval_count": generation.get("eval_count"),
                 "korean_output": korean_output,
-                "answer_quality_guard": guarded.metadata,
+                "answer_quality_guard": guarded_metadata,
+                "advanced_mode": advanced_mode,
+                "advanced_retrieval": text_hit.get("advanced_retrieval") or {},
+                "advanced_rerank": text_hit.get("advanced_rerank") or {},
+                "advanced_confidence": text_hit.get("advanced_confidence") or {},
+                "claim_evidence_map": _claim_evidence_map(answer, evidence_table),
+                "advanced_answer_review": advanced_answer_review,
             },
             "raw": {"answer_out": answer_out, "table_search": table_hit.get("search_out")},
         }

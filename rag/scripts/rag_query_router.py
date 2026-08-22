@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from meeting_category_profile import (
@@ -19,6 +20,10 @@ from retrieval_query_analysis import (
     detect_table_source_hint,
 )
 from retrieval_question_profile import build_retrieval_profile
+from compound_regulatory import (
+    is_compound_regulatory_class_question,
+    requested_class_sources,
+)
 
 RULE_GUIDANCE_TERMS = (
     r"\brule\b",
@@ -42,6 +47,16 @@ RULE_GUIDANCE_TERMS = (
     r"cg-\d+",
 )
 
+_EXPLICIT_RULE_DOCUMENT_RE = re.compile(
+    r"\b(?:DNV|ABS|LR|KR)\s*[-–/]\s*(?:CG|CP|RP|RU|OS|SI|NV)\s*[-–/]?\s*[A-Z0-9.-]+",
+    re.I,
+)
+_DOCUMENT_DISCOVERY_RE = re.compile(
+    r"찾아|검색|문서\s*목록|관련.{0,20}(?:rule|rules|guidance|guide|규칙|지침)|"
+    r"(?:CG|Rule|Guidance)\s*명칭",
+    re.I,
+)
+
 
 def _question_has_rule_guidance_terms(question: str) -> bool:
     q = (question or "").lower()
@@ -58,6 +73,22 @@ def is_rule_guidance_lookup(
 ) -> bool:
     row = row or {}
     if row.get("_table_qa") or str(row.get("category") or "") == "table_qa":
+        return False
+    # A named rule document plus a clause/fact question must use the general
+    # evidence answerer inside that document.  The document-card route is for
+    # discovery and otherwise replaces exact PRA/TA answers with a title list.
+    if _EXPLICIT_RULE_DOCUMENT_RE.search(question or "") and not _DOCUMENT_DISCOVERY_RE.search(
+        question or ""
+    ):
+        return False
+    # A question that asks to reconcile an IMO meeting outcome with class
+    # requirements is not a society-only Rule lookup.  Several downstream
+    # callers invoke this helper again after central routing, so keeping the
+    # exception only in ``resolve_pipeline_route`` lets those callers silently
+    # put the request back on the narrow Rule path.
+    if row.get("_compound_regulatory_class") or is_compound_regulatory_class_question(
+        question
+    ):
         return False
     cat = category or str(row.get("category") or "")
     if not cat:
@@ -138,6 +169,15 @@ def resolve_pipeline_route(
         detected_sources = ["MEPC"]
     elif not detected_sources and cat == "autonomous" and "mass" in signals.topics:
         detected_sources = ["MSC"]
+    compound_regulatory_class = is_compound_regulatory_class_question(question)
+    if compound_regulatory_class:
+        meeting = detect_meeting_source_hint(question)
+        meeting_sources = [meeting] if meeting else [
+            source for source in detected_sources if source in {"MSC", "MEPC", "IMO"}
+        ]
+        detected_sources = list(
+            dict.fromkeys([*meeting_sources, *requested_class_sources(question)])
+        )
     society = detected_sources[0] if len(detected_sources) == 1 else ""
     rule_guidance = is_rule_guidance_lookup(
         question,
@@ -151,6 +191,12 @@ def resolve_pipeline_route(
     if rule_guidance:
         answer_mode = "rule_guidance_lookup"
         retrieval_profile = "rule_guidance_lookup"
+    if compound_regulatory_class:
+        # This is neither a meeting-only template nor a society-only lookup.
+        # The answer needs independently grounded evidence from both lanes.
+        rule_guidance = False
+        answer_mode = "compound_regulatory_class"
+        retrieval_profile = "compound_regulatory_class"
     return {
         "latency_mode": latency_mode,
         "question_category": cat,
@@ -165,10 +211,15 @@ def resolve_pipeline_route(
         "detected_sources": detected_sources,
         "excluded_sources": list(signals.excluded_sources),
         "constrained_sources": list(signals.constrained_sources),
-        "detected_doc_type": "rule_guidance" if rule_guidance else cat,
+        "detected_doc_type": (
+            "meeting_and_class_rules"
+            if compound_regulatory_class
+            else ("rule_guidance" if rule_guidance else cat)
+        ),
         "hard_society_filter": bool(society and rule_guidance),
         "expanded_keywords": list(signals.expanded_terms or []),
         "rule_guidance_lookup": rule_guidance,
+        "compound_regulatory_class": compound_regulatory_class,
         "meeting_retrieval_profile_id": mprof.profile_id,
     }
 
@@ -181,6 +232,12 @@ def enrich_row_for_routing(row: dict, *, latency_mode: str = "accurate") -> dict
     out["_top_level_category"] = route["top_level_category"]
     out["_internal_intent"] = route["internal_intent"]
     out["_pipeline_route"] = route
+    out["_excluded_sources"] = list(route.get("excluded_sources") or [])
+    out["_constrained_sources"] = list(route.get("constrained_sources") or [])
+    if route.get("compound_regulatory_class"):
+        out["_compound_regulatory_class"] = True
+    else:
+        out.pop("_compound_regulatory_class", None)
     if route["selected_answer_mode"] == "table_qa":
         out["_table_qa"] = True
         out.pop("_rule_guidance_lookup", None)
@@ -202,4 +259,47 @@ def enrich_row_for_routing(row: dict, *, latency_mode: str = "accurate") -> dict
     if route["rule_guidance_lookup"]:
         out["_hard_society_filter"] = route["hard_society_filter"]
         out["_rule_guidance_lookup"] = True
+    elif route.get("constrained_sources") and route.get("detected_society"):
+        # ``ABS만`` is a user constraint even when the question is a factual
+        # clause lookup rather than a Rule/Guidance discovery request.
+        out["_hard_society_filter"] = True
+
+    # Keep the four user-facing categories, but expose the orthogonal intent,
+    # answer-shape, time and authority axes to retrieval and generation.
+    from question_profile import build_question_profile
+
+    profile = build_question_profile(str(out.get("question") or ""), out)
+    out["_question_profile"] = profile.to_dict()
+
+    # The annual business scope prioritises DNV/KR when the user asks broadly
+    # for applicable Rules without naming a society.  Explicit ABS/LR/DNV/KR
+    # requests and exclusions above remain hard constraints.
+    if (
+        profile.answer_style == "document_cards"
+        and not route.get("detected_sources")
+        and not route.get("excluded_sources")
+        and not re.search(
+            r"아니라|제외|빼고|말고|대신|not\s+the|except|exclude",
+            str(out.get("question") or ""),
+            re.I,
+        )
+    ):
+        out["retrieval_sources"] = ["DNV", "KR"]
+        out["_preferred_default_rule_sources"] = ["DNV", "KR"]
+        out.pop("class_society_hint", None)
+
+    profile_path = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "processed"
+        / "index"
+        / "unified_full_corpus_715_v1"
+        / "document_profiles_v1.json"
+    )
+    if profile.time_scope in {"session_range", "latest_available"}:
+        from corpus_coverage_guard import build_coverage_guard
+
+        out["_coverage_guard"] = build_coverage_guard(
+            profile, document_profile_path=profile_path
+        )
     return out

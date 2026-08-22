@@ -10,8 +10,14 @@ from __future__ import annotations
 import html
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
+
+# The deployed RAG stack is self-contained.  Avoid slow Hugging Face HEAD
+# retries on restricted networks while still allowing an explicit override.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -35,6 +41,7 @@ from services.rag_service import (
     rag_index_banner,
     rag_index_ready,
     rag_status_message,
+    warmup_rag_resources,
 )
 
 try:
@@ -124,10 +131,29 @@ def _status_line() -> str:
     rag = "준비됨" if rag_index_ready() else "미구축"
     raw_pdf_available = RAW_PDFS_DIR.exists() and any(RAW_PDFS_DIR.rglob("*.pdf"))
     pdfs = "연결됨" if raw_pdf_available else "없음(기존 인덱스 질의 가능)"
+    advanced = "준비됨" if _advanced_assets_ready() else "부분 준비"
     return (
         f"운항DB: {ops} &nbsp;|&nbsp; 문서인덱스({DEFAULT_RAG_COLLECTION}): {rag} "
-        f"&nbsp;|&nbsp; raw_pdfs: {pdfs}"
+        f"&nbsp;|&nbsp; Advanced: {advanced} &nbsp;|&nbsp; raw_pdfs: {pdfs}"
     )
+
+
+def _advanced_assets_ready() -> bool:
+    sparse = (
+        ROOT
+        / "data"
+        / "processed"
+        / "index"
+        / f"unified_{DEFAULT_RAG_COLLECTION}"
+        / "accurate_sparse_fts5_v2.sqlite3"
+    )
+    reranker = (
+        ROOT
+        / "models"
+        / "cross-encoder-ms-marco-MiniLM-L4-v2"
+        / "config.json"
+    )
+    return sparse.is_file() and reranker.is_file()
 
 
 def _route_banner(
@@ -148,6 +174,7 @@ def _route_banner(
     method_labels = {
         "llm": "LLM 자동 분류",
         "forced": "전용 경로",
+        "manual": "수동 선택",
         "dialogue": "대화 문맥",
         "fallback": "안전 경로",
         "heuristic": "질문 분석",
@@ -161,11 +188,32 @@ def _route_banner(
     }
     bits = [
         f"확인 자료: {kind}",
-        f"신뢰도 {float(route.get('confidence') or 0):.0%}",
         method,
     ]
+    if (meta or {}).get("manual_retrieval_override"):
+        index_label = {
+            "text": "텍스트 인덱스 강제",
+            "table": "표 인덱스 강제",
+        }.get(str((meta or {}).get("retrieval_mode") or "").lower())
+        if index_label:
+            bits.append(index_label)
     if llm_model:
         bits.append(model_labels.get(llm_model, llm_model))
+    latency_mode = str((meta or {}).get("latency_mode") or "").lower()
+    if latency_mode == "accurate":
+        bits.append("Accurate 정밀 검색")
+    elif latency_mode == "advanced":
+        bits.append("Advanced 로컬 심층 검색·검증")
+        confidence = (meta or {}).get("advanced_confidence") or {}
+        level_label = {
+            "high": "근거 신뢰 높음",
+            "medium": "근거 신뢰 보통",
+            "low": "근거 추가 확인 필요",
+        }.get(str(confidence.get("level") or ""))
+        if level_label:
+            bits.append(level_label)
+    elif latency_mode == "fast":
+        bits.append("Fast 빠른 검색")
     latency_ms = float((meta or {}).get("end_to_end_latency_ms") or 0)
     if latency_ms > 0:
         bits.append(f"응답 {latency_ms / 1000:.1f}초")
@@ -180,6 +228,48 @@ def _force_from_mode(route_mode: str) -> str:
     if "둘" in route_mode or "hybrid" in route_mode.lower():
         return "hybrid"
     return "rag"
+
+
+def _normalize_latency_mode(response_mode: str | None) -> str:
+    value = str(response_mode or "").strip().lower()
+    if value in {"fast", "advanced"}:
+        return value
+    return "accurate"
+
+
+def _effective_llm_model(response_mode: str | None, llm_model: str | None) -> str:
+    """Advanced is the highest-quality contract and always uses local Gemma."""
+    if _normalize_latency_mode(response_mode) == "advanced":
+        return DEFAULT_LLM_MODEL
+    return str(llm_model or DEFAULT_LLM_MODEL)
+
+
+def save_ui_feedback(
+    question: str,
+    answer_html: str,
+    response_mode: str,
+    llm_model: str,
+    rating: str,
+    workspace: str,
+) -> str:
+    """Persist reviewer feedback locally; no network or external connector."""
+    from services.feedback_store import save_feedback
+
+    result = save_feedback(
+        question=question,
+        answer_html=answer_html,
+        rating=rating,
+        mode=_normalize_latency_mode(response_mode),
+        model=_effective_llm_model(response_mode, llm_model),
+        workspace=workspace,
+    )
+    if not result.get("ok"):
+        return "먼저 질문과 답변을 생성해 주세요."
+    return (
+        "로컬 검수 기록에 저장했습니다."
+        if result.get("rating") == "helpful"
+        else "개선 필요 항목으로 로컬에 저장했습니다."
+    )
 
 
 def _pack_answer(user_msg: str, result: dict) -> str:
@@ -201,6 +291,7 @@ def chat_fn(
     dialogue_state: dict | None,
     route_mode: str,
     llm_model: str,
+    response_mode: str = "accurate",
 ):
     empty = build_answer_html("", "")
     if not (user_msg or "").strip():
@@ -211,9 +302,9 @@ def chat_fn(
         history,
         force_route=_force_from_mode(route_mode),  # type: ignore[arg-type]
         use_llm_router=True,
-        rag_latency_mode="fast",
+        rag_latency_mode=_normalize_latency_mode(response_mode),
         dialogue_state=dialogue_state,
-        llm_model=llm_model,
+        llm_model=_effective_llm_model(response_mode, llm_model),
     )
     files = [f for f in (result.get("files") or []) if Path(f).exists()]
     return (
@@ -225,13 +316,40 @@ def chat_fn(
     )
 
 
-def retry_fn(
+def fixed_route_chat_fn(
     force_route: str,
+    user_msg: str,
+    history: list,
+    dialogue_state: dict | None,
+    llm_model: str,
+    response_mode: str = "accurate",
+):
+    """Handle a question in a dedicated tab without running top-level routing."""
+    label = "운항 DB 강제" if force_route == "ops" else "문서 RAG 강제"
+    return chat_fn(user_msg, history, dialogue_state, label, llm_model, response_mode)
+
+
+def document_chat_fn(
+    user_msg: str,
+    history: list,
+    dialogue_state: dict | None,
+    llm_model: str,
+    response_mode: str = "accurate",
+):
+    return fixed_route_chat_fn(
+        "rag", user_msg, history, dialogue_state, llm_model, response_mode
+    )
+
+
+def retry_index_fn(
+    retrieval_mode: str,
     history: list,
     dialogue_state: dict | None,
     last_question: str,
     llm_model: str,
+    response_mode: str = "accurate",
 ):
+    """Repeat the last document question against one explicitly selected index."""
     empty = build_answer_html("", "")
     q = (last_question or "").strip()
     if not q:
@@ -242,11 +360,12 @@ def retry_fn(
     result = handle_question(
         q,
         hist,
-        force_route=force_route,  # type: ignore[arg-type]
-        use_llm_router=True,
-        rag_latency_mode="fast",
+        force_route="rag",
+        use_llm_router=False,
+        rag_latency_mode=_normalize_latency_mode(response_mode),
         dialogue_state=dialogue_state,
-        llm_model=llm_model,
+        llm_model=_effective_llm_model(response_mode, llm_model),
+        retrieval_mode_override=retrieval_mode,
     )
     files = [f for f in (result.get("files") or []) if Path(f).exists()]
     return (
@@ -258,34 +377,16 @@ def retry_fn(
     )
 
 
-def fixed_route_chat_fn(
-    force_route: str,
-    user_msg: str,
-    history: list,
-    dialogue_state: dict | None,
-    llm_model: str,
-):
-    """Handle a question in a dedicated tab without running top-level routing."""
-    label = "운항 DB 강제" if force_route == "ops" else "문서 RAG 강제"
-    return chat_fn(user_msg, history, dialogue_state, label, llm_model)
-
-
-def document_chat_fn(
-    user_msg: str,
-    history: list,
-    dialogue_state: dict | None,
-    llm_model: str,
-):
-    return fixed_route_chat_fn("rag", user_msg, history, dialogue_state, llm_model)
-
-
 def ops_chat_fn(
     user_msg: str,
     history: list,
     dialogue_state: dict | None,
     llm_model: str,
+    response_mode: str = "accurate",
 ):
-    return fixed_route_chat_fn("ops", user_msg, history, dialogue_state, llm_model)
+    return fixed_route_chat_fn(
+        "ops", user_msg, history, dialogue_state, llm_model, response_mode
+    )
 
 
 REPORT_EXTENSIONS = {".docx", ".pdf", ".xlsx", ".csv", ".html", ".md"}
@@ -413,8 +514,8 @@ body, .gradio-container {
 .ready-state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #42d3a6; box-shadow: 0 0 0 4px rgba(66, 211, 166, .12); }
 .control-bar { margin: 12px 0 14px !important; align-items: stretch !important; gap: 12px !important; flex-wrap: nowrap !important; }
 .control-bar > div:first-child { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; }
-.control-bar > div:last-child {
-  flex: 0 0 340px !important; max-width: 340px !important; background: #fff !important;
+.control-bar > div:not(:first-child) {
+  flex: 0 0 300px !important; max-width: 300px !important; background: #fff !important;
   border: 1px solid var(--line) !important; border-radius: 10px !important;
 }
 .system-strip {
@@ -427,6 +528,8 @@ body, .gradio-container {
 .system-divider { width: 1px; height: 24px; background: var(--line); }
 .model-control { max-width: 310px; }
 .model-control label span { color: var(--ink-700) !important; font-size: 12px !important; font-weight: 700 !important; }
+.mode-control { max-width: 300px; }
+.mode-control label span { color: var(--ink-700) !important; font-size: 12px !important; font-weight: 700 !important; }
 #workspace-tabs { background: transparent !important; }
 #workspace-tabs > div:first-child, #workspace-tabs [role='tablist'] {
   gap: 4px !important; padding: 6px !important; margin-bottom: 14px !important;
@@ -499,6 +602,9 @@ body, .gradio-container {
 .send-btn button { height: 44px !important; background: var(--teal-600) !important; border-color: var(--teal-600) !important; font-weight: 800 !important; }
 .retry-row { gap: 8px !important; margin-top: 8px !important; }
 .retry-row button { min-height: 34px !important; color: #3d5667 !important; border-color: #d5e0e6 !important; background: #f7f9fa !important; font-size: 11px !important; }
+.feedback-row { gap: 8px !important; margin: 5px 0 3px !important; align-items: center !important; }
+.feedback-row button { min-height: 30px !important; max-width: 145px !important; font-size: 11px !important; color: #496170 !important; background: #fff !important; border-color: #d9e3e8 !important; }
+.feedback-row .prose { margin: 0 !important; font-size: 11px !important; color: #66808f !important; }
 .artifact-files { margin-top: 12px !important; }
 .map-box, .evidence-block, .related-tables-block { margin-top: 18px; border: 1px solid #d9e3e8; border-radius: 9px; overflow: hidden; background: #fff; }
 .map-title, .evidence-title { padding: 10px 12px; background: #f3f7f8; border-bottom: 1px solid #e2e9ed; color: #294354; font-size: 12px; font-weight: 800; }
@@ -541,9 +647,10 @@ footer { display: none !important; }
   .gradio-container { width: calc(100% - 20px) !important; padding: 10px 12px 24px !important; }
   .app-shell-header { align-items: flex-start; flex-direction: column; }
   .control-bar { flex-wrap: wrap !important; }
-  .control-bar > div:last-child { flex: 1 1 auto !important; max-width: none !important; }
+  .control-bar > div:not(:first-child) { flex: 1 1 auto !important; max-width: none !important; }
   .vessel-context { flex-wrap: wrap; }
   .model-control { max-width: none; }
+  .mode-control { max-width: none; }
   .page-intro { flex-direction: column; }
   .report-card { align-items: flex-start; }
   .report-card-side { align-items: flex-start; }
@@ -565,8 +672,6 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
             </div>
           </div>
           <div class="vessel-context">
-            <span class="context-pill">선박 H2521</span>
-            <span class="context-pill">벌크선</span>
             <span class="context-pill">로컬 업무공간</span>
           </div>
           <span class="ready-state">{ready_label}</span>
@@ -582,10 +687,26 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
               <span class="system-divider"></span>
               <span class="system-item">운항 DB {'준비됨' if ops_db_ready() else '미구축'}</span>
               <span class="system-item">문서 인덱스 {'준비됨' if rag_index_ready() else '미구축'}</span>
+              <span class="system-item">Advanced {'준비됨' if _advanced_assets_ready() else '부분 준비'}</span>
               <span class="system-item">원문 PDF {'연결됨' if RAW_PDFS_DIR.exists() else '없음'}</span>
             </div>
             """,
             scale=4,
+        )
+        response_mode = gr.Radio(
+            choices=[
+                ("Fast · 빠른 답변", "fast"),
+                ("Accurate · 정밀 답변", "accurate"),
+                ("Advanced · 최고 품질", "advanced"),
+            ],
+            value="accurate",
+            label="문서 답변 모드",
+            info=(
+                "Fast는 속도, Accurate는 균형, Advanced는 온프레미스 BM25·Dense·"
+                "Gemma 리랭크와 답변 재검증을 사용합니다(30초 이상, 복합 질문은 1~2분)."
+            ),
+            scale=1,
+            elem_classes=["mode-control"],
         )
         llm_model = gr.Dropdown(
             choices=list(LLM_MODEL_CHOICES),
@@ -618,8 +739,8 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
             )
             integrated_examples = [
                 "현재 운항 상태 알려줘",
-                "최신 MEPC 회의 주요 내용을 정리해줘",
-                "우리 CII랑 MEPC 규제 같이 알려줘",
+                "MEPC 84-6-2 문서에 따르면, 2019년 대비 2024년 전체 선단의 공급 기반 탄소 집약도(supply-based carbon intensity)는 어느 정도 감소했습니까?",
+                "MSC 111-5-8 문서에 따르면 러시아 연방에서 자율 운항 기술을 위한 법적 프레임워크가 최종 승인된 시점은 언제인가요?",
             ]
             gr.HTML("<div class='example-label'>추천 질문</div>")
             with gr.Row(elem_classes=["example-row"]):
@@ -627,6 +748,10 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                     gr.Button(text, size="sm") for text in integrated_examples
                 ]
             integrated_answer = gr.HTML(value=build_answer_html("", ""))
+            with gr.Row(elem_classes=["feedback-row"]):
+                integrated_helpful = gr.Button("답변 도움됨", size="sm")
+                integrated_improve = gr.Button("답변 개선 필요", size="sm")
+                integrated_feedback_status = gr.Markdown("")
             with gr.Row(elem_classes=["input-row"]):
                 integrated_input = gr.Textbox(
                     placeholder="운항·문서·혼합 질문을 입력하세요",
@@ -638,9 +763,8 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                     "질문 보내기", variant="primary", scale=1, elem_classes=["send-btn"]
                 )
             with gr.Row(elem_classes=["retry-row"]):
-                retry_ops = gr.Button("운항만으로 다시", size="sm")
-                retry_rag = gr.Button("문서만으로 다시", size="sm")
-                retry_hyb = gr.Button("둘 다로 다시", size="sm")
+                retry_text = gr.Button("텍스트 인덱스로 다시 검색", size="sm")
+                retry_table = gr.Button("표 인덱스로 다시 검색", size="sm")
             integrated_files = gr.File(
                 label="생성 파일 · 검색된 표 원본",
                 file_count="multiple",
@@ -661,16 +785,30 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                 )
             )
             document_examples = [
-                "과도한 부식의 정의는 무엇인가?",
-                "구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?",
-                "형상이 복잡하거나 한 개의 중량이 10톤을 넘는 주강품은 제품마다 시험재가 몇 개 필요한가?",
+                "MEPC 회의자료에 따르면, 2026년에 발행될 예정인 해양 플라스틱 쓰레기 관련 자료에는 어떤 것들이 포함되어 있습니까?",
+                "MEPC 84-6-2 문서에 따르면, 2019년 대비 2024년 전체 선단의 공급 기반 탄소 집약도(supply-based carbon intensity)는 어느 정도 감소했습니까?",
+                "MSC 111-5-8 문서에 따르면 러시아 연방에서 자율 운항 기술을 위한 법적 프레임워크가 최종 승인된 시점은 언제인가요?",
+                "RSTH 12·22·23·24 관을 확관한 후 관 끝의 허용 바깥지름은 원래 관 바깥지름의 몇 배인가?",
+                "재화중량이 10만 톤 초과 15만 톤 이하인 선박의 안전사용하중은 몇 톤인가?",
             ]
-            gr.HTML("<div class='example-label'>문서 검색 예시</div>")
+            gr.HTML("<div class='example-label'>텍스트 질문 예시</div>")
             with gr.Row(elem_classes=["example-row"]):
                 document_example_btns = [
-                    gr.Button(text, size="sm") for text in document_examples
+                    gr.Button(text, size="sm") for text in document_examples[:3]
                 ]
+            gr.HTML("<div class='example-label'>표 질문 예시</div>")
+            with gr.Row(elem_classes=["example-row"]):
+                document_example_btns.extend(
+                    [
+                        gr.Button(text, size="sm")
+                        for text in document_examples[3:]
+                    ]
+                )
             document_answer = gr.HTML(value=build_answer_html("", ""))
+            with gr.Row(elem_classes=["feedback-row"]):
+                document_helpful = gr.Button("답변 도움됨", size="sm")
+                document_improve = gr.Button("답변 개선 필요", size="sm")
+                document_feedback_status = gr.Markdown("")
             with gr.Row(elem_classes=["input-row"]):
                 document_input = gr.Textbox(
                     placeholder="규정·회의자료·표 검색 질문을 입력하세요",
@@ -680,6 +818,13 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                 )
                 document_send = gr.Button(
                     "문서 검색", variant="primary", scale=1, elem_classes=["send-btn"]
+                )
+            with gr.Row(elem_classes=["retry-row"]):
+                document_retry_text = gr.Button(
+                    "텍스트 인덱스로 다시 검색", size="sm"
+                )
+                document_retry_table = gr.Button(
+                    "표 인덱스로 다시 검색", size="sm"
                 )
             document_files = gr.File(
                 label="검색된 원본 표 · 생성 파일",
@@ -783,6 +928,39 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
     for btn, text in zip(ops_example_btns, ops_examples):
         btn.click(lambda t=text: t, outputs=ops_input)
 
+    integrated_helpful.click(
+        lambda q, a, mode, model: save_ui_feedback(
+            q, a, mode, model, "helpful", "integrated"
+        ),
+        inputs=[integrated_last_question, integrated_answer, response_mode, llm_model],
+        outputs=integrated_feedback_status,
+        show_progress="hidden",
+    )
+    integrated_improve.click(
+        lambda q, a, mode, model: save_ui_feedback(
+            q, a, mode, model, "needs_improvement", "integrated"
+        ),
+        inputs=[integrated_last_question, integrated_answer, response_mode, llm_model],
+        outputs=integrated_feedback_status,
+        show_progress="hidden",
+    )
+    document_helpful.click(
+        lambda q, a, mode, model: save_ui_feedback(
+            q, a, mode, model, "helpful", "document"
+        ),
+        inputs=[document_last_question, document_answer, response_mode, llm_model],
+        outputs=document_feedback_status,
+        show_progress="hidden",
+    )
+    document_improve.click(
+        lambda q, a, mode, model: save_ui_feedback(
+            q, a, mode, model, "needs_improvement", "document"
+        ),
+        inputs=[document_last_question, document_answer, response_mode, llm_model],
+        outputs=document_feedback_status,
+        show_progress="hidden",
+    )
+
     integrated_send.click(
         chat_fn,
         inputs=[
@@ -791,6 +969,7 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
             integrated_dialogue,
             integrated_route_mode,
             llm_model,
+            response_mode,
         ],
         outputs=[
             integrated_history,
@@ -809,6 +988,7 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
             integrated_dialogue,
             integrated_route_mode,
             llm_model,
+            response_mode,
         ],
         outputs=[
             integrated_history,
@@ -819,13 +999,16 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
         ],
     ).then(lambda: "", outputs=integrated_input)
 
-    retry_ops.click(
-        lambda hist, st, last_q, model: retry_fn("ops", hist, st, last_q, model),
+    retry_text.click(
+        lambda hist, st, last_q, model, mode: retry_index_fn(
+            "text", hist, st, last_q, model, mode
+        ),
         inputs=[
             integrated_history,
             integrated_dialogue,
             integrated_last_question,
             llm_model,
+            response_mode,
         ],
         outputs=[
             integrated_history,
@@ -835,29 +1018,16 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
             integrated_last_question,
         ],
     )
-    retry_rag.click(
-        lambda hist, st, last_q, model: retry_fn("rag", hist, st, last_q, model),
+    retry_table.click(
+        lambda hist, st, last_q, model, mode: retry_index_fn(
+            "table", hist, st, last_q, model, mode
+        ),
         inputs=[
             integrated_history,
             integrated_dialogue,
             integrated_last_question,
             llm_model,
-        ],
-        outputs=[
-            integrated_history,
-            integrated_dialogue,
-            integrated_answer,
-            integrated_files,
-            integrated_last_question,
-        ],
-    )
-    retry_hyb.click(
-        lambda hist, st, last_q, model: retry_fn("hybrid", hist, st, last_q, model),
-        inputs=[
-            integrated_history,
-            integrated_dialogue,
-            integrated_last_question,
-            llm_model,
+            response_mode,
         ],
         outputs=[
             integrated_history,
@@ -880,6 +1050,7 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
         document_history,
         document_dialogue,
         llm_model,
+        response_mode,
     ]
     document_send.click(
         document_chat_fn,
@@ -891,6 +1062,32 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
         inputs=document_inputs,
         outputs=document_outputs,
     ).then(lambda: "", outputs=document_input)
+    document_retry_text.click(
+        lambda hist, st, last_q, model, mode: retry_index_fn(
+            "text", hist, st, last_q, model, mode
+        ),
+        inputs=[
+            document_history,
+            document_dialogue,
+            document_last_question,
+            llm_model,
+            response_mode,
+        ],
+        outputs=document_outputs,
+    )
+    document_retry_table.click(
+        lambda hist, st, last_q, model, mode: retry_index_fn(
+            "table", hist, st, last_q, model, mode
+        ),
+        inputs=[
+            document_history,
+            document_dialogue,
+            document_last_question,
+            llm_model,
+            response_mode,
+        ],
+        outputs=document_outputs,
+    )
 
     ops_outputs = [
         ops_history,
@@ -899,7 +1096,7 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
         ops_files,
         ops_last_question,
     ]
-    ops_inputs = [ops_input, ops_history, ops_dialogue, llm_model]
+    ops_inputs = [ops_input, ops_history, ops_dialogue, llm_model, response_mode]
     ops_send.click(
         ops_chat_fn,
         inputs=ops_inputs,
@@ -933,12 +1130,29 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
 
 if __name__ == "__main__":
     server_port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
+    skip_startup_warmup = os.environ.get(
+        "MARITIME_SKIP_STARTUP_WARMUP", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
     print("=" * 56)
     print("  MaritimeOps AI")
     print(f"  {_status_line().replace('&nbsp;', ' ')}")
     print("=" * 56)
-    if rag_index_ready():
-        print("  문서 인덱스 준비됨. 첫 RAG 질문 때 모델을 로드합니다.")
+    if rag_index_ready() and not skip_startup_warmup:
+        print("  문서 인덱스·임베딩 모델을 미리 준비합니다...")
+        warm_started = time.perf_counter()
+        try:
+            warm = warmup_rag_resources()
+            elapsed = time.perf_counter() - warm_started
+            if warm.get("ok"):
+                print(f"  Fast 검색 준비 완료 ({elapsed:.1f}초).")
+            else:
+                print(f"  사전 준비 생략: {warm.get('reason') or 'unknown'}")
+        except Exception as exc:
+            # Startup remains usable; the first RAG request will fall back to
+            # the existing lazy loader and expose its latency in the UI.
+            print(f"  사전 준비 실패(첫 질문에서 재시도): {exc}")
+    elif rag_index_ready():
+        print("  시작 사전 준비를 생략했습니다(첫 질문에서 기존 lazy loader 사용).")
     print(f"  브라우저: http://127.0.0.1:{server_port}  (0.0.0.0 은 접속 주소가 아님)")
     print("=" * 56)
     demo.launch(

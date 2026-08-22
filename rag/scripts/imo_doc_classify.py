@@ -10,6 +10,17 @@ SESSION_AGENDA_RE = re.compile(
 )
 
 REFERENCE_OUTCOME_RE = re.compile(r"outcome\s+of\s+", re.I)
+ADMINISTRATIVE_J_RE = re.compile(r"\b(?:MSC|MEPC)\s*\d{1,3}-J-\d+\b", re.I)
+ADMINISTRATIVE_TITLE_RE = re.compile(
+    r"provisional\s+list\s+of\s+(?:participants|documents)|"
+    r"provisional\s+timetable|presentations\s+and\s+events|"
+    r"grouping\s+of\s+documents",
+    re.I,
+)
+FORMAL_RESOLUTION_RE = re.compile(
+    r"\b(?:MSC|MEPC)\.\d+\(\d+\)|^\s*(?:MSC|MEPC)\s+resolution\b",
+    re.I,
+)
 SESSION_FINAL_REPORT_RE = re.compile(
     r"(?:"
     r"\bwp\.?\s*1\b.*draft\s+report|"
@@ -126,12 +137,18 @@ def classify_imo_filename(file_name: str) -> str:
     if not fn:
         return "unknown"
 
+    if ADMINISTRATIVE_J_RE.search(file_name) or ADMINISTRATIVE_TITLE_RE.search(fn):
+        return "administrative"
     if "comments on" in fn or "comment on" in fn:
         return "comments"
-    if "proposal for" in fn:
+    if "proposal for" in fn or "proposed amendments" in fn or "draft resolution" in fn:
         return "proposal"
     if "-inf." in fn or re.search(r"\binf\.\d", fn):
         return "inf"
+    if FORMAL_RESOLUTION_RE.search(file_name) and not re.search(r"draft|proposal|proposed", fn):
+        return "resolution"
+    if re.search(r"^.*\bamendments?\s+to\b", fn) and not re.search(r"draft|proposal|proposed", fn):
+        return "amendments"
     if REFERENCE_OUTCOME_RE.search(fn):
         return "reference_outcome"
     if SESSION_FINAL_REPORT_RE.search(fn):
@@ -168,10 +185,14 @@ def tier_for_query(doc_type: str, *, wants_summary: bool, wants_outcome: bool, w
             return 0.35
         if doc_type in ("proposal", "comments", "inf"):
             return -0.15
+        if doc_type == "administrative":
+            return -2.0
         return 0.0
 
     if wants_summary or wants_outcome:
         scores = {
+            "resolution": 0.55,
+            "amendments": 0.26,
             "session_report": 0.34,
             "session_outcome": 0.22,
             "reference_outcome": -0.18,
@@ -182,9 +203,12 @@ def tier_for_query(doc_type: str, *, wants_summary: bool, wants_outcome: bool, w
             "comments": -0.25,
             "inf": -0.18,
             "agenda": 0.05,
+            "administrative": -2.0,
             "other": 0.0,
             "unknown": 0.0,
         }
         return scores.get(doc_type, 0.0)
 
+    if doc_type == "administrative":
+        return -2.0
     return 0.0

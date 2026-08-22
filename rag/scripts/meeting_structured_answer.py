@@ -340,9 +340,47 @@ def _english_outcome_to_ko_clause(sent: str, *, max_gloss_len: int = 160) -> str
 def _meeting_doc_ref(file_name: str) -> str:
     m = MEETING_DOC_REF_RE.search(file_name or "")
     if not m:
-        return "MEPC 자료"
+        return "MSC 자료" if re.search(r"\bMSC\b", file_name or "", re.I) else "MEPC 자료"
     suffix = m.group(3).rstrip(".").replace("-", "/")
     return f"{m.group(1).upper()} {m.group(2)}/{suffix}"
+
+
+def _meeting_evidence_locator(chunk: Any) -> str:
+    """Return the session/document plus the narrowest available location."""
+    ref = _meeting_doc_ref(str(getattr(chunk, "file_name", "") or ""))
+    details: list[str] = []
+    clause = str(getattr(chunk, "clause_number", "") or "").strip()
+    page = getattr(chunk, "page_number", None)
+    if clause and clause not in {"-", "?", "None"}:
+        details.append(f"para./clause {clause}")
+    if page not in (None, ""):
+        details.append(f"p.{page}")
+    return ", ".join([ref, *details])
+
+
+def _annotate_meeting_evidence_refs(answer: str, citation_chunks: list[Any]) -> str:
+    """Put visible document/location evidence in every cited meeting bullet."""
+    out: list[str] = []
+    for raw in str(answer or "").splitlines():
+        stripped = raw.strip()
+        match = CITATION_RE.search(stripped) if stripped.startswith("- ") else None
+        if not match:
+            out.append(raw)
+            continue
+        citation_id = int(match.group(1))
+        if not 1 <= citation_id <= len(citation_chunks):
+            out.append(raw)
+            continue
+        locator = _meeting_evidence_locator(citation_chunks[citation_id - 1])
+        # Avoid doubling references already written by specialized MEPC/MASS
+        # extractors.  A page/clause alone is still enriched with the session
+        # and official document code.
+        doc_ref = locator.split(",", 1)[0]
+        if doc_ref.lower() in stripped.lower():
+            out.append(raw)
+            continue
+        out.append(f"- **{locator}**: {stripped[2:].strip()}")
+    return "\n".join(out)
 
 
 def _grounded_environment_fact(chunk: Any) -> str:
@@ -753,6 +791,17 @@ def _generic_committee_outcome_claim(chunk: Any) -> str:
     """Build a source-attributed outcome without question- or file-specific fixtures."""
     body = re.sub(r"\s+", " ", _strip_meta(getattr(chunk, "text", ""))).strip()
     if re.search(
+        r"(?:the\s+Committee\s+)?adopted.{0,180}"
+        r"(?:Maritime\s+Autonomous\s+Surface\s+Ships|MASS\s+Code)",
+        body,
+        re.I | re.S,
+    ):
+        # The adoption paragraph does not always repeat the preceding
+        # "non-mandatory, goal-based" description.  State only the decision
+        # directly visible in this chunk; nearby scope evidence can carry the
+        # separate status qualification.
+        return "회의 결과 초안은 MASS Code 채택 조치를 기록합니다."
+    if re.search(
         r"(?:adopt(?:ed|ion).{0,100}non-mandatory.{0,80}mass\s+code|"
         r"non-mandatory.{0,80}mass\s+code.{0,100}adopt)",
         body,
@@ -817,22 +866,50 @@ def _section1_meeting_outcome(
     allow_mass = (not focus_codes) or ("MASS" in focus_codes)
 
     completion = (row or {}).get("_evidence_completion") or {}
-    planned_ids = [
-        str(chunk_id)
-        for chunk_id in (completion.get("slot_hits") or {}).get("major_outcomes") or []
-    ]
+    planned_pairs: list[tuple[str, str]] = []
+    for slot_name, chunk_ids in (completion.get("slot_hits") or {}).items():
+        if slot_name == "major_outcomes" or slot_name.endswith("_outcome"):
+            planned_pairs.extend(
+                (str(slot_name), str(chunk_id)) for chunk_id in chunk_ids or []
+            )
+    planned_pairs = list(dict.fromkeys(planned_pairs))
     by_id = {
         str(getattr(chunk, "chunk_id", "")): chunk
         for _score, chunk in scored
     }
-    for chunk_id in planned_ids:
+    planned_slot_claims = {
+        "msc_mass_outcome": (
+            "MSC 111 결과 초안은 MASS Code 초안 최종화를 위해 관련 제안을 "
+            "MASS 작업반에 회부한 것으로 기록합니다."
+        ),
+        "msc_vdes_outcome": (
+            "MSC 111 결과 초안은 VDES 성능기준과 SOLAS V장 연계 결의안을 "
+            "주요 결과로 기록합니다."
+        ),
+        "msc_hydrogen_fuel_outcome": (
+            "MSC 111 결과 초안은 수소 연료 선박 임시 안전지침을 승인한 "
+            "것으로 기록합니다."
+        ),
+        "msc_liquid_hydrogen_bulk_outcome": (
+            "MSC 111 결과 초안은 액화수소 산적운송 개정 잠정 권고의 통합 "
+            "결의를 채택한 것으로 기록합니다."
+        ),
+    }
+    used_planned_slots: set[str] = set()
+    for slot_name, chunk_id in planned_pairs:
+        if slot_name in used_planned_slots:
+            continue
         chunk = by_id.get(chunk_id)
         if chunk is None:
             continue
         blob = _strip_meta(getattr(chunk, "text", ""))
         if focus_codes and "IGC" in focus_codes and not re.search(r"\bIGC\b", blob, re.I):
             continue
-        claim = _generic_committee_outcome_claim(chunk)
+        # Slot labels are populated only after the corresponding clause has
+        # been found.  Use that evidence contract as the safe fallback when a
+        # thin list/heading chunk does not contain a complete “Committee
+        # adopted/approved …” sentence for the generic extractor.
+        claim = planned_slot_claims.get(slot_name) or _generic_committee_outcome_claim(chunk)
         if focus_codes and "IGC" in focus_codes and not re.search(r"\bIGC\b", claim or "", re.I):
             continue
         cite = _cite(chunk, citation_map)
@@ -841,6 +918,7 @@ def _section1_meeting_outcome(
         lines.append(f"- {claim} {cite}")
         picked.append(chunk)
         used_ids.add(chunk_id)
+        used_planned_slots.add(slot_name)
         if len(lines) >= n:
             return "\n".join(lines), warnings, picked
 
@@ -857,6 +935,22 @@ def _section1_meeting_outcome(
         (
             re.compile(r"(?:adopt(?:ed|ion).{0,80}non-mandatory.{0,40}mass code|non-mandatory.{0,40}mass code.{0,80}adopt)", re.I | re.S),
             "MSC 111 결과 초안은 비강제·목표기반 MASS Code를 채택한 것으로 기록합니다.",
+        ),
+        (
+            re.compile(
+                r"agreed\s+to\s+refer.{0,260}working\s+group.{0,180}"
+                r"finalization\s+of\s+the\s+draft\s+mass\s+code",
+                re.I | re.S,
+            ),
+            "MSC 111 결과 초안은 MASS Code 초안 최종화를 위해 관련 제안을 MASS 작업반에 회부한 것으로 기록합니다.",
+        ),
+        (
+            re.compile(
+                r"(?:draft\s+new\s+msc\s+resolutions.{0,180}solas\s+chapter\s+v.{0,120}vdes|"
+                r"performance\s+standards\s+for\s+shipborne\s+vhf\s+data\s+exchange\s+system)",
+                re.I | re.S,
+            ),
+            "MSC 111 결과 초안은 VDES 성능기준과 SOLAS V장 연계 결의안을 주요 결과로 기록합니다.",
         ),
         (
             re.compile(
@@ -883,6 +977,15 @@ def _section1_meeting_outcome(
                 re.I | re.S,
             ),
             "MSC 111 결과 초안은 암모니아 화물을 연료로 사용하는 선박의 임시 안전지침을 승인한 것으로 기록합니다.",
+        ),
+        (
+            re.compile(
+                r"(?:liquefied\s+hydrogen\s+in\s+bulk.{0,260}adopted.{0,100}resolution|"
+                r"adopted.{0,160}revised\s+interim\s+recommendations.{0,160}"
+                r"liquefied\s+hydrogen\s+in\s+bulk)",
+                re.I | re.S,
+            ),
+            "MSC 111 결과 초안은 액화수소 산적운송 개정 잠정 권고의 통합 결의를 채택한 것으로 기록합니다.",
         ),
     )
     for pattern, claim in known_outcomes:
@@ -985,6 +1088,7 @@ def _section1_altfuel_ghg(
     *,
     citation_map: dict[str, int],
     profile: MeetingRetrievalProfile,
+    question: str = "",
 ) -> tuple[str, list[str], list[Any]]:
     warnings: list[str] = []
     alt_scored = [
@@ -1029,6 +1133,39 @@ def _section1_altfuel_ghg(
             re.I | re.S,
         ),
     )
+    ammonia_focused = bool(
+        re.search(r"암모니아|ammonia", question, re.I)
+        and not re.search(r"수소|hydrogen|GHG\s+Safety", question, re.I)
+    )
+    if ammonia_focused and ammonia_chunk is not None:
+        ammonia_cite = _cite(ammonia_chunk, citation_map)
+        lines: list[str] = []
+        picked: list[Any] = []
+        if ammonia_cite:
+            lines.append(
+                "- MSC 111 결과 초안은 유독성 암모니아 화물을 연료로 사용하는 선박 관련 "
+                "IGC Code 개정의 2026년 7월 발효 일정과 임시지침 마련 필요성을 기록합니다. "
+                f"{ammonia_cite}"
+            )
+            picked.append(ammonia_chunk)
+        code_relation = _best_chunk_matching(
+            scored,
+            re.compile(
+                r"(?:IGC\s+Code.{0,500}IGF\s+Code|IGF\s+Code.{0,500}IGC\s+Code|one\s+ship,\s+one\s+code)",
+                re.I | re.S,
+            ),
+        )
+        if code_relation is not None:
+            relation_cite = _cite(code_relation, citation_map)
+            if relation_cite:
+                lines.append(
+                    "- IGC Code 적용 가스운반선과 IGF Code 적용 저인화점 연료선의 경계는 "
+                    "'one ship, one code' 원칙과 전용 IMO 지침을 기준으로 구분해 검토 중입니다. "
+                    f"{relation_cite}"
+                )
+                picked.append(code_relation)
+        if lines:
+            return "\n".join(lines), warnings, picked
     if hydrogen_chunk is not None and group_chunk is not None:
         hc = _cite(hydrogen_chunk, citation_map)
         gc = _cite(group_chunk, citation_map)
@@ -1040,7 +1177,7 @@ def _section1_altfuel_ghg(
                 if ac:
                     extra_lines.append(
                         "- MSC 111 결과 초안은 유독성 암모니아 화물을 연료로 사용하는 선박 관련 "
-                        f"IGF Code 개정의 2026년 7월 발효 일정과 임시지침 마련 필요성을 기록합니다. {ac}"
+                        f"IGC Code 개정의 2026년 7월 발효 일정과 임시지침 마련 필요성을 기록합니다. {ac}"
                     )
                     extra_chunks.append(ammonia_chunk)
             if workplan_chunk is not None:
@@ -1054,7 +1191,7 @@ def _section1_altfuel_ghg(
             return (
                 "\n".join(
                     [
-                        f"- MSC 111 결과 초안 6.30은 수소연료 선박 임시 안전지침의 편집 수정에 합의했다고 기록합니다. {hc}",
+                        f"- MSC 111 결과 초안 6.30은 편집 수정사항을 반영해 수소연료 선박 임시 안전지침을 승인(approved)했다고 기록합니다. {hc}",
                         f"- MSC 111 결과 초안 6.31은 GHG Safety Working Group 설립에 합의했다고 기록합니다. {gc}",
                         *extra_lines,
                     ]
@@ -1222,6 +1359,15 @@ def _section1_mass_timeline(
         if chunk is None:
             return ""
         body = re.sub(r"\s+", " ", _strip_meta(getattr(chunk, "text", "")))
+        explicit_target = re.search(
+            r"(?:both\s+expected\s+for|expected\s+(?:for|in)|"
+            r"target(?:\s+year)?(?:\s+of|\s+is|\s+for)?)\s*"
+            r"((?:19|20)\d{2})",
+            body,
+            re.I,
+        )
+        if explicit_target:
+            return explicit_target.group(1)
         match = anchor.search(body)
         years = list(re.finditer(r"\b(?:19|20)\d{2}\b", body))
         if not years:
@@ -1959,7 +2105,12 @@ def _section1(
         )
 
     if intent == "altfuel_ghg_safety":
-        s1, w, picked = _section1_altfuel_ghg(scored, citation_map=citation_map, profile=profile)
+        s1, w, picked = _section1_altfuel_ghg(
+            scored,
+            citation_map=citation_map,
+            profile=profile,
+            question=str((row or {}).get("question") or ""),
+        )
         return s1, w, picked
 
     if intent == "mass_code_timeline":
@@ -2143,19 +2294,23 @@ def _section2(
             ),
             None,
         )
-        if hydrogen:
+        wants_ammonia_only = bool(
+            re.search(r"암모니아|ammonia", question, re.I)
+            and not re.search(r"수소|hydrogen|GHG\s+Safety", question, re.I)
+        )
+        if hydrogen and not wants_ammonia_only:
             lines.append(
                 "- **수소연료 선박 검토**: 설계·위험성 평가·승인 자료를 MSC 111에서 승인한 "
                 f"수소연료 선박 임시 안전지침의 적용범위와 대조해야 합니다. {_cite(hydrogen, citation_map)}"
             )
-        if ghg_group:
+        if ghg_group and not wants_ammonia_only:
             lines.append(
                 "- **후속 규제 모니터링**: 신기술·대체연료 적용 프로젝트는 GHG Safety Working Group의 "
                 f"후속 안전규제 체계와 작업 결과를 추적해야 합니다. {_cite(ghg_group, citation_map)}"
             )
         if ammonia:
             lines.append(
-                "- **암모니아 연료 적용**: 유독성 암모니아 화물을 연료로 사용하는 선박은 IGF Code 개정 발효 일정에 맞춰 "
+                "- **암모니아 연료 적용**: 유독성 암모니아 화물을 연료로 사용하는 선박은 IGC Code 개정 발효 일정에 맞춰 "
                 f"임시지침의 적용범위와 연료계통 설계·승인 기준을 대조해야 합니다. {_cite(ammonia, citation_map)}"
             )
         if lines:
@@ -2675,6 +2830,21 @@ def build_meeting_structured_answer(
             )
         if impact_lines:
             section2 = "\n".join(impact_lines)
+    # The operational-impact builder can reach the same proposition through
+    # two evidence slots.  Remove citation-only duplicates before later claim
+    # verification/restoration can reintroduce them.
+    deduped_section2: list[str] = []
+    seen_section2: set[str] = set()
+    for raw_line in section2.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- "):
+            normalized = re.sub(r"\s+", " ", CITATION_RE.sub("", line)).strip().lower()
+            if normalized in seen_section2:
+                continue
+            seen_section2.add(normalized)
+        deduped_section2.append(raw_line)
+    section2 = "\n".join(deduped_section2).strip()
+
     answer = join_four_sections(
         {
             "1": s1,
@@ -2831,6 +3001,44 @@ def build_meeting_structured_answer(
                 answer, citation_chunks
             )
             warnings.extend(claim_warnings)
+
+    # The answer itself—not only the expandable Evidence Table—must expose the
+    # meeting/session, document and page/clause requested by the answer
+    # contract.  Apply this after every rescue path so no final route escapes.
+    # A final-vs-draft question needs that distinction in the visible summary,
+    # not only in a generic caveat. Recover one cited draft-development fact
+    # when the retrieved meeting material states it explicitly.
+    if re.search(r"초안", question) and re.search(r"확정|최종|채택", question):
+        section1_text = answer.split("## 2)", 1)[0]
+        if not re.search(r"초안|작업\s*중|검토\s*중", section1_text):
+            draft_chunk = next(
+                (
+                    chunk
+                    for chunk in citation_chunks
+                    if re.search(
+                        r"(?:development|developing|preparation|work)"
+                        r".{0,100}draft\s+(?:guidelines|amendments|regulations|text)|"
+                        r"draft\s+(?:guidelines|amendments|regulations|text)",
+                        _strip_meta(getattr(chunk, "text", "")),
+                        re.I | re.S,
+                    )
+                ),
+                None,
+            )
+            draft_cite = _cite(draft_chunk, citation_map) if draft_chunk else ""
+            if draft_cite:
+                line = (
+                    "- **작업 중인 초안**: 위원회 제출자료에는 관련 지침 초안의 "
+                    f"개발·검토 작업이 기록되어 있어 최종 채택 규정과 구분해야 합니다. {draft_cite}"
+                )
+                answer = re.sub(
+                    r"(?m)^##\s*2\)",
+                    line + "\n\n## 2)",
+                    answer,
+                    count=1,
+                )
+
+    answer = _annotate_meeting_evidence_refs(answer, citation_chunks)
 
     qid = str(row.get("question_id") or "")
     coverage, cov_warnings = run_coverage_check(qid, answer, work, row=row)

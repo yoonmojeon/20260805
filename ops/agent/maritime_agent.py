@@ -73,7 +73,7 @@ def run_agent_sync(
                 tools=TOOL_SCHEMAS,
                 tool_choice="auto",
                 temperature=0.1,
-                max_tokens=2048,
+                max_tokens=4096,
             )
         except Exception as e:
             answer = f"[LLM 오류] {e}"
@@ -112,14 +112,14 @@ def run_agent_sync(
     else:
         answer = answer or "최대 반복 횟수에 도달했습니다."
 
-    # The selected model is the primary answer generator. Keep the deterministic
-    # formatter only as a safety fallback for empty/failed model generations.
+    # LLM chooses the tool; structured DB results are rendered deterministically
+    # so figures, scope labels and the final sentence cannot be truncated or
+    # paraphrased into a different meaning.
     formatted = build_answer_from_tools(tool_results)
     if formatted:
-        fallback_answer, formatted_show_map = formatted
+        structured_answer, formatted_show_map = formatted
         show_map = show_map or formatted_show_map
-        if not answer.strip() or answer.startswith("[LLM 오류]"):
-            answer = fallback_answer
+        answer = structured_answer
 
     new_history = history + [
         {"role": "user", "content": user_message},

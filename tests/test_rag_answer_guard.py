@@ -125,3 +125,27 @@ def test_blank_sections_are_filled_without_an_llm_retry():
     )
     assert "검색 근거에서 직접 확인되는 별도 운항·업무 영향이 없습니다" in result.answer
     assert "추가 확인 필요사항이 별도로 식별되지 않았습니다" in result.answer
+
+
+def test_compact_exact_fact_is_not_expanded_back_to_four_sections():
+    answer = (
+        "## 1) 핵심 요약\n\n- 전력 케이블은 1 kV 및 3 kV급입니다. [1]\n\n"
+        "## 4) 관련 선급 Rule / Guidance\n\n- DNV-CP-0399, p.5 [1]"
+    )
+    evidence = chunk("DNV-CP-0399.pdf", 5, "power cables for rated voltages 1 kV and 3 kV")
+    exact_payload = payload(evidence)
+    exact_payload["answer_out"] = {
+        "verification_summary": {
+            "answer_length_contract": {"answer_profile": "exact_rule_fact"}
+        }
+    }
+
+    result = guard_rag_answer(
+        "DNV-CP-0399은 어떤 정격 케이블에 적용되나요?",
+        answer,
+        exact_payload,
+        model="gemma4:12b",
+    )
+
+    assert "## 2)" not in result.answer
+    assert "## 3)" not in result.answer

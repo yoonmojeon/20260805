@@ -1,6 +1,6 @@
 # MaritimeOpsRAG
 
-선박 운항 데이터와 IMO·선급 문서를 한 화면에서 질의하는 Windows 로컬 RAG 애플리케이션입니다. 기본 답변 모델은 Ollama의 `gemma4:12b`이며, 모든 실행 경로는 `C:\Users\user\llmagent`를 기준으로 합니다.
+선박 운항 데이터와 IMO·선급 PDF를 한 화면에서 질의하는 Windows 온프레미스 RAG 애플리케이션입니다. 기본 답변 모델은 Ollama의 `gemma4:12b`이며, 검색·재순위·답변·검수와 사용자 피드백은 외부 API 없이 로컬에서 처리됩니다.
 
 ## 현재 기능
 
@@ -14,8 +14,32 @@
 - 선택 모델: `gemma4:12b`(기본), `llama3.1:8b`
 - 규칙 라우터 선택 UI는 제거했습니다. 통합 탭은 LLM 라우팅을 사용하고, 호출 실패·저신뢰 때만 결정적 안전장치가 동작합니다.
 - 통합 탭의 `운항 DB 강제`와 `문서 RAG 강제`는 테스트용 정보원 override이며 과거 rule router가 아닙니다.
-- 문서 검색은 Dense + BM25 + 정확 식별자 + 문서 내부 evidence-slot 검색을 결합합니다.
+- 문서 검색은 선택한 Fast / Accurate / Advanced 모드에 따라 Dense, 정확 식별자, 로컬 FTS/BM25, RRF, 재순위와 문서 내부 evidence-slot 검색을 조합합니다.
 - 표 검색은 별도 precise-table collection을 사용하며 원문 파일·페이지·표 crop을 함께 표시합니다.
+
+## Fast / Accurate / Advanced
+
+UI의 `문서 답변 모드`에서 하나만 선택하면 검색부터 답변까지 같은 모드가 끝까지 적용됩니다. Advanced는 항상 로컬 `gemma4:12b`를 사용합니다.
+
+| 구분 | Fast | Accurate | Advanced |
+|---|---|---|---|
+| 권장 용도 | 빠른 1차 조회·간단한 사실 질문 | 일반 시연·규정/회의/표 질문 | 복합 설계 검토·다문서 통합·중요 답변 |
+| 기본 후보 폭 | 일반 본문 top 3 / pool 18; 질문 유형별 최대 top 10 | UI top 14, fetch 150; 회의 top 12 / pool 80 | 일반 본문 Dense 80 + 로컬 FTS/BM25 80 → RRF 80, 최대 union 120; 회의/표는 전용 검색기 유지 |
+| 정확일치 | 문서코드·희소 복합명사 실패 보강 | Fast 기능 + 정확 문서 강제 선택·문서 내부 sparse 보강 | 질문 분해 후 누락 축별 최대 4회 bounded exact lookup |
+| 재순위 | typed evidence slot, 별도 모델 없음 | 메타데이터·문서 권위·다양성·문서 내부 점수 | 후보 36개에 로컬 MiniLM cross-encoder 보조점수 + Gemma listwise, 최종 18개 |
+| 문맥 보강 | 짧은 직접 근거 | 인접 조건·예외·목록 tail과 다문서 quota | Accurate 문맥 + parent/sibling 청크 및 누락 facet 재검색 |
+| 답변 생성 | 일반 질문은 LLM 사용; 검증된 단순 표/회의/문서목록은 구조화 답변 가능 | Gemma/Llama 근거 생성 + 답변 계약·인용 검증 | Gemma 생성 + 근거 신뢰도 gate + 별도 Gemma 최종 감사/안전한 1회 repair |
+| 표 질문 | precise-table 검색·셀 검증·원문 crop | 같은 검증 경로에 넓은 후보 예산 | 표는 검증된 결정적 셀 경로 유지; 불필요한 일반 재순위 미적용 |
+| 체감 시간 | 목표 10초 이내, 첫 호출은 더 느릴 수 있음 | 보통 10~25초 | 단일 사실 약 30초, 복합 다문서 약 60~130초 가능 |
+
+Fast도 단순 문자열 템플릿만 반환하는 모드가 아닙니다. 질문 유형을 분류하고 직접 근거를 압축한 뒤 LLM이 답을 작성하는 것이 기본이며, 정확 셀·검증된 회의 결과처럼 결정적 renderer가 더 안전한 경우에만 LLM 생성을 대체합니다.
+
+### BM25·RRF·reranker가 적용되는 위치
+
+- 과거 272k 청크 전역 Python BM25는 첫/반복 질의가 약 10~125초이고 고정 150문항 A/B에서 recall 이득이 없어서 Fast와 Accurate 기본값에서는 사용하지 않습니다.
+- Advanced는 전역 메모리 스캔 대신 기존 Chroma 옆의 로컬 SQLite FTS5/BM25 sidecar를 사용합니다. Dense 상위 24개를 보호한 채 RRF로 합치므로 sparse 결과가 좋은 dense 후보를 제거할 수 없습니다.
+- 이후 Apache-2.0 `cross-encoder/ms-marco-MiniLM-L4-v2`를 CPU 보조 점수로 사용하고, 최종 선택은 로컬 Gemma listwise reranker가 담당합니다. 모델 폴더가 없거나 로드에 실패하면 Accurate 후보를 그대로 보존하는 fail-closed 구조입니다.
+- 검색 결과에 공식 회의 결과와 제안서가 함께 있으면 WP.1/Report/Resolution의 `approved`, `adopted`, `agreed` 문장을 보호합니다. 질문이 제안 자체를 물을 때는 이 보호를 적용하지 않습니다.
 
 ## 빠른 실행
 
@@ -28,7 +52,7 @@ ollama serve
 
 ```powershell
 cd C:\Users\user\llmagent
-.\.venv\Scripts\python.exe app.py
+.\start.cmd
 ```
 
 브라우저에서 `http://127.0.0.1:7860`을 엽니다. 7860 포트가 사용 중이면 기존 UI를 먼저 확인하거나 다른 포트를 지정합니다.
@@ -48,9 +72,11 @@ $env:GRADIO_SERVER_PORT="7861"
 - `data/raw_pdfs/`: 원문 PDF
 - `data/processed/index/unified_full_corpus_715_v1/`: 본문 Chroma·BM25 인덱스
 - `data/processed/index/unified_full_corpus_715_tables_precise_v1/`: 표 Chroma·BM25 인덱스
+- `data/processed/index/unified_full_corpus_715_v1/accurate_sparse_fts5_v2.sqlite3`: Advanced 로컬 sparse sidecar
+- `models/cross-encoder-ms-marco-MiniLM-L4-v2/`: Advanced 로컬 cross-encoder
 - `data/processed/`: 추출 본문·표·crop·평가 로그
 
-대용량 PDF·DB·인덱스는 GitHub에서 제외됩니다. 현재 로컬 폴더는 단독 실행이 가능하지만 새 PC에서 GitHub만 clone하면 데이터 자산을 별도로 복사해야 합니다.
+대용량 PDF·DB·인덱스·모델 가중치는 GitHub에서 제외됩니다. 현재 로컬 폴더는 단독 실행이 가능하지만 새 PC에서 GitHub만 clone하면 데이터 자산과 reranker 가중치를 별도로 준비해야 합니다. 설치 방법은 [설치·실행 안내](docs/USAGE.md)에 있습니다.
 
 ## 라우팅·검색·답변 흐름
 
@@ -59,11 +85,12 @@ UI 탭 또는 통합 LLM 라우터
   → OPS / RAG / HYBRID / CHAT
   → RAG이면 TEXT / TABLE / BOTH 판단
   → 문서코드·회의차수·선급·질문 요구사항 분석
-  → Dense + BM25 + 정확 식별자 후보 검색
-  → 문서 내부 조항 검색과 evidence-slot 보강
-  → 근거 선택·다문서 quota·표 연결
-  → Gemma/Llama 또는 근거 기반 구조화 답변
-  → 최종 품질 게이트: 전제 교정·근거 없는 요청 거절·빈 섹션 방지
+  → Fast / Accurate / Advanced 검색 정책
+  → 정확 문서·선급 포함/제외 조건을 끝까지 유지
+  → 문서 내부 조항·희소 복합명사·표 셀·evidence-slot 보강
+  → 근거 선택·다문서 quota·회의 결과 권위·표 원본 연결
+  → Gemma/Llama 또는 검증된 근거 기반 구조화 답변
+  → 답변 계약·인용 검증; Advanced는 별도 최종 감사
   → 한국어 답변 + [n] 인용 + 문서·페이지 Evidence Table
 ```
 
@@ -116,9 +143,13 @@ UI 탭 또는 통합 LLM 라우터
 
 - 2026-08-12 전체 405문항 기준: 후보 문서 Any Recall 97.22%, 최종 문서 Any Recall 96.94%, Gemma must-cover 53.68%, 평균 E2E 8.15초
 - 2026-08-14 개선 후 계층 표본 45문항: 품질 80.64%, completeness 75.69%, 요구 행동 준수 86.67%, 평균 6.55초
+- 2026-08-22 Accurate 고정 150문항: 품질 82.26%, completeness 64.10%, 행동 준수 100%, 후보/최종 문서 hit 96.24%/92.48%, 평균 E2E 10.30초
+- 2026-08-22 Advanced 고정 150문항 검색: 오류 0, 후보/최종 문서 hit 96.99%/95.49%, exact/semantic evidence recall 76.69%/79.70%, 평균 검색 13.65초
+- Advanced 실제 생성 10문항 최종 합산(8건 일괄 + 결함 2건 재실행): 오류 0, 행동 준수·금지주장 clean 100%, 문서/page hit 100%/88.89%, 품질 proxy 87.63%, raw keypoint 충족 77.50%, 평균 E2E 46.98초
+- 같은 10개 답변 수작업 검수: 8건 OK, 2건 부분 보완(긴 연료 결과의 bullet 예산, ABS 결정상태 표현), 최종 실패 0건. 자동 점수는 전문가 정답률이 아님
 - UI 문서 회귀 10문항: 10/10 통과
 - 이전 실패 유형 10문항: 최종 개별 재검증 10/10 통과
-- 저장소 전체 회귀: 456 tests passed 및 하위 테스트 5개 통과
+- 저장소 전체 회귀: 650 tests passed 및 하위 테스트 8개 통과
 
 두 평가는 문항 구성이 달라 직접적인 전후 비교가 아닙니다. 전체 405문항 결과는 기준선이고, 45문항은 최근 결함 유형을 고르게 뽑은 집중 검증입니다. 자세한 정의와 제한은 [평가 방법과 결과](docs/EVALUATION.md)에 있습니다.
 
@@ -127,3 +158,4 @@ UI 탭 또는 통합 LLM 라우터
 - [아키텍처·라우팅·임베딩·검색](docs/ARCHITECTURE.md)
 - [평가셋 생성·논문 근거·결과·한계](docs/EVALUATION.md)
 - [설치·실행·문제 해결](docs/USAGE.md)
+- [Advanced 최종 구현·검증 보고서](reports/advanced_rag_final_20260822.md)
