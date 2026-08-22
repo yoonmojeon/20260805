@@ -159,3 +159,15 @@ UI 탭 또는 통합 LLM 라우터
 - [평가셋 생성·논문 근거·결과·한계](docs/EVALUATION.md)
 - [설치·실행·문제 해결](docs/USAGE.md)
 - [Advanced 최종 구현·검증 보고서](reports/advanced_rag_final_20260822.md)
+
+## 릴리스에 포함한 검증 산출물
+
+- `data/eval/accurate_eval_150.jsonl`: 현재 Accurate/Advanced 비교에 사용하는 고정 150문항
+- `data/eval/accurate_eval_selection_manifest.json`: 405문항 원본에서 150문항을 선정한 기준과 ID
+- `data/eval/pilot_validation_text_v3.jsonl`: 715개 PDF 범위를 대상으로 구성한 405문항 기준 평가셋
+- `data/eval/table_questions_22docs_practical_v1_curated.jsonl`: 표 검색·답변 회귀 평가셋
+- [고객 요구사항 최종 검증 보고서](reports/accurate_hanwha_feedback_final_20260822.md)
+- [검증된 질문 50개 Word](reports/RAG_통과질문_50개.docx)
+- [UI 시연용 질문 목록](docs/doc/질문리스트_시연용.md)
+
+날짜별 중간 결과, 폐기된 A/B/C 비교 파일, 임시 broad 평가셋과 해당 파일만 만들던 일회성 스크립트는 릴리스에서 제외했습니다. 실행 시 생성되는 인덱스·모델·로그·운항 보고서는 로컬에 유지되며 Git에는 포함하지 않습니다.
