@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from answer_contract import apply_answer_contract
+from answer_contract import apply_answer_contract, has_no_verified_claim
 from rag_answer_lib import build_answer_verification
 
 
@@ -54,6 +54,15 @@ class AnswerContractTests(unittest.TestCase):
         self.assertNotIn("근거 없는 주장", result.answer)
         self.assertNotIn("- [1]", result.answer)
         self.assertIn("확인된 주장입니다. [1]", result.answer)
+
+    def test_punctuation_only_fragment_does_not_become_a_bullet(self) -> None:
+        result = apply_answer_contract(
+            "## 1) 핵심 요약\n\n- 확인된 주장입니다. , [1][2]\n",
+            [_chunk(1), _chunk(2)],
+        )
+
+        self.assertIn("확인된 주장입니다.", result.answer)
+        self.assertNotIn("- , ", result.answer)
 
     def test_evidence_table_contains_only_cited_chunks_in_first_use_order(self) -> None:
         chunks = [_chunk(1, "첫 근거"), _chunk(2, "둘째 근거"), _chunk(3, "셋째 근거")]
@@ -117,8 +126,58 @@ class AnswerContractTests(unittest.TestCase):
             [_chunk(1, evidence)],
         )
         self.assertIn("모든 평형수탱크2), 3), 4)", result.answer)
-        self.assertNotIn("인용으로 검증되지 않은 문장은 답변에서 제외", result.answer)
+        self.assertFalse(has_no_verified_claim(result.answer))
         self.assertTrue(result.evidence_table)
+
+    def test_abbreviation_period_does_not_split_the_answer(self) -> None:
+        """"S.W. Service Pump" is one cell value, so it must stay in one bullet."""
+        result = apply_answer_contract(
+            "결론: CMS 통일명칭 → S.W. Service Pump [1]",
+            [_chunk(1, "Sea Water Service System | S.W. Service Pump")],
+        )
+
+        self.assertIn("S.W. Service Pump", result.answer)
+        bullets = [ln for ln in result.answer.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(bullets), 1)
+
+    def test_list_ordinal_does_not_split_a_bold_label(self) -> None:
+        result = apply_answer_contract(
+            "- **1. 선체 거더 (Hull Girder)** 는 VBM으로 구분됩니다. [1]",
+            [_chunk(1)],
+        )
+
+        bullets = [ln for ln in result.answer.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(bullets), 1)
+        self.assertIn("**1. 선체 거더 (Hull Girder)**", bullets[0])
+
+    def test_normal_sentences_still_split(self) -> None:
+        result = apply_answer_contract(
+            "- 첫 문장입니다. 두 번째 문장입니다. [1]",
+            [_chunk(1)],
+        )
+
+        bullets = [ln for ln in result.answer.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(bullets), 2)
+
+    def test_llm_invented_headings_do_not_break_the_four_section_contract(self) -> None:
+        """Table QA drafts add "## 종 방향 구조 (REG03)" despite the prompt ban.
+
+        Left in place they render as extra top-level sections, so the answer
+        looks like it has eight sections instead of the contracted four.
+        """
+        result = apply_answer_contract(
+            "## 1) 핵심 요약\n\n"
+            "- 평가 방법은 SP-A입니다. [1]\n\n"
+            "## 종 방향 구조 (REG03)\n\n"
+            "- 종거더 웨브는 UP-B를 적용합니다. [1]\n",
+            [_chunk(1)],
+        )
+
+        self.assertIn("평가 방법은 SP-A입니다. [1]", result.answer)
+        self.assertIn("종거더 웨브는 UP-B를 적용합니다. [1]", result.answer)
+        self.assertNotIn("REG03", result.answer)
+        headings = [ln for ln in result.answer.splitlines() if ln.startswith("## ")]
+        self.assertEqual(len(headings), 4)
 
 
 if __name__ == "__main__":

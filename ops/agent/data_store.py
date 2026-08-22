@@ -233,9 +233,21 @@ class DataStore:
 
         last  = df.iloc[-1]
         first = df.iloc[0]
-        dlat  = float(last["lat"]) - float(first["lat"])
-        dlon  = float(last["lon"]) - float(first["lon"])
-        cog   = round(math.degrees(math.atan2(dlon, dlat)) % 360, 1) if (dlat or dlon) else 0.0
+        first_ts = str(first["ds_timeindex"])[:19]
+        last_ts = str(last["ds_timeindex"])[:19]
+
+        # lon=0 is the missing-value convention in the source workbook.  Do
+        # not turn it into a plausible Greenwich position or infer COG from
+        # latitude alone.
+        valid_coord = df[(df["lat"] != 0) & (df["lon"] != 0)]
+        cog = None
+        if len(valid_coord) >= 2:
+            coord_first = valid_coord.iloc[0]
+            coord_last = valid_coord.iloc[-1]
+            dlat = float(coord_last["lat"]) - float(coord_first["lat"])
+            dlon = float(coord_last["lon"]) - float(coord_first["lon"])
+            if dlat or dlon:
+                cog = round(math.degrees(math.atan2(dlon, dlat)) % 360, 1)
 
         sailing  = df[(df["sog"] > 0.5) & (df["lat"] != 0)]
         dist_info = _compute_distance_range(
@@ -245,7 +257,7 @@ class DataStore:
         )
         dist_nm  = dist_info["distance_nm"]
         if dist_nm <= 0:
-            dist_nm = _haversine_total(sailing[["lat", "lon"]])
+            dist_nm = _haversine_total(valid_coord[["lat", "lon"]])
         me_power = float(sailing[["me1_power", "me2_power"]].sum(axis=1).mean()) if len(sailing) > 0 else 0
 
         foc_oil = float(df["oil_flow"].sum()) / 1000.0
@@ -253,13 +265,28 @@ class DataStore:
         co2_mt  = float(df["co2"].sum())      / 1000.0
         ch4_mt  = float(df["ch4"].sum())      / 1000.0
         co2e_mt = float(df["co2e"].sum())     / 1000.0
-        cii_val = round(co2_mt * 1000 / dist_nm, 4) if dist_nm > 0 else float(df["cii"].mean())
+        co2_per_nm = round(co2_mt * 1000 / dist_nm, 4) if dist_nm > 0 else None
+        record_count = int(len(df))
+        full_day = (
+            first_ts[11:16] == "00:00"
+            and last_ts[11:16] >= "23:00"
+            and record_count >= 24
+        )
+        last_lat = float(last["lat"])
+        last_lon = float(last["lon"])
 
         return {
-            "report_datetime": f"{date_str} 12:00:00",
+            # Use the actual DB timestamp.  The previous fixed 12:00 value
+            # could describe records that only existed through 04:00.
+            "report_datetime": last_ts,
+            "period_start":    first_ts,
+            "period_end":      last_ts,
+            "aggregation_period": f"{first_ts[:16]} ~ {last_ts[:16]} UTC",
+            "record_count":    record_count,
+            "partial_day":     not full_day,
             "voyage_id":       voyage_id,
-            "lat":             round(float(last["lat"]), 4),
-            "lon":             round(float(last["lon"]), 4),
+            "lat":             round(last_lat, 4) if last_lat != 0 else None,
+            "lon":             round(last_lon, 4) if last_lon != 0 else None,
             "cog_deg":         cog,
             "sog_kts":         round(float(last["sog"]), 1),
             "sailed_nm":       round(dist_nm, 1),
@@ -272,17 +299,24 @@ class DataStore:
             "co2_mt":          round(co2_mt, 2),
             "ch4_mt":          round(ch4_mt, 4),
             "co2e_mt":         round(co2e_mt, 2),
-            "cii_value":       round(cii_val, 4),
-            "wind_speed_kts":  0.0,
-            "wind_dir_deg":    0.0,
-            "wave_height_m":   0.0,
-            "weather_source":  "N/A",
+            "co2_per_nm_kg":   co2_per_nm,
+            # Backward-compatible key; this is not IMO CII and is labelled as
+            # CO2-per-distance in all user-facing output.
+            "cii_value":       co2_per_nm,
+            "wind_speed_kts":  None,
+            "wind_dir_deg":    None,
+            "wave_height_m":   None,
+            "weather_source":  "미제공 (원본 DB에 기상 컬럼 없음)",
+            "position_note":   (
+                "경도 미제공 (원본 lon=0 결측값)" if last_lon == 0 else ""
+            ),
+            "distance_note":   dist_info.get("distance_note", ""),
             "fuel_source":     "sensor",
         }
 
     def latest_noon(self) -> dict:
         row = self.conn.execute(
-            "SELECT substr(MAX(ds_timeindex),1,10) AS d FROM sensor_log WHERE lat != 0"
+            "SELECT substr(MAX(ds_timeindex),1,10) AS d FROM sensor_log"
         ).fetchone()
         return self.noon_on_date(row["d"]) if row and row["d"] else {}
 

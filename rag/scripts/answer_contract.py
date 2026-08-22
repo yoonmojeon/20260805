@@ -19,16 +19,37 @@ from typing import Any
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
 LIST_PREFIX_RE = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$")
-SENTENCE_RE = re.compile(r".+?(?:[.!?](?:\s*\[\d+\])*(?=\s+|$)|$)", re.S)
+# A period after a single capital letter belongs to an abbreviation such as the
+# equipment name "S.W. Service Pump", not to the end of a sentence.  Splitting
+# there tore the answer "CMS 통일명칭 → S.W. Service Pump" into two bullets and
+# left the second half without its subject.
+SENTENCE_RE = re.compile(r".+?(?:(?<![A-Z])[.!?](?:\s*\[\d+\])*(?=\s+|$)|$)", re.S)
 PLACEHOLDER_RE = re.compile(
     r"검색 근거에서 직접 확인되는 내용이 없어 답변에서 제외|"
     r"답변에서 제외했습니다|^근거\s*:\s*$|^근거\s*:\s*없음\s*$",
     re.I,
 )
+WORD_CHAR_RE = re.compile(r"[0-9A-Za-z가-힣]")
 NO_EVIDENCE_RE = re.compile(
     r"근거(?:가|를)?\s*(?:없|찾지 못)|검색 결과에서.*찾지 못|직접 관련되는 근거.*없",
     re.I,
 )
+
+
+NO_VERIFIED_CLAIM_NOTICE = (
+    "> 검색된 문서에서 질문에 직접 답할 근거를 찾지 못했습니다. "
+    "문서명·조항·항목명을 함께 넣어 다시 질문해 주세요."
+)
+
+
+def has_no_verified_claim(answer: str) -> bool:
+    """True when the contract stripped every claim and only the notice remains.
+
+    Several callers rescue such answers with an extractive summary.  They used
+    to grep for the notice wording, which silently broke whenever the wording
+    was reworded for users; ask this function instead.
+    """
+    return NO_VERIFIED_CLAIM_NOTICE.lstrip("> ") in str(answer or "")
 
 
 @dataclass(frozen=True)
@@ -101,16 +122,37 @@ def _clean_sentence(sentence: str, fallback_ids: list[int]) -> tuple[str, list[i
     return prose, cite_ids
 
 
+def _merge_unbalanced_bold(parts: list[str]) -> list[str]:
+    """Rejoin pieces that were split in the middle of a bold span.
+
+    A list ordinal ends in a period, so "**1. 선체 거더**" split into "**1." and
+    "선체 거더**" — two bullets, both with broken markup and the second missing
+    its subject.  An odd number of "**" marks an unfinished span.
+    """
+    merged: list[str] = []
+    for part in parts:
+        if merged and merged[-1].count("**") % 2 == 1:
+            merged[-1] = f"{merged[-1]} {part}".strip()
+            continue
+        merged.append(part)
+    return merged
+
+
 def _split_cited_line(content: str, *, valid_ids: list[int]) -> list[str]:
     if not valid_ids:
         return []
     parts = [part.strip() for part in SENTENCE_RE.findall(content) if part.strip()]
+    parts = _merge_unbalanced_bold(parts)
     if not parts:
         parts = [content.strip()]
     out: list[str] = []
     for part in parts:
         prose, sentence_ids = _clean_sentence(part, valid_ids)
         if not prose or PLACEHOLDER_RE.search(prose):
+            continue
+        # Sentence splitting can leave a fragment that is only punctuation, which
+        # used to surface as an empty "- , [1][2]" bullet.
+        if not WORD_CHAR_RE.search(prose):
             continue
         usable = [value for value in sentence_ids if value in valid_ids]
         if not usable:
@@ -187,12 +229,11 @@ def normalize_answer(answer: str, citation_chunks: list[Any]) -> tuple[str, list
     if text and not text.startswith("## 1) 핵심 요약"):
         text = f"## 1) 핵심 요약\n\n{text}"
     if not text:
-        status = (
-            "> 검색된 문서에서 질문에 직접 답할 근거를 찾지 못했습니다."
-            if saw_no_evidence or not answer.strip()
-            else "> 인용으로 검증되지 않은 문장은 답변에서 제외했습니다."
-        )
-        text = f"## 1) 핵심 요약\n\n{status}"
+        # Whether the generator said "no evidence" or produced only uncited
+        # prose, the user-facing outcome is the same: nothing was verifiable.
+        # The distinction stays in ``warnings`` for diagnosis.
+        _ = saw_no_evidence
+        text = f"## 1) 핵심 요약\n\n{NO_VERIFIED_CLAIM_NOTICE}"
     return text, list(dict.fromkeys(warnings))
 
 
@@ -216,9 +257,15 @@ def build_cited_evidence_table(answer: str, citation_chunks: list[Any]) -> list[
                 "page": getattr(chunk, "page_number", None),
                 "chunk_id": str(getattr(chunk, "chunk_id", "") or ""),
                 "chunk_preview": evidence,
+                # Hidden full-enough source for the Advanced local auditor.
+                # The visible UI preview remains compact.
+                "review_text": raw_text[:4200],
             }
         )
     return rows
+
+
+ALLOWED_SUB_HEADINGS = ("## 핵심 조항",)
 
 
 def _ensure_required_sections(answer: str) -> str:
@@ -227,6 +274,11 @@ def _ensure_required_sections(answer: str) -> str:
     Structured generators and the UI both assume the same four sections.  If
     claim verification removes a section body, replace it with a transparent
     limitation instead of dropping the section or preserving a blank shell.
+
+    An LLM asked for one summary section still invents its own headings such as
+    "## 종 방향 구조 (REG03)".  Those are dropped rather than kept as body text,
+    because a heading inside section 1 makes the rendered answer look like it
+    has eight top-level sections instead of four.
     """
     defaults = {
         "## 1) 핵심 요약": "> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.",
@@ -240,6 +292,8 @@ def _ensure_required_sections(answer: str) -> str:
         if line in defaults:
             current = line
             sections.setdefault(current, [])
+        elif line.startswith("#") and not line.startswith(ALLOWED_SUB_HEADINGS):
+            continue
         elif current:
             sections[current].append(line)
     out: list[str] = []

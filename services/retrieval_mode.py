@@ -105,6 +105,61 @@ _MEETING_REPORT_RE = re.compile(
     r"\b(?:MEPC|MSC)\b.{0,100}(?:회의|보고서|report|agenda|의제|결정|결과)",
     re.IGNORECASE,
 )
+_REGULATORY_STATUS_PROSE_RE = re.compile(
+    r"(?:(?<![A-Za-z0-9])(?:MEPC|MSC)\s*\d{1,3}(?!\d)|"
+    r"(?<![A-Za-z0-9])MASS\s*Code(?![A-Za-z0-9])|"
+    r"(?<![A-Za-z0-9])(?:IGF|IGC)\s*(?:/\s*(?:IGF|IGC))?\s*Code(?![A-Za-z0-9])|"
+    r"(?<![A-Za-z0-9])GHG\s+Safety(?![A-Za-z0-9])).{0,120}"
+    r"(?:일정|상태|확정|목표|채택|승인|발효|결정|논의|"
+    r"timeline|status|adopt|approve|entry\s+into\s+force)",
+    re.IGNORECASE,
+)
+
+# The generic table parser intentionally over-recalls noun phrases.  In Rule
+# questions that creates false table slots such as ``승인(TA)`` or the entire
+# phrase before ``조건은``.  These are narrative clause asks unless the user
+# explicitly points at a table/page/row/column.
+_NARRATIVE_REQUIREMENT_ASK_RE = re.compile(
+    r"(?:"
+    r"어떤\s*경우.{0,100}(?:요구사항|시험\s*절차|승인|적용)|"
+    r"(?:조사|검사|시험|승인|요건|절차).{0,60}생략할\s*수\s*있는\s*조건|"
+    r"생략할\s*수\s*있는\s*조건|"
+    r"요건을\s*갖추어야\s*하며|"
+    r"(?:어느|어떤)\s*(?:장치|설비|항목|구성요소)들?.{0,50}(?:최소|급전|포함)|"
+    r"(?:필수|제출)\s*(?:문서|자료|항목)\s*목록|"
+    r"(?:주요|핵심)\s*(?:이슈|쟁점|사항).{0,30}(?:무엇|알려|정리)|"
+    r"(?:이유|목적|취지|절차|예외|요건|요구사항|조건).{0,30}(?:무엇|어떻게|알려|정리)"
+    r")",
+    re.IGNORECASE,
+)
+
+# A named Rule/meeting source without an explicit table frame is normally a
+# clause lookup.  Users who want a cell lookup can still say ``표``, ``행``,
+# ``열`` or give a page number, which is handled before this rule.
+_NAMED_SOURCE_PROSE_RE = re.compile(
+    r"(?:"
+    r"(?<![A-Za-z0-9])(?:DNV(?:-[A-Z]{2}-\d{3,4})?|KR|ABS|LR|MEPC(?:\.\d+)?|MSC|SOLAS)(?![A-Za-z0-9])|"
+    r"(?:규정|지침|회의자료|문서)에\s*따(?:라|르면)"
+    r")",
+    re.IGNORECASE,
+)
+
+_TECHNICAL_CLAUSE_PROSE_RE = re.compile(
+    r"(?:"
+    r"시험편.{0,50}(?:어느\s*위치|절단)|"
+    r"(?:대신|대체).{0,40}(?:대안|적용할\s*수)|"
+    r"구성\s*요소.{0,40}(?:포함|무엇)|"
+    r"(?:어떻게|어떤\s*조건).{0,30}(?:구성|시험|적용|조정)"
+    r")",
+    re.IGNORECASE,
+)
+
+_LEADING_LIST_NUMBER_RE = re.compile(r"^\s*(?:질문\s*)?\d{1,3}\s*[.)．]\s*")
+
+
+def normalize_retrieval_question(question: str) -> str:
+    """Remove presentation-only numbering before retrieval-mode parsing."""
+    return _LEADING_LIST_NUMBER_RE.sub("", (question or "").strip()).strip()
 
 
 def _hit(patterns: list[str], q: str) -> bool:
@@ -130,7 +185,7 @@ def table_shape_score(question: str) -> tuple[float, dict]:
 
     Uses parser slots first; keywords only as a weak prior.
     """
-    q = (question or "").strip()
+    q = normalize_retrieval_question(question)
     detail: dict = {"parser": None, "keyword_cue": False, "numeric_range": False}
     if not q:
         return 0.0, detail
@@ -202,7 +257,7 @@ def table_shape_score(question: str) -> tuple[float, dict]:
 
 
 def prose_shape_score(question: str) -> float:
-    q = (question or "").strip()
+    q = normalize_retrieval_question(question)
     if not q:
         return 0.0
     score = 0.0
@@ -222,7 +277,7 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     3) Bridge / both signals / weak-but-present table shape → BOTH
     4) Otherwise TEXT
     """
-    q = (question or "").strip()
+    q = normalize_retrieval_question(question)
     if not q:
         return RetrievalMode.TEXT
 
@@ -241,6 +296,12 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
     if re.search(r"(?<!\d)\d{3,4}\s*(?:절|조|항)", q) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
         return RetrievalMode.TEXT
 
+    # Years and slash-separated Code names are often parsed as table
+    # conditions/columns.  In a meeting or regulatory status question they
+    # describe narrative decisions and schedules, not a cell lookup.
+    if _REGULATORY_STATUS_PROSE_RE.search(q) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
+        return RetrievalMode.TEXT
+
     table_score, _detail = table_shape_score(q)
     prose_score = prose_shape_score(q)
     bridge = _hit(_BOTH_BRIDGE_PATTERNS, q)
@@ -253,6 +314,9 @@ def classify_retrieval_mode(question: str) -> RetrievalMode:
         _NARRATIVE_RULE_RE.search(q)
         or _RULE_PROSE_ASK_RE.search(q)
         or _MEETING_REPORT_RE.search(q)
+        or (_NARRATIVE_REQUIREMENT_ASK_RE.search(q) and not bridge)
+        or _NAMED_SOURCE_PROSE_RE.search(q)
+        or _TECHNICAL_CLAUSE_PROSE_RE.search(q)
     ) and not _EXPLICIT_TABLE_FRAME_RE.search(q):
         return RetrievalMode.TEXT
 

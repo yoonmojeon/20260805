@@ -29,6 +29,27 @@ def filter_pool_for_society(
     return (matched if len(matched) >= 3 else pool), bool(matched)
 
 
+def filter_pool_for_source_constraints(
+    pool: list[Any],
+    *,
+    allowed_sources: list[str] | tuple[str, ...] | None = None,
+    excluded_sources: list[str] | tuple[str, ...] | None = None,
+) -> list[Any]:
+    """Keep explicit source include/exclude constraints through generation."""
+    allowed = {str(source).upper() for source in (allowed_sources or []) if source}
+    excluded = {str(source).upper() for source in (excluded_sources or []) if source}
+    out: list[Any] = []
+    for chunk in pool:
+        meta = getattr(chunk, "meta", {}) or {}
+        source = str(getattr(chunk, "source", "") or meta.get("source", "")).upper()
+        if source in excluded:
+            continue
+        if allowed and source not in allowed:
+            continue
+        out.append(chunk)
+    return out
+
+
 def society_hard_filter_enabled(row: dict | None) -> bool:
     if not row:
         return False

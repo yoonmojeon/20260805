@@ -41,13 +41,23 @@ FACET_PATTERNS: tuple[tuple[str, str], ...] = (
         r"(?:식별|발견|확인)(?:했|한|된)\s*(?:오류|문제|결함|사항)?|"
         r"which\s+(?:errors?|issues?|findings?)|what\s+was\s+(?:identified|found)",
     ),
-    ("value", r"수치|값|얼마|몇\s*%|증가율|감소율|개선율|percentage|value|how much"),
+    (
+        "value",
+        r"수치|값|얼마|몇\s*%|증가율|감소율|개선율|"
+        r"(?:원주\s*)?속도|정격|전압|온도|압력|두께|치수|하중|용량|농도|"
+        r"(?:제출|유효|시험|유지)?\s*(?:기간|시간|기한)|"
+        r"percentage|value|how much|speed|voltage|temperature|pressure|duration",
+    ),
     ("metric", r"지표|기준으로 측정|산정\s*방식|metric|indicator|measure(?:d|ment)?"),
     ("comparison", r"대비|비교|기준연도|baseline|compared|versus|\bvs\.?\b"),
     ("period", r"기간|연도|언제|일정|기한|발효|시행|timeline|deadline|when|year"),
     ("status", r"상태|채택|승인|합의|결정|초안|확정|status|adopt|approve|agree|decision|draft"),
-    ("requirement", r"요구사항|요건|해야|하여야|shall|must|required?|requirement"),
-    ("method", r"어떻게|방법|절차|방식|how|method|procedure|process"),
+    ("requirement", r"요구사항|요건|원칙|해야|하여야|되어야|갖추어야|설치해야|shall|must|required?|requirement|principle"),
+    (
+        "method",
+        r"어떻게|방법|절차|(?<![가-힣])방식(?:은|는|을|를|으로|이|가|과|와|$|\s)|"
+        r"how|method|procedure|process",
+    ),
     ("scope", r"적용\s*범위|대상|예외|scope|application|applies|exemption"),
     ("document", r"문서|결의|가이드|지침|규칙|rule|guidance|resolution|circular|document"),
     # Do not use the bare syllable ``항``: it occurs inside ``자율운항`` and
@@ -164,6 +174,8 @@ class QuestionRequirements:
             "clause": "clause section paragraph regulation",
             "impact": "operational compliance reporting verification action",
             "reason": "reason rationale basis",
+            "definition": "definition defined as means",
+            "list": "complete list checklist documentation items",
         }
         queries: list[str] = []
         for facet in self.facets:
@@ -176,7 +188,14 @@ class QuestionRequirements:
 
 def _requested_count(question: str) -> int:
     match = re.search(r"(\d+)\s*(?:개|가지|건|항목|결과)", question)
-    return max(1, min(10, int(match.group(1)))) if match else 0
+    if match:
+        return max(1, min(10, int(match.group(1))))
+    word_match = re.search(
+        r"(한|두|세|네)\s*(?:개|가지|건|항목|결과|이슈|원칙)", question
+    )
+    if word_match:
+        return {"한": 1, "두": 2, "세": 3, "네": 4}[word_match.group(1)]
+    return 0
 
 
 def analyze_requirements(question: str, row: dict | None = None) -> QuestionRequirements:
@@ -211,6 +230,39 @@ def analyze_requirements(question: str, row: dict | None = None) -> QuestionRequ
         facets.append("finding")
     if re.search(r"품질\s*검증|품질관리|quality\s*(?:control|verification)", q, re.I):
         facets.append("method")
+    # Clean Korean intent pass.  Some legacy patterns above intentionally
+    # retain compatibility with old imported text, but contemporary UI input
+    # must also be recognised directly.  These facets drive both evidence
+    # selection and answer-contract repair; they never inject an answer.
+    if re.search(
+        r"얼마|몇\s*(?:%|퍼센트)|어느\s*정도\s*(?:증가|감소)|"
+        r"(?:수치|값|속도)\s*(?:는|가|이|을|를)?\s*(?:얼마|어떻게|무엇)|"
+        r"속도.{0,20}조건.{0,12}어떻게",
+        q,
+        re.I,
+    ):
+        facets.append("value")
+    if re.search(r"정의(?:는|가|를|란)?|무엇을\s*뜻|defined\s+as|definition", q, re.I):
+        facets.append("definition")
+    if re.search(
+        r"목록(?:은|을|이|으로)?|체크\s*리스트|항목(?:들)?(?:은|을|이|을\s*모두)?|"
+        r"(?:서류|문서)\s*(?:목록|일체)|장치들|설비들|"
+        r"(?:정보|내용|자료).{0,12}(?:포함|제출)(?:되어야|해야)|"
+        r"(?:포함|제출)(?:되어야|해야)(?:\s*할)?\s*(?:필수\s*)?(?:정보|내용|자료)|"
+        r"(?:두|세|네|\d+)\s*가지\s*(?:주요\s*)?(?:이슈|원칙|조건)",
+        q,
+        re.I,
+    ):
+        facets.append("list")
+    if (
+        "value" in facets
+        and "method" in facets
+        and re.search(r"방식(?:에|을)\s*따른|방식에\s*따라", q)
+    ):
+        # Here '방식' labels the condition dimension (oil/water/grease), not
+        # a request for a procedure.  Keeping the method facet caused an
+        # unnecessary repair call after an otherwise complete value answer.
+        facets = [facet for facet in facets if facet != "method"]
     requested_count = _requested_count(q)
     broad_summary = bool(
         re.search(r"최신|주요\s*내용|동향|전반|종합|overview|latest|overall", q, re.I)

@@ -19,6 +19,37 @@ def test_retrieval_mode_text_meeting():
     assert mode == RetrievalMode.TEXT
 
 
+def test_orchestrator_manual_table_index_override(monkeypatch) -> None:
+    from services import orchestrator
+
+    captured: dict = {}
+
+    def fake_rag(question, **kwargs):
+        captured["question"] = question
+        captured.update(kwargs)
+        return {"answer": "ok", "meta": {}}
+
+    monkeypatch.setattr(orchestrator, "run_rag_query", fake_rag)
+    result = orchestrator.handle_question(
+        "일반 문장처럼 보이는 표 질문",
+        force_route="rag",
+        use_llm_router=False,
+        retrieval_mode_override="table",
+    )
+
+    assert captured["retrieval_mode"] == RetrievalMode.TABLE
+    assert result["meta"]["retrieval_mode"] == "table"
+    assert result["meta"]["manual_retrieval_override"] is True
+
+
+def test_retrieval_mode_regulatory_schedule_with_years_stays_text():
+    for question in (
+        "mandatory MASS Code의 2030년과 2032년 일정은 확정인가 목표인가?",
+        "MSC 111에서 암모니아 연료 관련 IGF/IGC Code 상태와 2026년 일정을 알려줘.",
+    ):
+        assert classify_retrieval_mode(question) == RetrievalMode.TEXT
+
+
 def test_retrieval_mode_table_age_tank():
     mode = classify_retrieval_mode("선령 15년 초과 평형수탱크 검사 범위는?")
     assert mode == RetrievalMode.TABLE
@@ -112,6 +143,41 @@ def test_retrieval_mode_word_containing_row_syllable_is_not_table_frame():
     assert classify_retrieval_mode(
         "시험 및 검사는 원칙적으로 어떻게 시행해야 하는가?"
     ) == RetrievalMode.TEXT
+
+
+def test_narrative_rule_requirements_do_not_become_table_queries():
+    questions = (
+        "주 추진 및 필수 보조 장치용 클러치의 형식 승인(TA) 시, 어떤 경우에 일반적인 요구사항과 다른 시험 절차를 적용받을 수 있습니까?",
+        "복합재료 프로펠러의 공장조사를 생략할 수 있는 조건은 무엇인가요?",
+        "부유식 해상구조물에 설치하는 비상전원은 어떤 요건을 갖추어야 하며, 구체적으로 어느 장치들에 대해 최소 몇 시간 이상 급전이 가능해야 합니까?",
+    )
+    for question in questions:
+        assert classify_retrieval_mode(question) == RetrievalMode.TEXT
+
+
+def test_presentation_number_is_ignored_before_mode_classification():
+    question = "ABS 규정에 따라 소음이 매우 높은 공간에 설치된 장비의 경보 시스템은 어떻게 구성되어야 합니까?"
+    assert classify_retrieval_mode(f"50. {question}") == classify_retrieval_mode(question)
+
+
+def test_named_rule_fact_questions_stay_on_text_corpus_without_table_frame():
+    questions = (
+        "DNV 규정에 따라 선실 구역 내 객실에 설치해야 하는 화재 감지기 종류는 무엇인가요?",
+        "KR 규정에 따라 휘핑 현상을 고려한 극한하중 산정 프로그램은 어떠해야 합니까?",
+        "ABS 규정에 따라 항구 내 운영 시 화물창의 빌지 수위 모니터링은 어떻게 구성되어야 합니까?",
+        "MEPC.1/Circ.916에 따라 제출된 LNG 연료 경로 제안서에는 어떤 정보가 포함됩니까?",
+    )
+    for question in questions:
+        assert classify_retrieval_mode(question) == RetrievalMode.TEXT
+
+
+def test_technical_clause_prose_is_not_mistaken_for_table_slot():
+    questions = (
+        "샤르피 V-노치 충격 시험 시 2회 용접 시험 조립품의 시험편은 어느 위치에서 절단해야 합니까?",
+        "배터리 용량이 25MWh를 초과할 때 추가 방화벽 대신 적용할 수 있는 대안은 무엇입니까?",
+    )
+    for question in questions:
+        assert classify_retrieval_mode(question) == RetrievalMode.TEXT
 
 
 def test_table_rows_ordered_and_columns_preserved():
@@ -381,6 +447,32 @@ def test_both_queries_text_and_table_collections():
     assert debug.get("table_hits", 0) > 0
     assert "테스트 답변" in (out.get("answer") or "")
     assert "text_hits=" not in (out.get("answer") or "")
+
+
+def test_fast_mode_is_not_silently_promoted_for_rule_lookup():
+    """The UI mode selector must describe the retrieval path actually used."""
+    from unittest.mock import patch
+
+    import services.rag_service as rs
+
+    seen: list[str] = []
+
+    def fake_single(question, *, latency_mode, mode, llm_model=None):
+        seen.append(latency_mode)
+        return {"answer": "답변", "meta": {"retrieval_mode": mode.value}}
+
+    with patch.object(rs, "_run_single_rag", side_effect=fake_single):
+        rule_out = rs.run_rag_query(
+            "LR에서 대체연료 관련 Rule/Guidance를 찾아줘.", latency_mode="fast"
+        )
+        rs.run_rag_query("MSC 111의 주요 결과를 3개 항목으로 요약해줘.", latency_mode="fast")
+        # A definition is answered by the Fast-only direct paragraph extract;
+        # Accurate replaces it with a document catalog that never defines it.
+        definition_out = rs.run_rag_query("과도한 부식의 정의는 무엇인가?", latency_mode="fast")
+
+    assert seen == ["fast", "fast", "fast"]
+    assert not (rule_out.get("meta") or {}).get("latency_mode_promoted")
+    assert not (definition_out.get("meta") or {}).get("latency_mode_promoted")
 
 
 if __name__ == "__main__":

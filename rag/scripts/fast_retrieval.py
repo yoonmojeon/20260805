@@ -4,6 +4,11 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from dynamic_evidence import (
+    EvidenceBudget,
+    dynamic_evidence_enabled,
+    plan_evidence_budget,
+)
 from fast_context import FastEvidence
 from fast_question_classifier import FastQuestionType, classify_fast_question_type
 from imo_doc_classify import (
@@ -39,6 +44,34 @@ RULE_FOCUS_GROUPS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"저인화점|low[- ]?flashpoint", re.I), ("low-flashpoint", "low flashpoint fuel")),
     (re.compile(r"SHM|MHM|smart\s*function", re.I), ("smart functions", "shm", "mhm", "smart (inf)")),
 )
+
+
+GENERAL_BASE_COUNT = 3
+GENERAL_BASE_MAX_DOCS = 2
+RULE_SLOT_BASE_COUNT = 4
+RULE_SLOT_BASE_MAX_DOCS = 3
+EVIDENCE_CEILING = 6
+
+
+def evidence_budget(
+    pool: list[RetrievedChunk],
+    question: str,
+    *,
+    base_count: int,
+    base_max_docs: int,
+    ceiling: int = EVIDENCE_CEILING,
+) -> EvidenceBudget:
+    if not dynamic_evidence_enabled():
+        return EvidenceBudget(
+            count=base_count, max_docs=base_max_docs, facets=(), basis="fixed"
+        )
+    return plan_evidence_budget(
+        [float(getattr(c, "distance", 0.0) or 0.0) for c in pool],
+        question,
+        base_count=base_count,
+        base_max_docs=base_max_docs,
+        ceiling=ceiling,
+    )
 
 
 def _rule_focus_terms(question: str) -> tuple[str, ...]:
@@ -374,6 +407,14 @@ def select_rule_slots(
             return []
     used: set[str] = set()
     out: list[FastEvidence] = []
+    budget = evidence_budget(
+        pool,
+        question,
+        base_count=RULE_SLOT_BASE_COUNT,
+        base_max_docs=RULE_SLOT_BASE_MAX_DOCS,
+    )
+    if isinstance(row, dict):
+        row["_evidence_budget"] = budget.as_meta()
     hints = extract_clause_hints(question)
     focus_terms = _rule_focus_terms(question)
 
@@ -473,11 +514,11 @@ def select_rule_slots(
         out.append(FastEvidence(scope, "scope_definition"))
 
     if not out:
-        for c in pool[:3]:
+        for c in pool[: budget.count]:
             if _chunk_key(c) not in used:
                 out.append(FastEvidence(c, "rule_fallback"))
                 used.add(_chunk_key(c))
-    return out[:4]
+    return out[: budget.count]
 
 
 def select_broad_summary_slots(pool: list[RetrievedChunk]) -> list[FastEvidence]:
@@ -537,7 +578,12 @@ def select_figure_slots(pool: list[RetrievedChunk]) -> list[FastEvidence]:
     return out[:3]
 
 
-def select_general_slots(pool: list[RetrievedChunk], *, max_chunks: int = 3, max_docs: int = 2) -> list[FastEvidence]:
+def select_general_slots(
+    pool: list[RetrievedChunk],
+    *,
+    max_chunks: int = GENERAL_BASE_COUNT,
+    max_docs: int = GENERAL_BASE_MAX_DOCS,
+) -> list[FastEvidence]:
     used: set[str] = set()
     seen_docs: set[str] = set()
     out: list[FastEvidence] = []
@@ -577,7 +623,14 @@ def select_fast_evidence_slots(
         return select_broad_summary_slots(pool)
     if qtype == "figure_or_diagram_question":
         return select_figure_slots(pool)
-    return select_general_slots(pool)
+    budget = evidence_budget(
+        pool,
+        question,
+        base_count=GENERAL_BASE_COUNT,
+        base_max_docs=GENERAL_BASE_MAX_DOCS,
+    )
+    row["_evidence_budget"] = budget.as_meta()
+    return select_general_slots(pool, max_chunks=budget.count, max_docs=budget.max_docs)
 
 
 def evidence_to_chunks(evidence: list[FastEvidence]) -> list[RetrievedChunk]:

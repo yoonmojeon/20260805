@@ -158,6 +158,7 @@ def analyze_question(question: str, row: dict | None = None) -> QuestionPlan:
     internal_intent = str(
         row.get("_internal_intent") or row.get("internal_intent") or ""
     )
+    category = str(row.get("category") or "")
     if rule:
         task = "rule_lookup"
         required = ("class_rule", "scope", "requirement")
@@ -174,7 +175,7 @@ def analyze_question(question: str, row: dict | None = None) -> QuestionPlan:
         task = "trend_summary"
         required = ("decision", "requirement", "document_status")
         bullet_min, bullet_max = 7, 10
-    elif impact or internal_intent in {"env_regulation", "altfuel_ghg_safety"}:
+    elif impact or category == "env_regulation" or internal_intent in {"env_regulation", "altfuel_ghg_safety"}:
         task = "operational_impact"
         required = ("requirement", "deadline", "verification")
         bullet_min, bullet_max = 5, 7

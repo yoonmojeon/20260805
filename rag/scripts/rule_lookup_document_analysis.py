@@ -159,6 +159,17 @@ def confirmation_status(
 
 def summarize_scope_ko(body: str, file_name: str, doc_type: str) -> str:
     low = body.lower()
+    normalized_file = re.sub(r"[^a-z0-9]", "", str(file_name or "").lower())
+    # File identity wins over a nearby exclusion/cross-reference sentence.
+    # The Smart Functions Guide mentions autonomous functions to exclude them;
+    # classifying the whole Guide as autonomous from that sentence is wrong.
+    if "guideforsmartfunctions" in normalized_file:
+        return "Smart Function 시스템과 선택적 SMART(INF/SHM/MHM) notation 적용 선박·해양구조물"
+    if (
+        "requirementsforautonomousandremotecontrolfunctions" in normalized_file
+        or "dnvcg0264" in normalized_file
+    ):
+        return "자율운항·원격운항(remotely operated/autonomous) 선박·기능"
     if "autonomous" in low and "remotely" in low:
         return "자율운항·원격운항(remotely operated/autonomous) 선박"
     if "autonomous" in low:

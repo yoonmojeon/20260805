@@ -90,7 +90,13 @@ def build_retrieval_profile(
             notes=["표 ID를 먼저 고른 뒤 schema·summary·row·markdown 근거를 결합"],
         )
 
-    if is_meeting_outcome_question(question, enriched) and not eval_constrained:
+    from meeting_category_profile import uses_structured_meeting_answer
+
+    if (
+        is_meeting_outcome_question(question, enriched)
+        and not eval_constrained
+        and uses_structured_meeting_answer(enriched, legacy_category=category)
+    ):
         return RetrievalQuestionProfile(
             question_category=category,
             question_mode="broad",
