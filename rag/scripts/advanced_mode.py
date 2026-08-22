@@ -811,6 +811,39 @@ def _evidence_payload(
     return rows, allowed
 
 
+def _class_document_status_instruction(evidence: Iterable[dict[str, Any]]) -> str:
+    """Keep IMO decision-state language away from ordinary class documents.
+
+    A class Rule/Guide/Requirements publication is not an IMO proposal or
+    committee outcome.  The final auditor used to apply its meeting-document
+    status checklist to ABS and DNV publications and then manufacture an
+    unnecessary "draft/final decision" caveat.  Add the narrower instruction
+    only when the displayed evidence actually contains a class publication;
+    mixed IMO + class answers still retain the normal IMO status rules for the
+    meeting rows.
+    """
+    society = re.compile(r"\b(?:ABS|DNV|LR|KR)\b", re.I)
+    publication = re.compile(
+        r"\b(?:Rules?|Guide|Guidance|Requirements|Class\s+Programme)\b", re.I
+    )
+    meeting = re.compile(r"\b(?:MEPC|MSC)\b", re.I)
+    documents = [str(row.get("document") or "") for row in evidence]
+    if not any(
+        society.search(document)
+        or (publication.search(document) and not meeting.search(document))
+        for document in documents
+    ):
+        return ""
+    return (
+        " 선급 Rule/Guide/Guidance/Requirements는 IMO 회의의 Proposal·Report·Outcome가 "
+        "아니다. 각 선급 문서는 발행 문서명·개정판·적용범위로 설명하고, 해당 근거가 "
+        "draft/proposal/provisional이라고 직접 명시한 경우에만 초안·제안·미확정 상태를 "
+        "붙인다. 일반 선급 발행물을 '제안문인지 최종 결정문인지 확인 필요' 또는 "
+        "'[미확정 규제]'로 표시하지 않는다. 혼합 답변에서는 이 규칙을 선급 문서에만 "
+        "적용하고 IMO 회의자료의 승인·채택 상태는 별도로 구분한다."
+    )
+
+
 def _normalized_term(value: str) -> str:
     return re.sub(r"[^0-9a-z가-힣]+", "", str(value or "").lower())
 
@@ -1224,6 +1257,7 @@ def review_answer(
             "문서를 각각 한 bullet로 쓰고, 각 bullet 안에 정확한 CG 명칭과 그 문서의 "
             "적용 범위를 함께 적는다. 주변 참고 CG는 추가하지 않는다."
         )
+    profile_instruction += _class_document_status_instruction(evidence)
     system = (
         "당신은 온프레미스 해사 규정 RAG의 최종 답변 감사자다. 검색 근거에 없는 사실을 "
         "추가하지 않는다. 질문의 모든 요구 항목, 숫자·단위·조건·예외, 문서의 권위와 "

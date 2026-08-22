@@ -16,6 +16,7 @@ from advanced_mode import (  # noqa: E402
     AdvancedRerankConfig,
     _canonicalize_section_headings,
     _bulletize_section_prose,
+    _class_document_status_instruction,
     _compact_simple_rule_lookup_answer,
     _drop_uncited_factual_bullets,
     _ensure_advanced_premise_verdict,
@@ -54,6 +55,31 @@ def test_extract_json_object_accepts_fenced_response() -> None:
     assert _extract_json_object('```json\n{"ranked_ids":[2,1]}\n```') == {
         "ranked_ids": [2, 1]
     }
+
+
+def test_class_document_status_instruction_separates_guides_from_imo_outcomes() -> None:
+    class_instruction = _class_document_status_instruction(
+        [
+            {
+                "document": "ABS Guide for Smart Functions for Marine Vessels.pdf",
+                "clause": "1/3",
+                "evidence": "This Guide applies to marine vessels and offshore units.",
+            }
+        ]
+    )
+    assert "IMO 회의의 Proposal·Report·Outcome가 아니다" in class_instruction
+    assert "[미확정 규제]" in class_instruction
+
+    meeting_instruction = _class_document_status_instruction(
+        [
+            {
+                "document": "MSC 111-WP.1 - Draft Report.pdf",
+                "clause": "12.4",
+                "evidence": "The Committee approved rules in the draft guidelines.",
+            }
+        ]
+    )
+    assert meeting_instruction == ""
 
 
 def test_citation_groups_are_atomic_and_deduplicated() -> None:
