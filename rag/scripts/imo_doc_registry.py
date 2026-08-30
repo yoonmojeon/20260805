@@ -28,6 +28,66 @@ def clear_corpus_rows_cache() -> None:
     load_corpus_rows.cache_clear()
 
 
+def exact_doc_ids_for_query(
+    question: str,
+    *,
+    corpus_path: Path = DEFAULT_CORPUS,
+    limit: int = 8,
+) -> list[str]:
+    """Resolve explicitly named document codes from the corpus manifest.
+
+    Chroma ``where_document`` cannot recover a code that appears only in the
+    filename metadata.  The checked-in manifest is tiny, cached, and provides
+    a deterministic metadata lane for MEPC/MSC item codes and class documents.
+    """
+    q = str(question or "")
+    identifiers = re.findall(
+        r"(?<![A-Za-z0-9])(?:"
+        r"(?:MEPC|MSC)\s*\d{1,3}(?:\s*[/.-]\s*[A-Z0-9]+)+|"
+        r"DNV-(?:CG|RP|RU|OS|CP|SI)-[A-Z0-9-]+|"
+        r"Notice\s+No\.?\s*\d+"
+        r")(?![A-Za-z0-9])",
+        q,
+        re.I,
+    )
+    if not identifiers:
+        return []
+
+    out: list[str] = []
+    for identifier in identifiers:
+        ident_parts = [part.lower() for part in re.findall(r"[A-Za-z]+|\d+", identifier)]
+        if not ident_parts:
+            continue
+        exact_level: list[str] = []
+        descendants: list[str] = []
+        for row in load_corpus_rows(str(corpus_path)):
+            file_name = str(row.get("file_name") or "")
+            file_parts = [part.lower() for part in re.findall(r"[A-Za-z]+|\d+", file_name)]
+            if file_parts[: len(ident_parts)] != ident_parts:
+                continue
+            doc_id = str(row.get("doc_id") or "").strip()
+            if not doc_id:
+                continue
+            # ``MEPC 84/3`` denotes the base item, not 84/3/1 or 84/3/2.
+            # A numeric token immediately after the identifier is a child item;
+            # a title word (or end of name) is the exact document level.
+            target = (
+                descendants
+                if len(file_parts) > len(ident_parts)
+                and file_parts[len(ident_parts)].isdigit()
+                else exact_level
+            )
+            if doc_id not in target:
+                target.append(doc_id)
+        chosen = exact_level or descendants
+        for doc_id in chosen:
+            if doc_id not in out:
+                out.append(doc_id)
+            if len(out) >= limit:
+                return out
+    return out
+
+
 def _session_in_name(file_name: str, body: str, num: int) -> bool:
     fn = (file_name or "").lower()
     body_l = body.lower()

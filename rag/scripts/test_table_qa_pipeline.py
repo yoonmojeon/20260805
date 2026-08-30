@@ -11,6 +11,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from rag_inprocess import normalize_table_question_row
+from rag_answer_lib import generate_answer
 from rag_fast_mode import generate_fast_answer
 from meeting_trend_ab import is_trend_summary_ab_eligible
 from rag_query_router import is_rule_guidance_lookup, resolve_pipeline_route
@@ -21,6 +22,40 @@ from table_query_parser import parse_table_query
 
 
 class TableQAPipelineTest(unittest.TestCase):
+    def test_accurate_exact_cell_runs_before_coarse_confidence_gate(self) -> None:
+        chunk = SimpleNamespace(
+            chunk_id="row-gate",
+            chunk_type="table_row",
+            table_id="table-gate",
+            doc_id="doc-gate",
+            text="table row: RPV 32 | applicable thickness=6 to 50",
+            file_name="rules.pdf",
+            page_number=28,
+            caption="plate type",
+            distance=0.1,
+        )
+        row = {
+            "question": "What is the applicable thickness for RPV 32?",
+            "_table_qa": True,
+            "_table_retrieval_debug": {"passes_confidence_gate": False},
+        }
+        with patch(
+            "table_qa_answer.build_deterministic_table_answer",
+            return_value="Conclusion: 6 to 50 [1]",
+        ) as deterministic:
+            answer, provider, _model = generate_answer(
+                row,
+                [chunk],
+                provider="ollama",
+                model="unused",
+                ollama_base="http://localhost:11434",
+                answer_mode="table_qa",
+                pool=[chunk],
+            )
+        deterministic.assert_called_once()
+        self.assertEqual(provider, "table_deterministic")
+        self.assertIn("6 to 50", answer)
+
     def test_table_question_never_routes_to_trend_ab(self) -> None:
         row = normalize_table_question_row(
             {"question": "용접 입력을 측정한다면 시험 문서 중 무엇을 함께 확인하나?"}

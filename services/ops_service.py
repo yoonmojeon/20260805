@@ -26,6 +26,7 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
     from agent.briefing import build_answer_from_tools
     from agent.tools import (
         calculate_cii_rating,
+        generate_noon_report,
         get_current_voyage_status,
         get_voyage_analysis,
     )
@@ -44,6 +45,25 @@ def _try_deterministic_ops(question: str) -> dict[str, Any] | None:
                 "answer": answer,
                 "tool": "get_current_voyage_status",
                 "show_map": show_map,
+            }
+
+    # Report creation is a structured DB operation.  Generate and summarize it
+    # deterministically so the attachment and final sentence are never lost in
+    # a second LLM pass.
+    if re.search(r"noon\s*report|noon\s*리포트|눈\s*리포트", q, re.I) and re.search(
+        r"생성|작성|만들|발행|출력", q, re.I
+    ):
+        result = generate_noon_report()
+        formatted = build_answer_from_tools(
+            [("generate_noon_report", {}, result)]
+        )
+        if formatted:
+            answer, _show = formatted
+            file_path = str(result.get("file_path") or "")
+            return {
+                "answer": answer,
+                "tool": "generate_noon_report",
+                "files": [file_path] if file_path and Path(file_path).exists() else [],
             }
 
     # CII grade / attained-required
@@ -154,13 +174,13 @@ def run_ops_query(
 
     model = normalize_llm_model(llm_model)
 
-    deterministic = _try_deterministic_ops(question)
     shortcut_on = os.environ.get("MARITIME_OPS_DETERMINISTIC_SHORTCUTS", "1").strip().lower() in {
         "1",
         "true",
         "on",
         "yes",
     }
+    deterministic = _try_deterministic_ops(question) if shortcut_on else None
     if shortcut_on and deterministic and deterministic.get("answer"):
         answer = str(deterministic["answer"])
         show_map = bool(deterministic.get("show_map"))
@@ -172,7 +192,7 @@ def run_ops_query(
         return {
             "answer": answer,
             "history": new_history,
-            "files": [],
+            "files": list(deterministic.get("files") or []),
             "show_map": show_map,
             "map_html": map_html,
             "source": "ops",

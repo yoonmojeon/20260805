@@ -110,7 +110,7 @@ def evaluate_one(row: dict[str, Any], output: dict[str, Any], elapsed: float) ->
     from evidence_selection import select_planned_evidence
 
     eval_row = dict(row)
-    completion = (
+    completion = output.get("evidence_completion") or (
         (output.get("retrieval_config") or {})
         .get("fast_meta", {})
         .get("evidence_completion")
@@ -268,7 +268,9 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--test-type", action="append", default=[])
-    parser.add_argument("--latency-mode", choices=("accurate", "fast"), default="accurate")
+    parser.add_argument(
+        "--latency-mode", choices=("accurate", "fast", "advanced"), default="accurate"
+    )
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
@@ -299,14 +301,22 @@ def main() -> int:
             index = len(existing) + local_index
             started = time.perf_counter()
             try:
+                search_row = dict(row)
+                pipeline_latency_mode = args.latency_mode
+                if args.latency_mode == "advanced":
+                    # The UI maps Advanced onto the established Accurate
+                    # retrieval route and adds the local planning/rerank loop.
+                    search_row["_advanced_mode"] = True
+                    search_row["_advanced_llm_model"] = "gemma4:12b"
+                    pipeline_latency_mode = "accurate"
                 output = run_search_inprocess(
-                    row,
+                    search_row,
                     collection=collection,
                     embed_model=embed_model,
                     manifest=manifest,
                     index_dir=ROOT / "data/processed/index",
                     chunks_dir=ROOT / "data/processed/chunks",
-                    latency_mode=args.latency_mode,
+                    latency_mode=pipeline_latency_mode,
                     start_type="warm",
                     run_index=index,
                 )

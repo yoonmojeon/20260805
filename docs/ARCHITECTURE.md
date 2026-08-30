@@ -20,8 +20,11 @@ flowchart TD
     MODE --> TABLE["표 검색"]
     TEXT --> EVIDENCE["근거 계획·문서 내부 보강"]
     TABLE --> EVIDENCE
-    EVIDENCE --> ANSWER["Gemma/Llama 또는 구조화 답변"]
-    ANSWER --> GUARD["최종 답변 품질 게이트"]
+    EVIDENCE --> LEVEL{"Fast / Accurate / Advanced"}
+    LEVEL --> ANSWER["Gemma/Llama 또는 구조화 답변"]
+    ANSWER --> GUARD["답변 계약·인용 검증"]
+    GUARD -->|"Advanced"| AUDIT["Gemma 최종 근거 감사"]
+    AUDIT --> OUT
     GUARD --> OUT["한국어 답변 + 인용 + 표/파일"]
 ```
 
@@ -37,6 +40,10 @@ flowchart TD
 | 검색 실행 | `rag/scripts/rag_inprocess.py` |
 | 질문 신호 분석 | `rag/scripts/retrieval_query_analysis.py` |
 | 후보 검색·재순위 | `rag/scripts/retrieval_search.py` |
+| Advanced FTS/BM25·RRF | `rag/scripts/accurate_hybrid_v2.py` |
+| Advanced 계획·listwise·감사 | `rag/scripts/advanced_mode.py` |
+| 로컬 cross-encoder | `rag/scripts/local_cross_encoder_reranker.py` |
+| parent/sibling 문맥 | `rag/scripts/adjacent_chunk_expansion.py` |
 | evidence 계획 | `rag/scripts/evidence_planner.py` |
 | 답변 계약 | `rag/scripts/answer_contract.py` |
 | 최종 RAG 품질 게이트 | `services/rag_answer_guard.py` |
@@ -82,7 +89,39 @@ $env:MARITIME_RAG_TEXT_COLLECTION="full_corpus_715_v1"
 $env:MARITIME_RAG_TABLE_COLLECTION="full_corpus_715_tables_precise_v1"
 ```
 
-## 현재 검색 알고리즘
+## 검색·답변 모드
+
+### Fast
+
+- 일반 본문은 `top_k=3`, dense fetch 10, pool 18의 짧은 문맥을 사용합니다. 회의·Rule/Guidance·표처럼 후보 폭이 필요한 유형은 각각 최대 top 8~10, pool 30~56의 별도 profile을 사용합니다.
+- typed evidence slot이 정의·수치·조건·예외를 골라 LLM 문맥을 줄입니다.
+- 일반 사실 답변에는 LLM이 관여합니다. 표의 확정 셀, 공식 회의결과, 문서 목록처럼 결정적으로 검증된 형식은 안전한 구조화 renderer가 생성할 수 있습니다.
+- 10초 이내를 목표로 하며 전역 BM25와 별도 reranker 모델은 사용하지 않습니다.
+
+### Accurate
+
+- 일반 UI 요청은 top 14 / fetch 150, 회의 질문은 top 12 / pool 80, Rule/Guidance는 top 12 / pool 80을 사용합니다.
+- E5 dense 검색 뒤 exact document, 문서 내부 sparse 조항 검색, bilingual alias, 희소 한국어 복합명사 exact fallback, 문서 상태/권위와 다문서 quota를 적용합니다.
+- 문서코드가 있으면 일반 Accurate 경로 안에서 그 문서를 강제 선택합니다. `ABS만`, `DNV 제외` 같은 조건은 후보·pool·Evidence Table까지 유지합니다.
+- 전역 Python BM25는 고정 150문항 A/B에서 recall 이득 없이 평균 0.85초 이상 증가했고 cold path는 훨씬 느려 기본 OFF입니다.
+- Gemma/Llama가 근거 답변을 만들고 답변 계약·인용·전제/부재 검증을 수행합니다.
+
+### Advanced
+
+Advanced는 별도 인덱스를 요구하지 않고 Accurate 결과를 보호하면서 다음 단계를 추가합니다.
+
+1. 로컬 Gemma가 복합 질문을 독립 facet으로 나누고, 현재 후보에 없는 항목만 최대 2개 follow-up query로 만듭니다.
+2. 질문에서 알려진 희소 한영 기술어는 facet별 최대 4번 Chroma `where_document` exact lookup을 수행합니다.
+3. 일반 본문은 Dense 80과 SQLite FTS5/BM25 80을 RRF로 합치되 Dense 상위 24개를 보호하고 최대 120개 candidate union을 만듭니다. 회의 질문은 WP.1 권위를 보존하는 목적형 검색기를 유지합니다.
+4. 분리된 청크의 parent/sibling과 같은 페이지·조항의 인접 문맥을 최대 8개 보강합니다.
+5. 36개 후보를 Apache-2.0 MiniLM cross-encoder로 보조 채점한 뒤 로컬 Gemma listwise reranker가 최종 18개를 선택합니다. cross-encoder 단독 점수로 후보를 삭제하지 않습니다.
+6. 공식 결과 질문은 정확히 회수된 WP.1/Report/Resolution의 승인·채택 문단을 보호합니다. Proposal/Comments 질문에는 적용하지 않습니다.
+7. 근거 수·문서 수·명시 문서 충족·누락 facet으로 `high/medium/low` confidence를 표시합니다.
+8. Accurate 답변 생성 후 별도 Gemma 감사자가 질문 항목, 조건·예외·수치, 결정 상태, 4개 섹션과 인용을 확인합니다. 수정안이 근거 범위·인용 검사를 통과할 때만 교체합니다.
+
+표 질문은 이미 검증된 precise-table 셀 선택기를 사용하므로, Advanced도 일반 text listwise reranker로 표 셀을 다시 흔들지 않습니다.
+
+## 공통 검색 알고리즘
 
 ### 1. 질문 분석
 
@@ -98,10 +137,10 @@ $env:MARITIME_RAG_TABLE_COLLECTION="full_corpus_715_tables_precise_v1"
 ### 2. 후보 문서 회수
 
 1. E5 dense 검색으로 의미가 가까운 청크를 찾습니다.
-2. BM25로 문서코드·조항·수치 literal match를 보강합니다.
-3. RRF와 카테고리 가중치로 결합합니다.
-4. 정확 식별자가 있으면 파일명·registry·메타데이터에서 직접 후보에 넣습니다.
-5. 질문의 회의차수·선급·문서 종류와 충돌하는 후보는 감점하거나 제외합니다.
+2. 정확 식별자가 있으면 파일명·registry·메타데이터에서 직접 후보에 넣습니다.
+3. 희소 복합명사가 1차 후보에 없으면 한 번의 bounded literal lookup으로 보강합니다.
+4. 질문의 회의차수·선급 포함/제외·문서 종류와 충돌하는 후보는 끝까지 제외합니다.
+5. Advanced에서만 SQLite FTS/BM25와 RRF candidate union을 기본 적용합니다.
 
 목표는 먼저 정답 문서가 후보군에 들어오게 하는 것입니다.
 
@@ -117,9 +156,9 @@ $env:MARITIME_RAG_TABLE_COLLECTION="full_corpus_715_tables_precise_v1"
 
 ## 답변 생성과 품질 게이트
 
-선택된 근거를 Gemma/Llama에 전달하고 `[n]` 인용을 생성합니다. 정확한 조항 비교나 반복 실패 유형은 근거 기반 구조화 renderer가 모델 생성을 대체할 수 있습니다.
+선택된 근거를 Gemma/Llama에 전달하고 `[n]` 인용을 생성합니다. 정확한 표 셀이나 검증된 문서 카드처럼 결정적 표현이 더 안전한 유형은 근거 기반 구조화 renderer가 모델 생성을 대체할 수 있습니다. 이 renderer는 답을 외워 둔 템플릿이 아니라 현재 검색된 문서·페이지·셀에서 사실을 채우는 방식입니다.
 
-생성 후 `rag_answer_guard.py`가 다음만 검사합니다.
+생성 후 답변 계약과 `rag_answer_guard.py`가 다음을 검사합니다.
 
 - 문서에 없는 발효일·결의번호·인증번호·제조사 목록을 주변 문서 설명으로 대체하지 않았는가
 - 질문의 잘못된 전제를 명시적으로 맞다/틀리다 판정했는가
@@ -127,13 +166,13 @@ $env:MARITIME_RAG_TABLE_COLLECTION="full_corpus_715_tables_precise_v1"
 - 네 답변 섹션이 비어 있거나 영어 원문만 노출되지 않았는가
 - 인용 번호가 실제 Evidence Table 범위 안에 있는가
 
-명확한 패턴은 결정적으로 고치고, 그 외 실제 결함 답변만 활성 모델로 한 번 재작성합니다. 따라서 일반 질문은 추가 LLM 비용이 없고, 잘못된 전제처럼 검증이 필요한 일부 질문만 느려질 수 있습니다.
+Advanced는 이 검사 뒤 `advanced_mode.review_answer`를 한 번 더 수행합니다. 감사자가 제안한 수정안은 모든 사실 bullet의 허용 인용, 섹션 1~4, 필수어와 길이 검사를 통과해야만 채택됩니다. 실패하면 이미 검증된 원 답변을 유지합니다.
 
 ## 속도와 한계
 
-- 일반 문서 회귀 10문항 평균은 약 5초였습니다.
-- 45개 집중 표본 평균은 6.55초였습니다.
-- 전제 교정처럼 추가 품질 재작성이 필요한 질문은 평균 약 21초까지 늘 수 있습니다.
+- Fast는 warm 상태 10초 이내를 목표로 합니다.
+- Accurate 고정 150문항의 최근 평균 E2E는 10.30초였고, UI의 넓은 검색 예산에서는 약 10~25초가 일반적입니다.
+- Advanced 실측 단일 사실은 약 30초, 다중 회의 결과는 약 55~75초, 다문서 설계 체크리스트는 약 128초까지 걸렸습니다. 하드웨어·모델 warm 상태·감사 repair 여부에 따라 달라집니다.
 - 정확 문서코드가 있는 단일 문서 질의는 안정적이지만, 긴 문서의 멀리 떨어진 조항을 여러 개 요구하거나 여러 문서를 동시에 통합하면 일부 keypoint 누락이 남을 수 있습니다.
 - 근거가 인덱스에 없는 질문은 보완 생성하지 않고 확인 불가로 답합니다.
 

@@ -1,6 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "HF_HUB_OFFLINE=1"
+set "TRANSFORMERS_OFFLINE=1"
+set "PYTHONUTF8=1"
 
 if not exist ".venv\Scripts\python.exe" (
   echo [1/3] 이 폴더에 새 가상환경 생성 중...

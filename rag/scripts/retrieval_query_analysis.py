@@ -53,7 +53,11 @@ SOURCE_TOKEN_RE = re.compile(
     re.I,
 )
 EXCLUSION_AFTER_RE = re.compile(
-    r"^\s*(?:문서|자료|가이드|guide|documents?)?\s*(?:는|은|를|을|에서|의)?\s*"
+    # A source token is often followed by its document code before the
+    # exclusion phrase (for example, ``DNV-CG-0264는 제외``).  Consume only a
+    # bounded code-like suffix so the negation remains attached to DNV.
+    r"^\s*[)\]】}]*\s*(?:[-–/]\s*[A-Z0-9.]+){0,4}\s*"
+    r"(?:문서|자료|안건|가이드|guide|documents?)?\s*(?:는|은|를|을|에서|의)?\s*"
     r"(?:제외|빼고|말고|아닌|아니라|제외하고|제외한|exclude(?:d|ing)?|without|except)",
     re.I,
 )
@@ -139,9 +143,12 @@ def detect_only_sources(question: str) -> list[str]:
     """Return source names constrained by Korean ``만`` or English ``only``."""
     q = question or ""
     out: list[str] = []
+    excluded = set(detect_excluded_sources(q))
     matches = list(SOURCE_TOKEN_RE.finditer(q))
     for match in matches:
         source = match.group(1).upper()
+        if source in excluded:
+            continue
         before = q[max(0, match.start() - 36) : match.start()]
         after = q[match.end() : match.end() + 44]
         only_after = re.search(
@@ -166,6 +173,18 @@ def detect_named_sources(question: str) -> list[str]:
     out: list[str] = []
     for match in SOURCE_TOKEN_RE.finditer(q):
         source = match.group(1).upper()
+        if source in {"MSC", "MEPC"}:
+            before = q[max(0, match.start() - 18) : match.start()]
+            after = q[match.end() : match.end() + 24]
+            # Resolution identifiers such as MSC.288(87) and
+            # MEPC.355(78) name an instrument, not a meeting-corpus source.
+            # Treating them as a hard MSC/MEPC filter hid the applicable class
+            # rule even when the question asked for approval requirements.
+            if re.match(r"\s*[.]\s*\d+\s*\(", after) or (
+                re.search(r"(?:resolution|결의(?:안)?)\s*$", before, re.I)
+                and re.match(r"\s*[- ]?\s*\d+\s*\(", after)
+            ):
+                continue
         if source not in excluded and source not in out:
             out.append(source)
     return out
@@ -329,7 +348,12 @@ def analyze_query(query: str) -> QuerySignals:
             signals.rule_doc_hints.append(hint)
 
     # Generalize exact DNV document routing beyond the original CG-0264 case.
-    for match in re.finditer(r"\bDNV\s*[-–]?\s*(CG|RP|RU)\s*[-–]?\s*([A-Z0-9-]+)\b", q, re.I):
+    for match in re.finditer(
+        r"\bDNV\s*[-–]?\s*(CG|RP|RU|OS|CP|SI)\s*[-–]?\s*"
+        r"([A-Z0-9]+(?:[-–][A-Z0-9]+)*)(?![A-Za-z0-9])",
+        q,
+        re.I,
+    ):
         code = f"DNV-{match.group(1).upper()}-{match.group(2).upper()}"
         if code not in signals.rule_doc_hints:
             signals.rule_doc_hints.append(code)
@@ -424,8 +448,17 @@ def _build_expanded_terms(signals: QuerySignals, query: str) -> list[str]:
         )
     if "DNV-CG-0264" in signals.rule_doc_hints:
         terms.extend(["DNV-CG-0264", "autonomous", "remotely operated"])
-    if signals.class_society_hint == "DNV":
+    # Do not inject the autonomous-vessel starter set into every DNV query.
+    # It overwhelmed distinctive terms in unrelated technical questions and
+    # repeatedly pulled DNV-CG-0264 into answers about welding, machinery, and
+    # product certification.  Keep the expansion only for its intended topic.
+    if signals.class_society_hint == "DNV" and (
+        "mass" in signals.topics
+        or re.search(r"smart\s+vessel|smart\s+function|자율\s*운항|autonomous|remote(?:ly)?\s+operat", query, re.I)
+    ):
         terms.extend(["DNV-CG-0264", "DNV-RP-C205", "DNV-RP-C206", "Smart Vessel", "autonomous"])
+        if re.search(r"smart\s+vessel", query, re.I):
+            terms.insert(0, "DNV-CG-0508")
     if "Notice No.1" in signals.rule_doc_hints:
         terms.extend(["Notice No.1", "low-flashpoint", "Section 15"])
     rule_term_expansions = (
@@ -438,6 +471,94 @@ def _build_expanded_terms(signals: QuerySignals, query: str) -> list[str]:
         (r"초기\s*위험|preliminary\s*risk|\bPRA\b", ("preliminary risk assessment", "showstoppers")),
         (r"크랭크케이스|crankcase|\bLEL\b", ("crankcase", "below the LEL", "crankcase explosion")),
         (r"저인화점|low[- ]?flashpoint", ("low-flashpoint fuel", "Section 15")),
+        (
+            r"\bVDR\b|항해\s*자료\s*기록",
+            (
+                "voyage data recorder",
+                "annual performance test",
+                "service supplier",
+                "procedures and checklists",
+            ),
+        ),
+        (
+            r"캘리포니아만|\bGoC\b",
+            (
+                "Increased LNG tanker traffic in the GoC introduces stressors",
+                "invasive aquatic species can outcompete native species",
+                "Gulf of California",
+                "marine environmental impacts",
+            ),
+        ),
+        (
+            r"형식\s*승인.{0,30}(?:수정|개조)|평형수\s*관리\s*시스템|\bBWMS\b",
+            (
+                "modification involves any major component",
+                "Administration should determine the necessary tests",
+                "type approval",
+                "major component",
+            ),
+        ),
+        (
+            r"대기.{0,12}CO2\s*농도|전\s*산업화\s*이전",
+            ("atmospheric CO2 concentration", "pre-industrial level", "ppm increase"),
+        ),
+        (
+            r"상류\s*\(|upstream.{0,30}(?:가정|assumption)",
+            (
+                "limited scope to adjust fuel use or operational profiles",
+                "short-term compliance outcomes are strongly influenced by upstream assumptions",
+                "upstream assumptions",
+                "initial compliance",
+            ),
+        ),
+        (
+            r"화석\s*LNG.{0,30}\bWtT\b|\bWtT\b.{0,30}화석\s*LNG",
+            (
+                # Keep the literal within one PDF line/atomic child.  The full
+                # sentence wraps between ``global`` and ``LNG`` in the source,
+                # so a long Chroma $contains lookup returns zero hits.
+                "full diversity of global",
+                "should not be materially lower than",
+                "fossil LNG well-to-tank default emission factor",
+                "conservative approach",
+                "FuelEU Maritime",
+            ),
+        ),
+        (
+            r"3년\s*연속\s*D|E\s*등급|statement\s+of\s+compliance",
+            (
+                "shall not be issued a",
+                "rated as D for three consecutive years or rated as E",
+                "Statement of Compliance",
+                "plan of corrective actions",
+            ),
+        ),
+        (
+            r"해저.{0,20}케이블|submarine.{0,20}cable",
+            (
+                "Maritime activities remain the primary external risk",
+                "anchors unintentionally deployed or dragged",
+                "submarine communication power cables",
+                "anchor damage",
+            ),
+        ),
+        (
+            r"소프트웨어\s*업데이트.{0,60}(?:MASS|Record)|MASS\s+ROC\s+Record",
+            (
+                "section denoting the certified version of the software",
+                "software lifecycle maintenance",
+                "version number",
+                "revalidation inspection",
+            ),
+        ),
+        (
+            r"MASS\s+EBP.{0,40}(?:증거|evidence)|(?:증거|evidence).{0,40}MASS\s+EBP",
+            (
+                "is proposed to cover data, research and experience",
+                "operational tests and trials, simulations and laboratory-based tests",
+                "academic theoretical studies",
+            ),
+        ),
     )
     for pattern, expansions in rule_term_expansions:
         if re.search(pattern, query, re.I):

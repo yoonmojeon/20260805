@@ -124,6 +124,22 @@ def _dnv_autonomous_section1(chunks: list[Any]) -> str:
                 f"{f' (p.{page})' if page is not None else ''}. {cite}"
             )
         if (
+            "document" in emitted
+            and "scope" not in emitted
+            and "autoremote vessel functions" in low
+            and "roc" in low
+            and "connectivity" in low
+            and "additional class notations" in low
+        ):
+            emitted.add("scope")
+            lines[-1] = (
+                "- **문서 성격·적용범위(scope)**: DNV-CG-0264는 선내 자율·원격운항 "
+                "기능과 ROC·연결 링크를 포함한 인프라를 대상으로 신기술의 안전한 "
+                "구현·승인 절차를 안내하며, AROS family of additional class notations를 "
+                "상세히 다루는 DNV Class Guideline입니다"
+                f"{f' (p.{page})' if page is not None else ''}. {cite}"
+            )
+        if (
             "scope" not in emitted
             and "systems used on board" in low
             and "remote operations centre" in low

@@ -24,6 +24,7 @@ ENV_PATTERNS = [
     r"(?:보고|제출)\s*데이터.{0,20}(?:품질|검증|오류|누락|중복)",
     r"(?:품질\s*검증|품질관리|quality\s*(?:control|verification)).{0,20}(?:오류|유형|finding)",
     r"환경규제",
+    r"대체\s*연료|암모니아|수소\s*연료|저인화점|\b(?:IGF|IGC)\s*Code\b",
     r"규제\s*보고",
     r"선박\s*운항.*영향",
     r"GHG|CII|SEEMP|GFI|EEXI|Net-?Zero|MARPOL",
@@ -42,11 +43,15 @@ AUTONOMOUS_PATTERNS = [
 
 # D: Rule lookup
 RULE_PATTERNS = [
-    r"DNV|LR\b|ABS|KR\s*Rule",
+    # A society name is a source constraint, not a document-discovery intent.
+    # Treating every "DNV 규정에 따라 ..." fact question as ``rule_lookup``
+    # sends it to the catalogue renderer, which cannot answer clause values or
+    # exceptions.  Explicit Rule/Guidance discovery wording is handled below.
+    r"(?:DNV|LR\b|ABS|KR).{0,60}(?:관련\s*)?(?:Rule|Guidance|규칙|지침).{0,30}(?:찾|조회|목록|어떤\s*문서)",
     r"Rule/Guidance|Guidance를\s*찾",
-    r"Notice\s*No",
-    r"CG-\d+",
-    r"Smart\s*Vessel|디지털\s*트윈",
+    # Exact document names constrain retrieval, but do not by themselves mean
+    # "list relevant documents".  A clause/value question in DNV-CG-xxxx or
+    # Notice No.1 must still use grounded generation.
     # Short symbols and class-rule load-case codes are poor semantic-embedding
     # targets.  Route them to the narrow rule path before the generic trend
     # fallback; table questions are still caught by ``_table_qa`` above.
@@ -107,6 +112,29 @@ CATEGORY_LABELS_KO = {
 }
 
 
+def _is_latest_meeting_trend_summary(question: str) -> bool:
+    """Distinguish a broad latest-MEPC briefing from an impact request.
+
+    The agreed category examples intentionally place
+    ``환경규제 대응과 관련된 최신 MEPC ... 주요 내용`` in the latest-trend
+    category.  The phrase ``환경규제`` used to win first and route that broad
+    briefing to the narrower operational-response profile.  Direct ship-work,
+    reporting and compliance asks remain environmental-regulation questions.
+    """
+    q = str(question or "")
+    return bool(
+        re.search(r"최신|최근|latest|current", q, re.I)
+        and re.search(r"\b(?:MEPC|MSC)\b|회의|위원회", q, re.I)
+        and re.search(r"주요\s*(?:내용|결과)|동향|요약|정리", q, re.I)
+        and not re.search(
+            r"선박\s*운항|규제\s*보고|직접\s*영향|보고|제출|검증|"
+            r"업무|실무|대응\s*(?:사항|방안|조치)",
+            q,
+            re.I,
+        )
+    )
+
+
 def classify_question_category(question: str, row: dict) -> str:
     """Return trend_summary | env_regulation | autonomous | rule_lookup."""
     if row.get("_table_qa"):
@@ -118,8 +146,26 @@ def classify_question_category(question: str, row: dict) -> str:
     q = question.lower()
     if any(re.search(p, q, re.I) for p in RULE_PATTERNS):
         return "rule_lookup"
+    # A multi-domain MSC outcome briefing must not collapse onto whichever
+    # single topic happens to appear first (usually MASS).  Two or more named
+    # domains plus a summary/result ask means a cross-agenda trend summary.
+    if re.search(r"(?<![A-Za-z0-9])MSC\s*\d{1,3}(?!\d)", question, re.I) and re.search(
+        r"결과|채택|승인|구분|요약|정리", question, re.I
+    ):
+        domain_count = sum(
+            bool(re.search(pattern, question, re.I))
+            for pattern in (
+                r"안전|safety|대체\s*연료|수소|암모니아",
+                r"항해|항법|navigation",
+                r"자율\s*운항|MASS|autonomous",
+            )
+        )
+        if domain_count >= 2:
+            return "trend_summary"
     if any(re.search(p, q, re.I) for p in AUTONOMOUS_PATTERNS):
         return "autonomous"
+    if _is_latest_meeting_trend_summary(question):
+        return "trend_summary"
     if any(re.search(p, q, re.I) for p in ENV_PATTERNS):
         return "env_regulation"
     if any(re.search(p, q, re.I) for p in TREND_PATTERNS):

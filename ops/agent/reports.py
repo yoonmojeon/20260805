@@ -86,8 +86,20 @@ def _fmt(val, decimals=2, unit=""):
         return str(val or "-")
 
 
+def _fmt_optional(val, decimals=2, unit="", missing="미제공"):
+    if val is None or val == "":
+        return missing
+    return _fmt(val, decimals, unit)
+
+
+def _provided_text(val, missing="미제공 (원본 DB)"):
+    text = str(val or "").strip()
+    return missing if not text or text.lower() == "unknown" else text
+
+
 _CII_SCOPE_LABEL = {
     "annual":         "Annual (공식 연간 CII)",
+    "ytd":            "YTD (연초~DB 최신일, 잠정)",
     "current_voyage": "Current Voyage (잠정/Indicative)",
     "voyage":         "Voyage (참고/Indicative)",
 }
@@ -183,29 +195,48 @@ def generate_noon_report_docx(data: dict, voyage: dict, vessel: dict, cii: dict 
 
     doc.add_paragraph()
     _title(doc, "1. 선박 정보", level=2)
+    gt = float(vessel.get("gt", 0) or 0)
+    dwt = float(vessel.get("dwt", 0) or 0)
+    gt_text = f"{int(gt):,} GT" if gt > 0 else "미제공"
+    dwt_text = f"{int(dwt):,} MT" if dwt > 0 else "미제공"
     _kv_table(doc, [
         ("선박명",   vessel.get("name", VESSEL["name"])),
         ("IMO 번호", vessel.get("imo",  VESSEL["imo"])),
         ("선종",     vessel.get("type", "Container Ship")),
-        ("선적국",   vessel.get("flag", "Unknown")),
-        ("GT / DWT", f"{int(vessel.get('gt', 0)):,} / {int(vessel.get('dwt', 0)):,} MT"),
+        ("선적국",   _provided_text(vessel.get("flag"))),
+        ("GT / DWT", f"{gt_text} / {dwt_text}"),
     ])
 
     doc.add_paragraph()
     _title(doc, "2. 위치 및 항로 정보", level=2)
-    lat = float(data.get("lat", 0) or 0)
-    lon = float(data.get("lon", 0) or 0)
-    lat_str = f"{'N' if lat >= 0 else 'S'} {abs(lat):.4f}°"
-    lon_str = f"{'E' if lon >= 0 else 'W'} {abs(lon):.4f}°"
-    cog = float(data.get("cog_deg", 0) or 0)
+    lat_raw = data.get("lat")
+    lon_raw = data.get("lon")
+    lat = float(lat_raw) if lat_raw not in (None, "") else None
+    lon = float(lon_raw) if lon_raw not in (None, "") else None
+    lat_str = (
+        f"{'N' if lat >= 0 else 'S'} {abs(lat):.4f}°" if lat is not None else "미제공"
+    )
+    lon_str = (
+        f"{'E' if lon >= 0 else 'W'} {abs(lon):.4f}°"
+        if lon is not None
+        else "미제공 (원본 lon=0 결측값)"
+    )
+    cog = data.get("cog_deg")
+    completeness = (
+        f"부분일 누계 ({int(data.get('record_count', 0) or 0)}건)"
+        if data.get("partial_day")
+        else f"일일 누계 ({int(data.get('record_count', 0) or 0)}건)"
+    )
     _kv_table(doc, [
-        ("보고 일시 (UTC)",     rdt),
+        ("DB 최신 기록 시각 (UTC)", rdt),
+        ("집계 기간",            data.get("aggregation_period", rdt)),
+        ("데이터 완전성",        completeness),
         ("위도 (Latitude)",     lat_str),
         ("경도 (Longitude)",    lon_str),
-        ("침로/COG (Heading)",  f"{cog:.1f}°"),
-        ("출발항",              voyage.get("departure_port", "-")),
-        ("도착항",              voyage.get("arrival_port",   "-")),
-        ("금일 항주거리 (Sailed Distance)", _fmt(data.get("sailed_nm",  0), 1, "nm")),
+        ("침로/COG (Heading)",  _fmt_optional(cog, 1, "°")),
+        ("출발항",              _provided_text(voyage.get("departure_port"))),
+        ("도착항",              _provided_text(voyage.get("arrival_port"))),
+        ("집계기간 항주거리 (Sailed Distance)", _fmt_optional(data.get("sailed_nm"), 1, "nm")),
         ("배수량 (Displacement)", "미제공" if not data.get("displacement_mt") else _fmt(data.get("displacement_mt", 0), 0, "MT")),
         ("항차 ID",             voyage.get("voyage_id",     "-")),
     ])
@@ -216,31 +247,41 @@ def generate_noon_report_docx(data: dict, voyage: dict, vessel: dict, cii: dict 
         ("M/E RPM",          data.get("me_rpm_note", _fmt(data.get("me_rpm", 0), 1, "rpm"))),
         ("M/E 출력",         _fmt(data.get("me_power_kw", 0), 0, "kW")),
         ("선속 (SOG)",       _fmt(data.get("sog_kts",     0), 1, "knots")),
-        ("M/E FOC (Oil)",    _fmt(data.get("foc_oil_mt",  0), 3, "MT/day")),
-        ("M/E FGC (Gas)",    _fmt(data.get("fgc_gas_mt",  0), 3, "MT/day")),
+        ("집계기간 FOC 누계 (Oil)", _fmt_optional(data.get("foc_oil_mt"), 3, "MT")),
+        ("집계기간 FGC 누계 (Gas)", _fmt_optional(data.get("fgc_gas_mt"), 3, "MT")),
     ])
 
     doc.add_paragraph()
-    _title(doc, "4. 배출량", level=2)
+    _title(doc, "4. 집계기간 배출량", level=2)
     _kv_table(doc, [
-        ("CO2",              _fmt(data.get("co2_mt",  0), 2, "MT/day")),
-        ("CH4",              _fmt(data.get("ch4_mt",  0), 4, "MT/day")),
-        ("CO2e",             _fmt(data.get("co2e_mt", 0), 2, "MT/day")),
-        ("CII (kg CO2/nm)",  _fmt(data.get("cii_value", 0), 4, "kg/nm")),
+        ("CO2 누계",               _fmt_optional(data.get("co2_mt"), 2, "MT")),
+        ("CH4 누계",               _fmt_optional(data.get("ch4_mt"), 4, "MT")),
+        ("CO2e 누계",              _fmt_optional(data.get("co2e_mt"), 2, "MT")),
+        ("항주거리당 CO2 배출량",  _fmt_optional(data.get("co2_per_nm_kg", data.get("cii_value")), 4, "kg CO2/nm")),
     ])
 
-    doc.add_paragraph()
-    _add_cii_section(doc, cii, level=2, title="5. CII (Carbon Intensity Indicator)")
+    # Keep the CII table together instead of splitting its heading and rows
+    # across pages.
+    doc.add_page_break()
+    cii_year = (cii or {}).get("year", rdt[:4])
+    _add_cii_section(
+        doc,
+        cii,
+        level=2,
+        title=f"5. {cii_year}년 YTD 잠정 CII (Carbon Intensity Indicator)",
+    )
 
     doc.add_paragraph()
     _title(doc, "6. 기상 및 해상 상태", level=2)
-    wd = float(data.get("wind_dir_deg", 0) or 0)
+    wd_raw = data.get("wind_dir_deg")
+    wd = float(wd_raw) if wd_raw not in (None, "") else None
     compass = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]
-    wind_dir_str = compass[int((wd + 11.25) / 22.5) % 16]
+    wind_dir_str = compass[int((wd + 11.25) / 22.5) % 16] if wd is not None else ""
     _kv_table(doc, [
-        ("풍속 (Wind Speed)",    _fmt(data.get("wind_speed_kts", 0), 1, "knots")),
-        ("풍향 (Wind Direction)", f"{wind_dir_str} ({wd:.0f}°)"),
-        ("파고 (Wave Height)",   _fmt(data.get("wave_height_m",  0), 2, "m")),
+        ("풍속 (Wind Speed)",    _fmt_optional(data.get("wind_speed_kts"), 1, "knots")),
+        ("풍향 (Wind Direction)", f"{wind_dir_str} ({wd:.0f}°)" if wd is not None else "미제공"),
+        ("파고 (Wave Height)",   _fmt_optional(data.get("wave_height_m"), 2, "m")),
+        ("기상 데이터 출처",     data.get("weather_source") or "미제공"),
     ])
 
     doc.add_paragraph()

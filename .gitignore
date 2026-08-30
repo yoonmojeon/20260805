@@ -5,7 +5,9 @@ __pycache__/
 venv/
 .env
 .pytest_cache/
+.pytest-tmp/
 .test-tmp*/
+artifacts/
 data/pytest_*/
 
 # Ops sensor Excel / SQLite
@@ -22,6 +24,8 @@ data/raw_pdfs/**
 data/processed/
 rag/data/
 rag/models/
+models/**
+!models/.gitkeep
 reports/output/*.docx
 outputs/
 

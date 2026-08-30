@@ -1,5 +1,7 @@
 """Shared Accurate-mode answer depth guidance (format unchanged, report-style bullets)."""
 
+import re
+
 CITATION_GUIDANCE = """
 ## Citation (필수 — §1·§2 모든 bullet)
 - context 청크는 **[1], [2], …** 로 번호가 매겨져 있다 (헤더 `[N] source=…` 참조).
@@ -22,8 +24,222 @@ CATEGORY_BULLET_DEFAULTS: dict[str, tuple[int, int, int]] = {
     "trend_summary": (4, 6, 3),
     "env_regulation": (3, 5, 3),
     "autonomous": (3, 5, 3),
-    "rule_lookup": (2, 3, 2),
+    # Exact Rule facts are compacted separately.  Document-guide questions
+    # follow the revised business feedback: one card per relevant document,
+    # with no arbitrary 2–3 bullet ceiling.
+    "rule_lookup": (2, 6, 2),
 }
+
+# The 1.2 answer-length contract is for the whole answer, not for every
+# section independently.  Section 1 still uses ``CATEGORY_BULLET_DEFAULTS`` as
+# its drafting target; these ceilings prevent the four-section renderer from
+# multiplying a short Rule lookup into an eight-bullet report.
+CATEGORY_TOTAL_BULLET_LIMITS: dict[str, tuple[int, int]] = {
+    "trend_summary": (7, 10),
+    "meeting_outcome": (7, 10),
+    "env_regulation": (5, 7),
+    "autonomous": (5, 7),
+    # Ordinary Rule facts stay within the agreed 2-3 bullet UI contract.
+    # Document-card questions explicitly lift this ceiling below so multiple
+    # relevant instruments are not discarded.
+    "rule_lookup": (2, 3),
+}
+
+_PLACEHOLDER_BULLET_MARKERS = (
+    "검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다",
+    "검색 근거에서 직접 확인되는 별도 운항·업무 영향이 없습니다",
+    "추가 확인 필요사항이 별도로 식별되지 않았습니다",
+    "관련 선급 Rule / Guidance가 검색 근거에 없거나 해당하지 않습니다",
+)
+
+
+def _fact_line_key(line: str) -> str:
+    prose = re.sub(r"\[\d+\]", "", str(line or ""))
+    prose = re.sub(r"[*_`#>]", "", prose).lower()
+    return re.sub(r"[^0-9a-z가-힣]+", "", prose)
+
+
+def _fact_line_tokens(line: str) -> set[str]:
+    prose = re.sub(r"\[\d+\]", "", str(line or "")).lower()
+    stop = {
+        "해당", "문서", "프로그램", "기반", "대한", "위한", "통해",
+        "합니다", "됩니다", "적용", "형식승인", "요구사항",
+    }
+    tokens: set[str] = set()
+    korean_suffixes = (
+        "입니다", "합니다", "됩니다", "인가요", "한가요", "이어야", "하여야",
+        "으로서", "로서", "에서는", "에게서", "이며", "하며", "에서", "으로",
+        "에는", "에게", "까지", "부터", "은", "는", "이", "가", "을", "를", "의",
+    )
+    for token in re.findall(r"\d+(?:[./]\d+)*|[a-z]{2,}|[가-힣]{2,}", prose):
+        if re.fullmatch(r"[가-힣]{2,}", token):
+            for suffix in korean_suffixes:
+                if token.endswith(suffix) and len(token) - len(suffix) >= 2:
+                    token = token[: -len(suffix)]
+                    break
+        if token not in stop:
+            tokens.add(token)
+    return tokens
+
+
+def _fact_line_numbers(line: str) -> set[str]:
+    prose = re.sub(r"\[\d+\]", "", str(line or ""))
+    return set(re.findall(r"\d+(?:[./]\d+)*", prose))
+
+
+def _strip_redundant_english_parentheticals(line: str) -> str:
+    """Drop long English glosses when the same fact is already stated in Korean.
+
+    Short identifiers and units such as ``TA``, ``SWL`` and ``(300 V)`` remain.
+    This is limited to the compact fact profile so analytical answers keep
+    official English titles when those titles are useful evidence labels.
+    """
+
+    source = str(line or "")
+    out: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] != "(":
+            out.append(source[index])
+            index += 1
+            continue
+        depth = 1
+        end = index + 1
+        while end < len(source) and depth:
+            if source[end] == "(":
+                depth += 1
+            elif source[end] == ")":
+                depth -= 1
+            end += 1
+        if depth:
+            out.append(source[index:])
+            break
+        segment = source[index:end]
+        english_words = re.findall(r"[A-Za-z]{2,}", segment)
+        if len(english_words) < 4:
+            out.append(segment)
+        index = end
+    cleaned = "".join(out)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _question_relevance_score(line: str, question: str) -> float:
+    """Prefer the direct condition/value bullet when a small model over-drafts."""
+    q_tokens = _fact_line_tokens(question)
+    line_tokens = _fact_line_tokens(line)
+    overlap = q_tokens.intersection(line_tokens)
+    score = float(sum(min(len(token), 10) for token in overlap))
+    for value in _fact_line_numbers(question):
+        if value in _fact_line_numbers(line):
+            score += 4.0
+    # Parenthesized English terms are often the most discriminative regulatory
+    # anchor (for example acknowledgement, transfer, WtT or SWL).
+    q_low = question.lower()
+    line_low = line.lower()
+    for token in re.findall(r"[a-z][a-z0-9_-]{2,}", q_low):
+        if token in line_low:
+            score += 3.0
+    return score
+
+
+def _select_exact_fact_lines(
+    lines: list[str], question: str, slots: int
+) -> list[str]:
+    if len(lines) <= slots:
+        return lines
+    # The model normally puts direct values and enumerated facts first.  A
+    # relevance re-rank is reserved for yes/no questions, where a generic
+    # first bullet can otherwise displace a later explicit exception (for
+    # example "acknowledgment does not apply").
+    if not re.search(
+        r"필요(?:한가|합니까|한가요)|여부|해당(?:하는가|합니까)|"
+        r"맞(?:는가|습니까)|아닌가|acknowledg",
+        question,
+        re.I,
+    ):
+        return lines[:slots]
+    scored = [
+        (_question_relevance_score(line, question), index, line)
+        for index, line in enumerate(lines)
+    ]
+    chosen = sorted(
+        sorted(scored, key=lambda item: (-item[0], item[1]))[:slots],
+        key=lambda item: item[1],
+    )
+    return [line for _score, _index, line in chosen]
+
+
+def _dedupe_subsumed_lines(lines: list[str]) -> tuple[list[str], int]:
+    """Remove a later recap bullet when it adds no distinct fact."""
+    kept: list[str] = []
+    kept_terms: list[set[str]] = []
+    kept_number_sets: list[set[str]] = []
+    known_terms: set[str] = set()
+    known_numbers: set[str] = set()
+    removed = 0
+    for line in lines:
+        terms = _fact_line_tokens(line)
+        numbers = _fact_line_numbers(line)
+        if len(kept) == 1 and kept_terms[0]:
+            prior_coverage = len(kept_terms[0].intersection(terms)) / len(kept_terms[0])
+            if (
+                prior_coverage >= 0.78
+                and kept_number_sets[0] <= numbers
+                and len(terms) > len(kept_terms[0])
+            ):
+                kept[0] = line
+                kept_terms[0] = terms
+                kept_number_sets[0] = numbers
+                known_terms = set(terms)
+                known_numbers = set(numbers)
+                removed += 1
+                continue
+        coverage = len(terms.intersection(known_terms)) / len(terms) if terms else 0.0
+        if len(kept) >= 1 and len(terms) >= 5 and coverage >= 0.78 and numbers <= known_numbers:
+            removed += 1
+            continue
+        kept.append(line)
+        kept_terms.append(terms)
+        kept_number_sets.append(numbers)
+        known_terms.update(terms)
+        known_numbers.update(numbers)
+    return kept, removed
+
+
+def _dedupe_exact_fact_lines(lines: list[str]) -> tuple[list[str], int]:
+    """Remove same-value paraphrases from a compact factual lookup."""
+    kept: list[str] = []
+    removed = 0
+    for line in lines:
+        key = _fact_line_key(line)
+        tokens = _fact_line_tokens(line)
+        numbers = _fact_line_numbers(line)
+        duplicate = False
+        for prior in kept:
+            prior_key = _fact_line_key(prior)
+            prior_tokens = _fact_line_tokens(prior)
+            prior_numbers = _fact_line_numbers(prior)
+            containment = (
+                min(len(key), len(prior_key)) >= 16
+                and (key in prior_key or prior_key in key)
+            )
+            union = tokens | prior_tokens
+            similarity = len(tokens & prior_tokens) / len(union) if union else 0.0
+            same_value = bool(numbers and numbers == prior_numbers)
+            semantic_duplicate = (
+                len(tokens.intersection(prior_tokens)) >= 4
+                and similarity >= 0.52
+            )
+            if containment or semantic_duplicate or (same_value and similarity >= 0.42):
+                duplicate = True
+                break
+        if duplicate:
+            removed += 1
+        else:
+            kept.append(line)
+    return kept, removed
 
 
 def category_bullet_budget(category: str, row: dict | None = None) -> tuple[int, int, int]:
@@ -34,6 +250,211 @@ def category_bullet_budget(category: str, row: dict | None = None) -> tuple[int,
     bmax = int(row.get("answer_bullets_max") or dmax)
     priority = int(row.get("summary_priority_bullets") or dpriority)
     return bmin, bmax, priority
+
+
+def category_total_bullet_budget(
+    category: str, row: dict | None = None
+) -> tuple[int, int]:
+    """Return the agreed whole-answer bullet range for a UI category."""
+    row = row or {}
+    from compound_regulatory import is_compound_regulatory_class_question
+
+    if is_compound_regulatory_class_question(str(row.get("question") or "")):
+        # A two-lane design-review answer needs four checklist bullets plus one
+        # decision, one uncertainty and one class instrument.  The ordinary
+        # 5–7 environment cap deletes required evidence after validation.
+        low, high = (7, 9)
+    else:
+        low, high = CATEGORY_TOTAL_BULLET_LIMITS.get(category, (2, 7))
+    low = int(row.get("answer_total_bullets_min") or low)
+    high = int(row.get("answer_total_bullets_max") or high)
+    return low, max(low, high)
+
+
+def apply_category_total_bullet_limit(
+    answer: str,
+    category: str,
+    row: dict | None = None,
+) -> tuple[str, dict]:
+    """Apply the whole-answer length contract without inventing or merging facts.
+
+    The function only removes lower-priority bullets and turns legacy
+    hyphen-prefixed empty-section notices into blockquotes.  Citations and
+    factual wording are otherwise unchanged.  Four section headings remain in
+    place so every RAG route presents the same UI shape.
+    """
+    row = row or {}
+    low, high = category_total_bullet_budget(category, row)
+    compact_rule_fact = bool(
+        row.get("_answer_profile") == "exact_rule_fact"
+    )
+    document_cards = str(
+        (row.get("_question_profile") or {}).get("answer_style") or ""
+    ) == "document_cards"
+    headings = tuple(SECTION_TITLES.values())
+    bodies: dict[str, list[str]] = {heading: [] for heading in headings}
+    current = headings[0]
+    for raw in str(answer or "").splitlines():
+        stripped = raw.strip()
+        matched = next(
+            (
+                heading
+                for heading in headings
+                if re.match(
+                    rf"^#+\s*{re.escape(heading.removeprefix('## ').strip())}\s*$",
+                    stripped,
+                    re.I,
+                )
+            ),
+            None,
+        )
+        if matched:
+            current = matched
+            continue
+        if stripped:
+            bodies[current].append(stripped)
+
+    factual: dict[str, list[str]] = {heading: [] for heading in headings}
+    nonfacts: dict[str, list[str]] = {heading: [] for heading in headings}
+    for heading in headings:
+        for line in bodies[heading]:
+            if line.startswith("- ") and any(
+                marker in line for marker in _PLACEHOLDER_BULLET_MARKERS
+            ):
+                nonfacts[heading].append("> " + line[2:].strip())
+            elif line.startswith("- "):
+                factual[heading].append(line)
+            else:
+                nonfacts[heading].append(line)
+
+    recap_duplicates_removed = 0
+    if compact_rule_fact:
+        factual[headings[0]] = [
+            _strip_redundant_english_parentheticals(line)
+            for line in factual[headings[0]]
+        ]
+    for heading in headings:
+        if document_cards and heading == headings[0]:
+            removed = 0
+        else:
+            factual[heading], removed = _dedupe_subsumed_lines(factual[heading])
+        recap_duplicates_removed += removed
+
+    before = sum(len(lines) for lines in factual.values())
+    duplicate_facts_removed = 0
+    if compact_rule_fact:
+        factual[headings[0]], duplicate_facts_removed = _dedupe_exact_fact_lines(
+            factual[headings[0]]
+        )
+        fact_slots = max(1, min(3, int(row.get("_answer_fact_slots") or 1)))
+        factual[headings[0]] = _select_exact_fact_lines(
+            factual[headings[0]], str(row.get("question") or ""), fact_slots
+        )
+        factual[headings[1]] = []
+        factual[headings[2]] = []
+        factual[headings[3]] = factual[headings[3]][:1]
+        before = sum(len(lines) for lines in factual.values()) + duplicate_facts_removed
+    if document_cards:
+        # The revised Rule-guide contract is document-count driven.  Preserve
+        # every already-grounded card/usage/caveat bullet produced upstream;
+        # exact clause/value questions never enter this branch.
+        high = max(high, before)
+    if (
+        category == "rule_lookup"
+        and not document_cards
+        and not factual[headings[3]]
+        and factual[headings[0]]
+    ):
+        # A verified Rule can be described in section 1 even when an upstream
+        # builder failed to populate section 4.  Re-express that same cited
+        # document identity as the requested catalog pointer; the total-budget
+        # pass below drops lower-priority follow-up prose so the answer remains
+        # within three bullets.
+        source_line = factual[headings[0]][0][2:].strip()
+        factual[headings[3]] = [
+            f"- **관련 선급 Rule / Guidance**: {source_line}"
+        ]
+        before += 1
+    if before > high:
+        if category == "rule_lookup":
+            # A lookup should identify the best two documents/requirements and
+            # retain one distinct Rule/Guidance or limitation item.
+            keep = {
+                headings[0]: factual[headings[0]][:2],
+                headings[1]: [],
+                headings[2]: [],
+                headings[3]: factual[headings[3]][:1],
+            }
+            if sum(len(lines) for lines in keep.values()) < high:
+                for section in (headings[2], headings[1]):
+                    if factual[section]:
+                        keep[section] = factual[section][:1]
+                        if sum(len(lines) for lines in keep.values()) >= high:
+                            break
+        else:
+            # Categories 1–3: the top three core facts come first, followed by
+            # at most two work impacts, one caveat and one class-rule pointer.
+            from compound_regulatory import is_compound_regulatory_class_question
+
+            compound_regulatory_class = is_compound_regulatory_class_question(
+                str(row.get("question") or "")
+            )
+            section_caps = (
+                (2, 4, 1, 2)
+                if compound_regulatory_class
+                else (5, 2, 2, 1)
+                if category in {"trend_summary", "meeting_outcome"}
+                else (3, 2, 1, 1)
+            )
+            keep = {
+                heading: factual[heading][:cap]
+                for heading, cap in zip(headings, section_caps)
+            }
+            while sum(len(lines) for lines in keep.values()) > high:
+                for heading in (headings[2], headings[1], headings[3], headings[0]):
+                    minimum = 3 if heading == headings[0] else 0
+                    if len(keep[heading]) > minimum:
+                        keep[heading].pop()
+                        break
+                else:
+                    break
+        factual = keep
+
+    rendered: list[str] = []
+    rendered_headings = (
+        (headings[0], headings[3]) if compact_rule_fact else headings
+    )
+    for heading in rendered_headings:
+        rendered.extend([heading, ""])
+        lines = factual.get(heading, [])
+        if lines:
+            rendered.extend(lines)
+        else:
+            notes = nonfacts.get(heading, [])
+            if notes:
+                rendered.extend(notes)
+            else:
+                defaults = {
+                    headings[0]: "> 검색 근거에서 질문에 직접 답할 내용을 확인하지 못했습니다.",
+                    headings[1]: "> 검색 근거에서 직접 확인되는 별도 운항·업무 영향이 없습니다.",
+                    headings[2]: "> 추가 확인 필요사항이 별도로 식별되지 않았습니다.",
+                    headings[3]: "> 관련 선급 Rule / Guidance가 검색 근거에 없거나 해당하지 않습니다.",
+                }
+                rendered.append(defaults[heading])
+        rendered.append("")
+    after = sum(len(lines) for lines in factual.values())
+    return "\n".join(rendered).strip(), {
+        "category": category,
+        "expected_min": low,
+        "max": high,
+        "before": before,
+        "after": after,
+        "trimmed": max(0, before - after),
+        "below_target": after < low,
+        "answer_profile": "exact_rule_fact" if compact_rule_fact else "standard",
+        "duplicate_facts_removed": duplicate_facts_removed,
+        "recap_duplicates_removed": recap_duplicates_removed,
+    }
 
 
 SECTION_TITLES = {
@@ -133,7 +554,8 @@ ANTI_REPETITION_GUIDANCE = """
 
 RULE_LOOKUP_GUIDANCE = """
 ## Rule/Guidance 조회 (카테고리 rule_lookup)
-- §1 bullet **2~3개** — 검색된 file_name별 scope·notation·적용대상·핵심 요건 (서로 다른 내용).
+- 문서 안내형 질문은 관련 file_name별로 한 카드씩 작성하며, 문서 수에 따라 bullet 수를 유연하게 정한다.
+- 각 문서 카드는 문서 번호·제목, 문서 성격, scope·적용대상, 활용 시점, 핵심 요건을 서로 다른 내용으로 정리한다.
 - **문서명·번호는 user prompt 「인용 허용 문서」·「Citation 매핑」의 file_name만** 사용.
 - citation [N]과 bullet 문서명이 **일치**해야 함.
 - placeholder `(context의 …)` 출력 금지.

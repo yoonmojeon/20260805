@@ -787,9 +787,14 @@ def merge_meeting_outcome_into_raw(
     broad_session = asks_broad_session_outcome(question) and not topic_specific
     signals = analyze_query(question)
     pool: dict[str, tuple[float, dict, str]] = {}
+    baseline_scores = (
+        baseline_raw.get("final_scores")
+        or baseline_raw.get("distances")
+        or [[]]
+    )
     for cid, dist, meta, doc in zip(
         baseline_raw.get("ids", [[]])[0],
-        baseline_raw.get("distances", [[]])[0],
+        baseline_scores[0],
         baseline_raw.get("metadatas", [[]])[0],
         baseline_raw.get("documents", [[]])[0],
     ):
@@ -860,13 +865,29 @@ def merge_meeting_outcome_into_raw(
         else:
             ranked = ranked[:top_k]
 
-    return {
+    literal_ids = list(
+        ((baseline_raw.get("document_route") or {}).get("feature_fallback_retained") or [])
+    )
+    if literal_ids:
+        literal_set = {cid for cid in literal_ids if cid in pool}
+        if literal_set:
+            forced = [(cid, pool[cid]) for cid in literal_ids if cid in literal_set]
+            ranked = forced + [(cid, item) for cid, item in ranked if cid not in literal_set]
+            if top_k is not None:
+                ranked = ranked[:top_k]
+
+    merged = {
         "ids": [[cid for cid, _ in ranked]],
         "distances": [[score for _, (score, _, _) in ranked]],
         "metadatas": [[meta for _, (_, meta, _) in ranked]],
         "documents": [[doc for _, (_, _, doc) in ranked]],
         "meeting_outcome_aware": True,
     }
+    # Preserve diagnostics from the baseline hierarchical route so Accurate
+    # answer planning can recognise literal-recovery chunks after this merge.
+    if baseline_raw.get("document_route"):
+        merged["document_route"] = baseline_raw["document_route"]
+    return merged
 
 
 def select_latest_environment_context(

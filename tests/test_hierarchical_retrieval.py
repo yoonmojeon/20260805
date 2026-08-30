@@ -18,21 +18,78 @@ from retrieval_query_analysis import (
     is_meeting_outcome_question,
 )
 from evidence_planner import build_evidence_plan
-from rule_guidance_accurate import _build_definition_extractive_answer, _is_definition_lookup
+from rule_guidance_accurate import (
+    _build_definition_extractive_answer,
+    _ensure_named_rule_facts,
+    _is_definition_lookup,
+    _normalize_rule_translation,
+    exact_rule_fact_slots,
+    is_exact_rule_fact_question,
+)
 from question_classifier import classify_question_category
+from imo_doc_registry import exact_doc_ids_for_query
+from retrieval_verification import detect_narrow_doc_id
+from retrieval_search import resolve_explicit_query_doc_id
+from rag_society_filter import filter_pool_for_source_constraints
 from rag_query_router import enrich_row_for_routing, is_rule_guidance_lookup
 from fast_question_classifier import classify_fast_question_type
 from fast_retrieval import select_rule_slots
+from question_requirements import analyze_requirements
+
+
+def test_document_code_exclusion_and_only_source_survive_analysis():
+    signals = analyze_query(
+        "DNV-CG-0264는 제외하고 ABS autonomous Requirements만 답해줘."
+    )
+    assert signals.excluded_sources == ["DNV"]
+    assert signals.constrained_sources == ["ABS"]
+    assert signals.named_sources == ["ABS"]
+    assert detect_narrow_doc_id(
+        "DNV-CG-0264는 제외하고 ABS autonomous Requirements만 답해줘.", {}
+    ) is None
+
+
+def test_dnv_cp_code_resolves_to_exact_collection_document():
+    class FakeCollection:
+        def get(self, **kwargs):
+            assert kwargs["where"] == {"file_name": "DNV-CP-0399.pdf"}
+            return {"metadatas": [{"doc_id": "dnv_cp_0399"}]}
+
+    question = "DNV-CP-0399의 형식승인 적용 범위는?"
+    assert resolve_explicit_query_doc_id(
+        FakeCollection(), question, analyze_query(question)
+    ) == "dnv_cp_0399"
+
+
+def test_final_source_constraints_remove_excluded_society():
+    pool = [
+        SimpleNamespace(source="ABS", meta={}),
+        SimpleNamespace(source="DNV", meta={}),
+    ]
+    filtered = filter_pool_for_source_constraints(
+        pool, allowed_sources=["ABS"], excluded_sources=["DNV"]
+    )
+    assert [chunk.source for chunk in filtered] == ["ABS"]
 from retrieval_search import (
     _direct_priority_rule_doc_ids,
     _document_route_candidates,
     _identifier_matches_filename,
+    _priority_rule_file_names,
+    _query_exact_identifier_hits,
+    enrich_query_for_embedding,
     extract_exact_identifiers,
+    extract_sparse_feature_terms,
+    extract_sparse_latin_terms,
+    extract_translated_feature_terms,
+    feature_fallback_relevance_score,
     query_with_hybrid_ranking,
     rank_scoped_sparse_rows,
 )
 from table_qa_answer import build_deterministic_table_answer, verify_row_column_intersection
-from meeting_structured_answer import _section1_meeting_outcome
+from meeting_structured_answer import (
+    _generic_committee_outcome_claim,
+    _section1_meeting_outcome,
+)
 from rag_answer_lib import (
     PREMISE_VERIFICATION_RE,
     SPECIFIC_DOCUMENT_LOOKUP_RE,
@@ -50,6 +107,327 @@ def test_exact_identifiers_cover_sparse_maritime_codes():
     assert "tcorr" in normalized
     assert "ac-sd" in normalized
     assert "dnv-cg-0264" in normalized
+
+
+def test_resolution_identifier_does_not_hard_route_to_meeting_source():
+    assert detect_named_sources(
+        "IMO Resolution MSC.288(87)에 따른 대체 시스템 승인 요건은?"
+    ) == []
+    assert detect_named_sources(
+        "resolution MEPC.355(78)의 적용 조건은?"
+    ) == []
+    assert detect_named_sources("MSC 111의 주요 결과는?") == ["MSC"]
+
+
+def test_exact_document_code_resolves_filename_metadata():
+    mepc = exact_doc_ids_for_query("MEPC 84-7-23 문서의 기본값은 무엇인가?")
+    dnv = exact_doc_ids_for_query("DNV-CP-0069 문서의 시험편 위치는?")
+    base_item = exact_doc_ids_for_query("MEPC 84/3 문서의 개정안은?")
+    assert any("mepc_84_7_23" in doc_id for doc_id in mepc)
+    assert any("dnv_cp_0069" in doc_id for doc_id in dnv)
+    assert len(base_item) == 1
+    assert "mepc_84_3_amendments" in base_item[0]
+    assert detect_narrow_doc_id("MEPC 84-7-23 문서의 기본값은?", {}) == mepc[0]
+
+
+def test_sparse_feature_term_extracts_korean_compound_not_question_intent():
+    assert extract_sparse_feature_terms("방식조치의 요건과 예외를 알려줘") == ["방식조치"]
+
+
+def test_korean_maritime_concepts_get_selective_source_language_aliases():
+    assert extract_translated_feature_terms(
+        "선상 측정 완료 후 최종 보고서는 언제 제출합니까?"
+    ) == [
+        "within two (2) weeks after the job is terminated",
+        "in addition to the measured values, the original scantlings, the minimum thickness and the substantial corrosion limits",
+    ]
+    assert extract_translated_feature_terms(
+        "선상 측정 완료 후 최종 보고서의 필수 정보는?", limit=3
+    )[-1] == "The report shall include a copy of the certificate of approval of the firm"
+    assert extract_translated_feature_terms(
+        "윤활 방식에 따른 원주 속도 조건은?"
+    ) == ["Circumferential velocity should be"]
+    assert extract_translated_feature_terms(
+        "CA 챔버 진입 전 가스 제거 완료 확인 절차는?"
+    ) == ["procedures for checking completed gas freeing prior to entry"]
+    assert extract_translated_feature_terms(
+        "구형 쉘의 편평도와 국부 곡률 반경 조건은?"
+    ) == ["local outside curvature radius of Ro,l = 1.3"]
+    assert extract_translated_feature_terms(
+        "해상 LAN TA가 다른 규칙 준수도 보증합니까?"
+    ) == ["will not confirm compliance with requirements in other parts of the rules"]
+    assert extract_translated_feature_terms(
+        "탱크 지지대 hardwood 등급과 variants 정의는?"
+    ) == ["Defined by density, lamination", "variants: different numbers of plies"]
+    assert extract_translated_feature_terms(
+        "BBNJ 협정 관련 2026-2027년 협의·조정 의무를 위한 내부 메커니즘은?"
+    ) == ["articulate and operationalize a clear internal mechanism"]
+    assert extract_translated_feature_terms(
+        "MSC 회의자료에 따르면 IACS Rec.165 Rev.1이 적용되는 대상과 그 목적은?",
+        limit=3,
+    ) == [
+        "addresses designers, shipyards, technical managers responsible for calculations",
+        "It also applies to deviations from CSR and other requirements",
+        "addressed to Classification Societies",
+    ]
+
+
+def test_named_multiword_latin_feature_precedes_korean_request_word():
+    class RecordingCollection:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"ids": [], "metadatas": [], "documents": []}
+
+    question = (
+        "supply-based carbon intensity가 몇 퍼센트 감소했습니까?"
+    )
+    assert extract_sparse_latin_terms(question)[0] == "supply-based carbon intensity"
+    collection = RecordingCollection()
+    _raw, _scores, _identifiers, feature_terms = _query_exact_identifier_hits(
+        collection,
+        question,
+        where=None,
+        candidate_documents=["unrelated dense candidate"],
+    )
+    assert feature_terms == ["supply-based carbon intensity"]
+    assert collection.calls[0]["where_document"] == {
+        "$contains": "supply-based carbon intensity"
+    }
+
+
+def test_minimum_risk_condition_expands_to_current_fallback_state_term():
+    query = "DNV-CG-0264에서 minimum risk condition 원칙은?"
+    enriched = enrich_query_for_embedding(query, "intfloat/multilingual-e5-base")
+    assert "fallback state" in enriched
+    plan = build_evidence_plan(query, {"_internal_intent": "rule_lookup"})
+    direct = next(slot for slot in plan.slots if slot.name == "specific_clause")
+    assert "fallback state" in direct.terms
+    assert "acceptable risk" in direct.terms
+
+
+def test_fallback_state_is_not_translated_as_rear_state():
+    chunk = SimpleNamespace(text="The vessel should enter and maintain a fallback state.")
+    normalized = _normalize_rule_translation("선박은 후방 상태를 유지해야 한다.", [chunk])
+    assert "폴백 상태(대체 안전상태)" in normalized
+    assert "후방 상태" not in normalized
+
+
+def test_exact_rule_fact_profile_distinguishes_scalar_from_inventory_question():
+    exact = (
+        "DNV-CP-0399의 형식승인(TA)은 어떤 정격의 전력 케이블과 "
+        "제어·계측 회로용 케이블에 적용되나요?"
+    )
+    inventory = (
+        "샌드위치 코어 재료의 형식 승인(TA)을 위해 제조사가 제출해야 하는 "
+        "필수 문서 목록에는 어떤 항목들이 포함되는가?"
+    )
+
+    assert is_exact_rule_fact_question(exact)
+    assert exact_rule_fact_slots(exact) == 2
+    assert not is_exact_rule_fact_question(inventory)
+    assert exact_rule_fact_slots("며칠이며 장소는 어디인가요?") == 2
+    assert is_exact_rule_fact_question("감소 폭은 어느 정도인가요?")
+    assert not is_exact_rule_fact_question(
+        "비상전원은 어떤 요건을 갖추며 어느 장치들에 급전해야 합니까?"
+    )
+    assert not is_exact_rule_fact_question("IACS Rec.165가 적용되는 대상과 목적은 무엇인가요?")
+    assert exact_rule_fact_slots("어떤 경우에 다른 시험 절차를 적용합니까?") == 1
+    assert exact_rule_fact_slots("주최한 국가나 단체는 어디인가요?") == 3
+    assert is_exact_rule_fact_question("두 가지 주요 이슈는 무엇인가요?")
+    assert is_exact_rule_fact_question(
+        "주요 구성 요소가 포함된 수정 시 당국은 어떻게 조치해야 합니까?"
+    )
+    assert is_exact_rule_fact_question("어느 단계이며 어떤 목표를 포함합니까?")
+    assert exact_rule_fact_slots("어느 단계이며 어떤 목표를 포함합니까?") == 2
+
+
+def test_named_revision_term_is_merged_without_adding_a_rule_bullet():
+    answer = (
+        "## 1) 핵심 요약\n\n"
+        "- 운항범위를 초과하면 fallback state에 진입·유지할 수 있어야 합니다. [2]\n\n"
+        "## 2) 선박 운항/업무 영향\n\n> 없음\n\n"
+        "## 3) 추후 확인 필요사항\n\n- 적용 조건을 확인합니다. [2]\n\n"
+        "## 4) 관련 선급 Rule / Guidance\n\n- DNV-CG-0264, clause 8.2 [2]"
+    )
+    chunks = [
+        SimpleNamespace(
+            text=(
+                "Description: Replaced minimum risk condition (MRC) with the term "
+                "fallback state. The definition remains the same."
+            )
+        ),
+        SimpleNamespace(text="Maintain a safe state when exceeding the operational envelope."),
+    ]
+    updated = _ensure_named_rule_facts(
+        answer,
+        "DNV-CG-0264의 minimum risk condition 원칙은?",
+        chunks,
+    )
+    assert "minimum risk condition" in updated
+    assert "fallback state" in updated
+    assert "정의는 동일" in updated
+    assert len([line for line in updated.splitlines() if line.startswith("- ")]) == 3
+
+
+def test_named_smart_vessel_catalogue_row_is_preserved():
+    answer = (
+        "## 1) 핵심 요약\n\n- DNV-CG-0264는 autonomous/remote guidance입니다. [2]\n\n"
+        "## 2) 선박 운항/업무 영향\n\n> 없음\n\n"
+        "## 3) 추후 확인 필요사항\n\n> 없음\n\n"
+        "## 4) 관련 선급 Rule / Guidance\n\n- DNV-CG-0264 [2]"
+    )
+    chunks = [
+        SimpleNamespace(
+            text="Document code: DNV-RU-SHIP Pt.6 Ch.5 Sec.24 | Title: Smart vessel"
+        ),
+        SimpleNamespace(text="DNV-CG-0264 autonomous and remotely operated ships AROS"),
+    ]
+    updated = _ensure_named_rule_facts(
+        answer,
+        "DNV Smart Vessel 문서와 autonomous/remote vessel guidance를 구분해줘",
+        chunks,
+    )
+    assert "DNV-RU-SHIP Pt.6 Ch.5 Sec.24" in updated
+    assert "Smart vessel" in updated
+    assert "DNV-CG-0264" in updated
+
+
+def test_broad_dnv_autonomous_smart_pointer_excludes_incidental_guidance():
+    answer = (
+        "## 1) 핵심 요약\n\n"
+        "- DNV-CG-0264와 DNV-CG-0508이 직접 관련됩니다. [2][3]\n\n"
+        "## 2) 선박 운항/업무 영향\n\n> 없음\n\n"
+        "## 3) 추후 확인 필요사항\n\n> 없음\n\n"
+        "## 4) 관련 선급 Rule / Guidance\n\n"
+        "- **DNV-CG-0557.pdf**, p.9: 일반 DNV 검색 결과입니다. [1]"
+    )
+    chunks = [
+        SimpleNamespace(
+            file_name="DNV-CG-0557.pdf", page_number=9,
+            text="An incidental DNV class guideline.",
+        ),
+        SimpleNamespace(
+            file_name="DNV-CG-0264.pdf", page_number=9,
+            text="Autonomous and remotely operated ships and AROS.",
+        ),
+        SimpleNamespace(
+            file_name="DNV-CG-0508.pdf", page_number=6,
+            text="Document code: DNV-CG-0508 | Title: Smart vessel",
+        ),
+    ]
+    updated = _ensure_named_rule_facts(
+        answer,
+        "DNV에서 자율운항 또는 Smart Vessel 관련 Rule/Guidance를 찾아줘.",
+        chunks,
+    )
+    section4 = updated.split("## 4) 관련 선급 Rule / Guidance", 1)[1]
+    assert "DNV-CG-0264" in section4
+    assert "DNV-CG-0508" in section4
+    assert "DNV-CG-0557" not in section4
+
+
+def test_dnv_smart_instrument_slot_accepts_the_direct_cg_0508_document():
+    plan = build_evidence_plan(
+        "DNV에서 자율운항 또는 Smart Vessel 관련 Rule/Guidance를 찾아줘.",
+        {"_internal_intent": "rule_lookup"},
+    )
+    smart_slot = next(
+        slot for slot in plan.slots if slot.name == "smart_vessel_instrument"
+    )
+    assert "DNV-CG-0508" in smart_slot.terms
+    assert any("DNV-CG-0508" in group for group in smart_slot.required_groups)
+
+
+def test_dnv_smart_lookup_routes_directly_to_both_guideline_files():
+    question = "DNV에서 자율운항 또는 Smart Vessel 관련 Rule/Guidance를 찾아줘."
+    signals = analyze_query(question)
+    names = _priority_rule_file_names(signals, question)
+    assert "DNV-CG-0264.pdf" in names
+    assert "DNV-CG-0508.pdf" in names
+
+
+def test_mass_adoption_paragraph_without_nonmandatory_prefix_is_still_an_outcome():
+    chunk = SimpleNamespace(
+        text=(
+            "5.36 Subsequently, the Committee adopted resolution MSC.[...](111) on "
+            "Adoption of the International Code of Safety for Maritime Autonomous "
+            "Surface Ships (MASS Code)."
+        )
+    )
+    claim = _generic_committee_outcome_claim(chunk)
+    assert "MASS Code" in claim
+    assert "채택" in claim
+
+
+def test_compound_noun_does_not_turn_into_method_facet():
+    requirements = analyze_requirements("방식조치의 요건과 예외를 알려줘")
+    assert "requirement" in requirements.facets
+    assert "scope" in requirements.facets
+    assert "method" not in requirements.facets
+
+
+def test_direct_feature_heading_with_requested_exception_is_preferred():
+    direct = feature_fallback_relevance_score(
+        "방식조치의 요건과 예외를 알려줘",
+        "3. 방식조치\n모든 강재 표면에 방식조치를 하여야 한다. 다만 갑판은 참작할 수 있다.",
+        "방식조치",
+    )
+    incidental = feature_fallback_relevance_score(
+        "방식조치의 요건과 예외를 알려줘",
+        "정기검사에서 방식조치의 상태를 확인한다.",
+        "방식조치",
+    )
+    assert direct > incidental + 0.5
+
+
+class _LiteralRecoveryCollection:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def get(self, **kwargs):
+        self.calls.append(kwargs)
+        if (kwargs.get("where_document") or {}).get("$contains") != "방식조치":
+            return {"ids": [], "metadatas": [], "documents": []}
+        return {
+            "ids": ["kr-generic", "kr-target"],
+            "metadatas": [
+                {"doc_id": "kr-generic-rule", "file_name": "2편_2025.pdf", "source": "KR"},
+                {"doc_id": "kr-rule", "file_name": "1편_2025.pdf", "source": "KR"},
+            ],
+            "documents": [
+                "방식조치가 설치되어 있다.",
+                "방식조치의 요건을 만족하여야 한다. 다만 다음은 제외한다.",
+            ],
+        }
+
+
+def test_sparse_feature_fallback_runs_once_only_when_dense_pool_has_zero_hits():
+    collection = _LiteralRecoveryCollection()
+    raw, scores, identifiers, feature_terms = _query_exact_identifier_hits(
+        collection,
+        "방식조치의 요건과 예외를 알려줘",
+        where=None,
+        candidate_documents=["CNG 운반선 지침의 일반 요건"],
+    )
+    assert identifiers == []
+    assert feature_terms == ["방식조치"]
+    assert len(collection.calls) == 1
+    assert raw["ids"][0] == ["kr-generic", "kr-target"]
+    assert scores["kr-target"] > scores["kr-generic"] > 1.0
+
+    collection = _LiteralRecoveryCollection()
+    raw, _scores, _identifiers, feature_terms = _query_exact_identifier_hits(
+        collection,
+        "방식조치의 요건과 예외를 알려줘",
+        where=None,
+        candidate_documents=["이미 방식조치가 포함된 dense 후보"],
+    )
+    assert feature_terms == []
+    assert collection.calls == []
+    assert raw["ids"][0] == []
 
 
 def test_long_document_lookup_is_sent_to_absence_verifier():
@@ -97,6 +475,36 @@ def test_korean_abs_risk_question_adds_bilingual_specific_clause_terms():
     assert "risk category" in slot.terms
     assert "operations supervision" in slot.terms
     assert "consequences of failure" in slot.terms
+
+
+def test_abs_smart_named_document_always_adds_core_evidence_facets():
+    plan = build_evidence_plan(
+        "ABS 스마트 기능 Guide와 유사 Guidance를 구분해 찾아줘.",
+        {},
+    )
+    slots = {slot.name: slot for slot in plan.slots}
+    assert {
+        "abs_smart_application",
+        "abs_smart_implementation",
+        "abs_smart_objectives",
+        "abs_smart_notation",
+    }.issubset(slots)
+    assert ("risk-informed", "risk informed") in slots[
+        "abs_smart_objectives"
+    ].required_groups
+
+
+def test_abs_autonomous_named_document_always_adds_core_evidence_facets():
+    plan = build_evidence_plan(
+        "문서명과 핵심 요건만 bullet로 ABS 자율/원격제어 Requirements를 정리해줘.",
+        {},
+    )
+    assert {
+        "abs_risk_classification",
+        "abs_risk_informed_verification",
+        "abs_foundational_requirements",
+        "abs_cumulative_risk_requirements",
+    }.issubset({slot.name for slot in plan.slots})
 
 
 def test_mepc_iswg_briefing_uses_four_named_evidence_facets():
@@ -228,6 +636,31 @@ def test_definition_answer_uses_explicit_symbol_definition_line():
     assert cited is explicit
     assert "6장/3.2에 정의된 부식추가(mm)" in answer
     assert "p.211" in answer
+
+
+def test_definition_answer_extracts_korean_multiword_term():
+    unrelated = SimpleNamespace(
+        text="과도한 부식이 발견되면 검사 범위를 확대할 수 있다.",
+        file_name="1편_2025.pdf",
+        page_number=132,
+        clause_number="301",
+    )
+    explicit = SimpleNamespace(
+        text=(
+            "14. 과도한 부식(substantial corrosion)이라 함은 두께계측에 따른 "
+            "부식의 유형을 평가한 결과 부식의 정도가 쇠모한도 이내에 있으나 "
+            "쇠모한도의 75%를 초과하여 부식된 상태를 말한다."
+        ),
+        file_name="1편_2025.pdf",
+        page_number=28,
+        clause_number="14",
+    )
+    answer, cited = _build_definition_extractive_answer(
+        "과도한 부식의 정의는 무엇인가?", [unrelated, explicit], "KR"
+    )
+    assert cited is explicit
+    assert "쇠모한도의 75%를 초과" in answer
+    assert "p.28" in answer
     cii_question = "IMO 문서 기준으로 선박 탄소집약도 등급 관리 요구사항을 요약해줘."
     assert classify_question_category(cii_question, {}) == "env_regulation"
     assert not is_rule_guidance_lookup(
@@ -238,6 +671,10 @@ def test_definition_answer_uses_explicit_symbol_definition_line():
             "구조 규칙에서 쓰는 tcorr 기호는 어떤 두께를 뜻하지?",
             {"category": "rule_lookup"},
         )
+        == "rule_question"
+    )
+    assert (
+        classify_fast_question_type("방식조치의 요건과 예외를 알려줘", {})
         == "rule_question"
     )
 

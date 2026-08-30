@@ -88,7 +88,8 @@ ATTRIBUTE_TERMS = (
     "공칭 두께", "시험규격", "표시 장소", "동력 빌지펌프", "운항거리 제한",
     "방화 보존성", "최소 용접 다리 길이", "최소 각장", "용접 다리 길이",
     "CMS 통일명칭", "통일명칭", "격벽 위치", "제조법 승인 적용 장",
-    "설계 적용 장", "시험압력수두",
+    "설계 적용 장", "시험압력수두", "최종강도 검토", "최종강도",
+    "부식추가", "공칭값 오차", "외판으로부터 거리",
 )
 
 
@@ -115,6 +116,21 @@ def _dedupe(items: list[str]) -> list[str]:
 
 def _infer_column_entities(question: str) -> list[str]:
     cols: list[str] = []
+    inspection_match = re.search(
+        r"제\s*(\d+)\s*차\s*(?:(및\s*)?이후\s*)?정기검사",
+        question,
+    )
+    if inspection_match:
+        number = inspection_match.group(1)
+        if "이후" in inspection_match.group(0):
+            cols.extend(
+                [
+                    f"제{number}차 및 이후 정기검사",
+                    f"제{number}차 이후 정기검사",
+                ]
+            )
+        else:
+            cols.append(f"제{number}차 정기검사")
     quoted = [normalize_token(v) for v in QUOTED_RE.findall(question)]
     if len(quoted) >= 2 and any(term in question for term in ("값", "해당", "행")):
         cols.append(quoted[1])
@@ -264,6 +280,59 @@ def _natural_slots(question: str) -> tuple[list[str], list[str]]:
     if "체인로커" in q and ("선수격벽" in q or "후방" in q or "뒤" in q):
         rows.extend(["체인로커(선수격벽 후방에 있는 경우)", "선수격벽 후방 체인로커"])
         cols.extend(["시험압력수두", "시험압력수두(m)"])
+    if "Chemical Carrier" in q or "Chemical Tanker" in q:
+        rows.extend(["Chemical Carrier", "Chemical Tanker"])
+        if "운송화물명" in q or "화물명" in q:
+            rows.extend(["운송화물명", "Name of Chemical primarily carried"])
+        if "설계" in q and ("장" in q or "규정" in q):
+            cols.extend(["Design", "설계 적용 장"])
+    if "주요 지지부재" in q:
+        rows.extend(["주요 지지부재", "Primary supporting members"])
+        if "최종강도" in q:
+            cols.extend(["최종강도 검토", "Ultimate strength check"])
+    if "부식추가" in q or "부식 추가" in q:
+        cols.extend(["부식추가", "tc1 또는 tc2", "corrosion addition"])
+        for compartment in (
+            "평형수탱크",
+            "평형수 탱크",
+            "빌지탱크",
+            "드레인 저장탱크",
+            "체인로커",
+        ):
+            if compartment.replace(" ", "") in q.replace(" ", ""):
+                rows.append(compartment)
+    if ("비선수미 격벽" in q or "선수미 격벽 이외" in q) and "외판" in q:
+        rows.extend(["비선수미 격벽", "선수미 격벽이외의 격벽"])
+        cols.extend(["외판으로부터 거리", "거리"])
+    if "선급" in q and "표시" in q and "경보" in q:
+        rows.extend([
+            "표시·경보항목",
+            "선급이 필요하다고 인정하는 항목",
+            "기관에 따라 우리 선급이 필요하다고 인정하는 항목",
+        ])
+        cols.extend(["표시 장소", "표 시 장 소"])
+    if "소선" in q and "지름" in q:
+        rows.extend(["소선지름", "소선의 공칭지름", "소선 지름"])
+        if "차이" in q or "허용" in q:
+            cols.extend(["허용 차이", "최대인 것과 최소인 것의 차"])
+    if "광물" in q and "함유" in q:
+        rows.extend(["광물 함유량", "광물 함유", "적층용 수지"])
+        if "공칭값" in q or "%" in q:
+            cols.extend(["공칭값 오차", "요건"])
+    if "안덮개" in q or "안 덮개" in q:
+        rows.extend(["안덮개", "주갑판 아래" if "주갑판" in q else ""])
+        if "비율" in q:
+            cols.append("설치비율")
+    if "창구" in q and "맨홀" in q:
+        rows.extend([
+            "창구, 맨홀",
+            "창구, 맨홀 (덮개, 코밍 포함, 피팅류 제외)",
+        ])
+        if "2차방벽" in q.replace(" ", "") and "방벽간" in q.replace(" ", ""):
+            cols.extend([
+                "2차방벽 및 방벽간 구역",
+                "2차 방벽 및 방벽간 구역",
+            ])
     if ("용접" in q and ("다리" in q or "각장" in q)) or "최소 각장" in q:
         cols.extend(["최소 용접 다리 길이", "Minimum length, in mm", "최소 각장"])
     pump_match = re.search(
@@ -380,6 +449,13 @@ def parse_table_query(question: str) -> ParsedTableQuery:
     row_entities = _dedupe(_infer_row_entities(q) + natural_rows)
     row_entities = _dedupe(row_entities + _short_domain_from_long_rows(row_entities))
     column_entities = _dedupe(_infer_column_entities(q) + natural_cols)
+    # Do not treat the C in a temperature unit (°C/℃) as the chemistry
+    # column alias for carbon.  That false alias can redirect an otherwise
+    # exact insulation-temperature lookup into chemical-composition tables.
+    if re.search(r"(?:°\s*C|℃)", q, re.I):
+        column_entities = [
+            value for value in column_entities if str(value).strip().upper() != "C"
+        ]
     table_topic_candidates = _infer_table_topics(q, column_entities, row_entities)
     unit_candidates = extract_units(q)
     condition_candidates = [t for t in CONDITION_TERMS if t in q]

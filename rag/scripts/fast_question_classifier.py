@@ -40,6 +40,8 @@ RULE_PATTERNS = (
     r"규정",
     r"조항",
     r"requirement",
+    r"요건",
+    r"예외",
     r"적용\s*대상",
     r"해야\s*하는가",
     r"해야\s*하나",
@@ -81,6 +83,35 @@ def classify_fast_question_type(question: str, row: dict | None = None) -> FastQ
 
     q = question.strip()
     lower = q.lower()
+
+    # A session-item identifier constrains the source document; it does not by
+    # itself turn a narrow value/reason/list question into a meeting briefing.
+    # Treating ``MEPC 84/7/23 ... 어떤 연구 결과`` as an outcome summary made
+    # the meeting claim extractor discard the exact technical paragraph.
+    exact_item = bool(
+        re.search(r"\b(?:MEPC|MSC)\s*\d{1,3}(?:\s*[/.-]\s*[A-Z0-9]+)+", q, re.I)
+    )
+    explicit_summary = bool(
+        re.search(r"요약|정리|주요\s*(?:결과|결정|내용)|핵심\s*(?:결과|결정|내용)", q, re.I)
+    )
+    if exact_item and not explicit_summary:
+        return "general_question"
+    # A bare session/body reference is often only the source boundary. Concrete
+    # wh-questions about a value, reason, condition or required information must
+    # use the narrow fact prompt even when top-level routing labels the subject
+    # as an environmental/autonomous trend. Whole-session summaries retain the
+    # dedicated renderer through ``explicit_summary`` above.
+    if (
+        re.search(r"\b(?:MEPC|MSC)(?:\s*\d{1,3})?\b", q, re.I)
+        and not explicit_summary
+        and re.search(
+            r"무엇|어떤|어떻게|왜|이유|조건|요건|정보|수치|값|언제|몇\s*개|"
+            r"what|which|how|why|condition|requirement|value",
+            q,
+            re.I,
+        )
+    ):
+        return "general_question"
 
     ctx = resolve_meeting_summary_context(q, row)
     if ctx.target_scope == TARGET_SCOPE_WHOLE_SESSION:

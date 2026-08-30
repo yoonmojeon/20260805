@@ -10,7 +10,7 @@ from services.chat_service import run_chat_query
 from services.hybrid_service import run_hybrid_query
 from services.ops_service import run_ops_query
 from services.rag_service import run_rag_query
-from services.retrieval_mode import classify_retrieval_mode
+from services.retrieval_mode import RetrievalMode, classify_retrieval_mode
 
 ForceRoute = Literal["auto", "ops", "rag", "chat", "hybrid"]
 
@@ -25,12 +25,20 @@ def handle_question(
     last_route: str | None = None,
     dialogue_state: DialogueState | dict | None = None,
     llm_model: str | None = None,
+    retrieval_mode_override: RetrievalMode | str | None = None,
 ) -> dict[str, Any]:
     from services.llm_models import normalize_llm_model
 
     started = time.perf_counter()
     q = (question or "").strip()
     model = normalize_llm_model(llm_model)
+    manual_rag_mode: RetrievalMode | None = None
+    if retrieval_mode_override is not None:
+        manual_rag_mode = (
+            retrieval_mode_override
+            if isinstance(retrieval_mode_override, RetrievalMode)
+            else RetrievalMode(str(retrieval_mode_override).strip().lower())
+        )
     state = parse_dialogue_state(dialogue_state, last_route)
     if not q:
         return {
@@ -63,7 +71,9 @@ def handle_question(
     elif decision.route == "ops":
         result = run_ops_query(effective_q, history, llm_model=model)
     elif decision.route == "hybrid":
-        rag_mode = classify_retrieval_mode(decision.rag_query or effective_q)
+        rag_mode = manual_rag_mode or classify_retrieval_mode(
+            decision.rag_query or effective_q
+        )
         result = run_hybrid_query(
             q,
             history,
@@ -74,7 +84,7 @@ def handle_question(
             llm_model=model,
         )
     else:
-        rag_mode = classify_retrieval_mode(effective_q)
+        rag_mode = manual_rag_mode or classify_retrieval_mode(effective_q)
         result = run_rag_query(
             effective_q,
             latency_mode=rag_latency_mode,
@@ -92,6 +102,9 @@ def handle_question(
         result.setdefault("map_html", "")
 
     meta = dict(result.get("meta") or {})
+    if manual_rag_mode is not None and decision.route in {"rag", "hybrid"}:
+        meta["retrieval_mode"] = manual_rag_mode.value
+        meta["manual_retrieval_override"] = True
     if decision.route in {"rag", "hybrid"} and "retrieval_mode" not in meta:
         meta["retrieval_mode"] = classify_retrieval_mode(
             (decision.rag_query if decision.route == "hybrid" else None) or effective_q

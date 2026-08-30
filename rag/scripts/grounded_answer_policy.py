@@ -31,6 +31,7 @@ STATUSES = {
     "action_request": DocumentStatus("action_request", "위원회 조치 요청", 1, False),
     "background": DocumentStatus("background", "배경·참고 자료", 1, False),
     "committee_submission": DocumentStatus("committee_submission", "위원회 제출·보고 자료", 2, False),
+    "administrative": DocumentStatus("administrative", "회의 행정·목록 자료", 0, False),
     "unknown": DocumentStatus("unknown", "상태 미확인", 0, False),
 }
 
@@ -59,6 +60,12 @@ ADOPTION_RE = re.compile(
     re.I,
 )
 RESOLUTION_RE = re.compile(r"\b(?:MEPC|MSC)\.\d+\(\d+\)|\bresolution\b", re.I)
+ADMINISTRATIVE_J_RE = re.compile(r"\b(?:MEPC|MSC)\s*\d{1,3}-J-\d+\b", re.I)
+ADMINISTRATIVE_TITLE_RE = re.compile(
+    r"provisional\s+list\s+of\s+(?:participants|documents)|"
+    r"provisional\s+timetable|presentations\s+and\s+events|grouping\s+of\s+documents",
+    re.I,
+)
 CLASS_SOURCES = {"DNV", "LR", "ABS", "KR"}
 
 
@@ -77,6 +84,8 @@ def classify_document_status(chunk: Any) -> DocumentStatus:
 
     if source in CLASS_SOURCES:
         return STATUSES["class_rule"]
+    if ADMINISTRATIVE_J_RE.search(file_name) or ADMINISTRATIVE_TITLE_RE.search(name):
+        return STATUSES["administrative"]
     # Filename/purpose has priority: a proposal may quote an adopted resolution,
     # but that does not turn the proposal itself into the decision record.
     if PROPOSAL_FILE_RE.search(name) or re.search(r"submitted by\s+", low[:700], re.I):
@@ -158,6 +167,8 @@ def select_key_clause_chunks(
         if not is_substantive_chunk(chunk):
             continue
         status = classify_document_status(chunk)
+        if status.code == "administrative":
+            continue
         file_name, _, body = _chunk_blob(chunk)
         blob = f"{file_name} {body}".lower()
         overlap = sum(1 for term in qterms if term in blob)

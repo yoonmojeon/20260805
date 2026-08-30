@@ -235,6 +235,30 @@ def extract_clause_themes(
         content_ko="trunk piston dual fuel engine의 crankcase ventilation, 저인화점 연료 사용 시 환기·안전 arrangement 검토와 관련",
     )
 
+    # Upgrade the two primary LR cards from topic labels to the operative
+    # source conditions.  Keeping them as two compact cards preserves the
+    # agreed 2-3 bullet Rule-answer budget while still exposing the actual
+    # design/monitoring duties.
+    for theme in themes:
+        if theme.theme_id == "section_15_low_flashpoint":
+            theme.title = f"{_notice_doc_label(theme.file_name)} — Section 15 / low-flashpoint fuel"
+            theme.doc_type = "LR Rules"
+            theme.relevance_ko = "가스·저인화점 연료 기관의 crankcase 안전성 상세 평가 요구"
+            theme.content_ko = (
+                "가스 또는 저인화점 연료 기관은 crankcase 가스 농도가 별도 조치 없이 "
+                "LEL 미만으로 유지되거나, 특정 조치로 폭발 위험이 감소함을 상세 안전성 "
+                "평가로 입증해야 함"
+            )
+        elif theme.theme_id == "dual_fuel_engines":
+            theme.title = f"{_notice_doc_label(theme.file_name)} — dual fuel engine crankcase ventilation"
+            theme.doc_type = "LR Rules"
+            theme.relevance_ko = "trunk piston dual fuel engine의 crankcase 환기 예외와 안전 조건"
+            theme.content_ko = (
+                "외부 공기 유입 환기는 원칙적으로 금지되지만 가스·저인화점 연료를 쓰는 "
+                "trunk piston dual fuel engine에는 crankcase 환기를 제공해야 하며, 폭발위험 "
+                "비증가 입증·작동 모니터링·고장 시 자동 안전조치 또는 위험완화조치가 요구됨"
+            )
+
     add_theme(
         "engine_safety_evaluation",
         predicate=lambda low, _: ("low flashpoint" in low or "low-flashpoint" in low)

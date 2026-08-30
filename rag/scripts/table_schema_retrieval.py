@@ -145,16 +145,63 @@ def _literal_row_candidates(
             if 3 <= len(str(value).strip()) <= 60
         )
     )
-    generic = {"기관실", "구명정", "격벽", "설계", "design", "시험압력", "체인로커"}
+    generic = {
+        "기관실",
+        "구명정",
+        "격벽",
+        "설계",
+        "design",
+        "시험압력",
+        "체인로커",
+        # A table/topic word, not the location row requested by the user.
+        "안덮개",
+    }
     variants.sort(
         key=lambda value: (
             value.lower() in generic,
             -(len(value) if len(value) <= 42 else 0),
         )
     )
-    search_entities = variants[:8]
+    # Each ``where_document`` contains scan is exact but corpus-wide.  Four
+    # distinctive variants cover spacing/bilingual forms while keeping Fast
+    # table lookups within their latency budget; broader variants are still
+    # present in the dense/schema query.
+    # Preserve the user's/parser's actual row expressions before considering
+    # aliases.  Sorting every variant only by length used to spend all four
+    # scans on long English aliases (``BELOWMAINDECK``, ``deadlights`` ...),
+    # while the indexed Korean row literally contained ``주 갑판 아래``.  It
+    # also dropped the exact English row label ``Name of Chemical primarily
+    # carried`` behind a long Korean clause.  Prefer useful originals, then
+    # add Korean/spacing aliases and finally other bilingual aliases.
+    distinctive_entities = [value for value in entities if value.lower() not in generic]
+    original_entities = sorted(
+        distinctive_entities or entities,
+        key=lambda value: (
+            bool(re.search(r"[가-힣]", value)) and len(value) > 24,
+            -len(value),
+        ),
+    )
+    search_entities: list[str] = []
+    for value in original_entities:
+        if value not in search_entities:
+            search_entities.append(value)
+        if len(search_entities) >= 4:
+            break
+    if len(search_entities) < 4:
+        remaining = [value for value in variants if value not in search_entities]
+        remaining.sort(
+            key=lambda value: (
+                not bool(re.search(r"[가-힣]", value)),
+                value.lower() in generic,
+                -len(value),
+            )
+        )
+        search_entities.extend(remaining[: 4 - len(search_entities)])
     age_q = "선령" in (parsed.raw_question or "") or any(
         "선령" in c for c in parsed.column_entities
+    )
+    ratio_q = any(
+        term in (parsed.raw_question or "") for term in ("비율", "몇 %", "퍼센트")
     )
     where = _merge_where(
         {"chunk_type": "table_row"},
@@ -164,41 +211,155 @@ def _literal_row_candidates(
         {"page_number": int(page_number)} if page_number is not None else None,
     )
     out: dict[str, tuple[str, float, dict, str]] = {}
+    # Each ``where_document`` expression is a corpus scan.  Try the most
+    # distinctive surface form first and stop as soon as the returned rows
+    # also contain the requested attribute.  This normally costs one scan,
+    # while spacing/bilingual fallbacks are paid only when the first spelling
+    # is absent or produces a row-only near miss.
+    raw = {"ids": [], "metadatas": [], "documents": []}
     for entity in search_entities:
         try:
-            raw = collection.get(
+            candidate_raw = collection.get(
                 where=where,
                 where_document={"$contains": entity},
-                limit=limit,
+                limit=max(limit, 360),
                 include=["metadatas", "documents"],
             )
         except Exception:
             continue
-        for cid, meta, document in zip(
-            raw.get("ids") or [], raw.get("metadatas") or [], raw.get("documents") or []
-        ):
-            doc = str(document or "")
-            exact_terms = sum(1 for term in entities if entity_matches(expand_entity_aliases(term), doc))
-            inspection_cell = bool(
-                re.search(r"정기검사\s*=\s*(?:○|O|-|\d+\s*개|절반)", doc, re.IGNORECASE)
+        candidate_docs = [str(value or "") for value in candidate_raw.get("documents") or []]
+        if not candidate_docs:
+            continue
+        raw = candidate_raw
+        if ratio_q:
+            usable = any(re.search(r"\d+(?:\.\d+)?\s*%", doc) for doc in candidate_docs)
+        elif age_q:
+            usable = any("선령" in doc for doc in candidate_docs)
+        elif parsed.column_entities:
+            usable = any(
+                entity_matches(expand_entity_aliases(str(column)), doc)
+                for doc in candidate_docs
+                for column in parsed.column_entities
             )
-            engineering = bool(
-                re.search(r"\b(?:HSM|SFLC|BSP|OSA|FSM|OST)-?\d", doc, re.IGNORECASE)
-            )
-            synthetic_distance = 0.42 - min(0.18, exact_terms * 0.06)
-            if inspection_cell:
-                synthetic_distance -= 0.22
-            if engineering:
+        else:
+            usable = True
+        if usable:
+            break
+    for cid, meta, document in zip(
+        raw.get("ids") or [], raw.get("metadatas") or [], raw.get("documents") or []
+    ):
+        doc = str(document or "")
+        exact_terms = sum(1 for term in entities if entity_matches(expand_entity_aliases(term), doc))
+        exact_columns = sum(
+            1
+            for term in parsed.column_entities
+            if entity_matches(expand_entity_aliases(str(term)), doc)
+        )
+        inspection_cell = bool(
+            re.search(r"정기검사\s*=\s*(?:○|O|-|\d+\s*개|절반)", doc, re.IGNORECASE)
+        )
+        engineering = bool(
+            re.search(r"\b(?:HSM|SFLC|BSP|OSA|FSM|OST)-?\d", doc, re.IGNORECASE)
+        )
+        synthetic_distance = 0.42 - min(0.18, exact_terms * 0.06)
+        synthetic_distance -= min(0.18, exact_columns * 0.06)
+        if inspection_cell:
+            synthetic_distance -= 0.22
+        if engineering:
+            synthetic_distance += 0.45
+        if ratio_q:
+            if re.search(r"\d+(?:\.\d+)?\s*%", doc):
+                synthetic_distance -= 0.28
+            else:
                 synthetic_distance += 0.45
-            # Age-band inspection questions need the 선령 column, not every
-            # row that merely mentions 화물창/탱크 in a structural table.
-            if age_q:
-                if "선령" in doc:
-                    synthetic_distance -= 0.28
-                else:
-                    synthetic_distance += 0.40
-            out[str(cid)] = (str(cid), synthetic_distance, meta or {}, doc)
+        # Age-band inspection questions need the 선령 column, not every
+        # row that merely mentions 화물창/탱크 in a structural table.
+        if age_q:
+            if "선령" in doc:
+                synthetic_distance -= 0.28
+            else:
+                synthetic_distance += 0.40
+        out[str(cid)] = (str(cid), synthetic_distance, meta or {}, doc)
     return list(out.values())
+
+
+def _dense_atomic_intersection_ids(
+    parsed: ParsedTableQuery,
+    hits: list[tuple[str, float, dict, str]],
+) -> set[str]:
+    """Return dense row ids that already contain a usable row/column pair.
+
+    Corpus-wide ``where_document`` scans are a failure recovery path.  Running
+    them after a dense atomic row already contains the asked subject and column
+    adds seconds without changing recall.  Returning the matching ids also lets
+    the ranker give that already-retrieved exact evidence the same weight as a
+    row recovered by the fallback scan.
+    """
+    generic_rows = {"기관실", "구역", "탱크", "갑판", "격벽", "설계", "안덮개"}
+    row_entities = [
+        str(value).strip()
+        for value in parsed.row_entities
+        if str(value).strip() and str(value).strip() not in generic_rows
+    ]
+    col_entities = [str(value).strip() for value in parsed.column_entities if str(value).strip()]
+    semantic_value_asks = ("설치비율", "비율", "몇 %", "얼마")
+
+    row_alias_norms = {
+        normalize_compact(alias)
+        for entity in row_entities
+        for alias in (entity, *expand_entity_aliases(entity))
+        if len(normalize_compact(alias)) >= 3
+    }
+
+    def literal_match(
+        term: str,
+        document: str,
+        *,
+        excluded_aliases: set[str] | None = None,
+    ) -> bool:
+        compact_doc = normalize_compact(document)
+        aliases = [term, *expand_entity_aliases(term)]
+        return any(
+            len(normalize_compact(alias)) >= 3
+            and normalize_compact(alias) not in (excluded_aliases or set())
+            and normalize_compact(alias) in compact_doc
+            for alias in aliases
+        )
+
+    matched: set[str] = set()
+    for _cid, _distance, meta, document in hits:
+        if str((meta or {}).get("chunk_type") or "") != "table_row":
+            continue
+        doc = str(document or "")
+        row_hit = not row_entities or any(
+            literal_match(entity, doc)
+            for entity in row_entities
+        )
+        if not row_hit:
+            continue
+        col_hit = not col_entities or any(
+            literal_match(entity, doc, excluded_aliases=row_alias_norms)
+            for entity in col_entities
+        )
+        if row_hit and col_hit:
+            matched.add(str(_cid))
+            continue
+        # Some tables encode an abstract requested attribute (for example an
+        # installation ratio) as concrete category columns.  A matched atomic
+        # row containing percentage values is already better than a global
+        # string scan for the absent abstract header.
+        if row_hit and any(term in parsed.raw_question for term in semantic_value_asks):
+            if re.search(r"(?:^|\s|:)\d+(?:\.\d+)?\s*%", doc):
+                matched.add(str(_cid))
+    return matched
+
+
+def _dense_has_atomic_intersection(
+    parsed: ParsedTableQuery,
+    hits: list[tuple[str, float, dict, str]],
+) -> bool:
+    """Compatibility predicate for callers/tests interested only in presence."""
+    return bool(_dense_atomic_intersection_ids(parsed, hits))
 
 
 def parse_explicit_table_constraints(question: str) -> tuple[str | None, int | None]:
@@ -717,20 +878,26 @@ def route_table_candidates(
                 page_number=page_number,
             )
         )
-    literal_hits = _literal_row_candidates(
-        collection,
-        parsed,
-        doc_id=doc_id,
-        source=source,
-        file_name=file_name,
-        page_number=page_number,
-    )
-    literal_ids = {cid for cid, _dist, _meta, _doc in literal_hits}
+    dense_literal_ids = _dense_atomic_intersection_ids(parsed, hits)
+    literal_hits = []
+    if not dense_literal_ids:
+        literal_hits = _literal_row_candidates(
+            collection,
+            parsed,
+            doc_id=doc_id,
+            source=source,
+            file_name=file_name,
+            page_number=page_number,
+        )
+    literal_ids = dense_literal_ids | {cid for cid, _dist, _meta, _doc in literal_hits}
     hits.extend(literal_hits)
 
     by_table: dict[str, TableScoreBreakdown] = {}
     age_q = "선령" in (parsed.raw_question or "") or any(
         "선령" in c for c in parsed.column_entities
+    )
+    ratio_q = any(
+        term in (parsed.raw_question or "") for term in ("비율", "몇 %", "퍼센트")
     )
     for _cid, dist, meta, doc in hits:
         meta = meta or {}
@@ -744,6 +911,13 @@ def route_table_candidates(
             boost = 1.25
             if age_q:
                 boost = 1.45 if "선령" in (doc or "") else 0.10
+            if (
+                ("어느 장" in parsed.raw_question or "몇 장" in parsed.raw_question)
+                and re.search(r"\d+\s*편\s*\d+\s*장", doc or "")
+            ):
+                boost += 0.45
+            if ratio_q:
+                boost += 0.35 if re.search(r"\d+(?:\.\d+)?\s*%", doc or "") else -0.35
             bd.combined_score = round(bd.combined_score + boost, 4)
             bd.literal_row_match = True
         if str(meta.get("chunk_type") or "") == "table_row":

@@ -9,7 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bm25_index import extract_document_codes, tokenize_for_bm25
 from hybrid_retrieval import fuse_dense_bm25, rrf_score
 from retrieval_query_analysis import analyze_query
-from retrieval_search import _priority_rule_file_names, _resolve_priority_rule_doc_ids
+from retrieval_search import (
+    _priority_rule_file_names,
+    _resolve_priority_rule_doc_ids,
+    extract_sparse_latin_terms,
+)
 
 
 def test_doc_code_tokenization():
@@ -63,6 +67,18 @@ def test_dnv_autonomous_rule_priority_resolution():
             return {"metadatas": [{"doc_id": "dnv_cg_0264"}, {"doc_id": "dnv_cg_0264"}]}
 
     assert _resolve_priority_rule_doc_ids(FakeCollection(), signals) == ["dnv_cg_0264"]
+
+
+def test_sparse_latin_terms_keep_named_technical_phrases():
+    assert "minimum risk condition" in extract_sparse_latin_terms(
+        "DNV-CG-0264의 minimum risk condition 원칙을 근거 조항과 설명해줘."
+    )
+    assert any(
+        "crankcase" in term
+        for term in extract_sparse_latin_terms(
+            "LR Notice No.1의 crankcase ventilation 요구를 찾아줘."
+        )
+    )
 
 
 if __name__ == "__main__":
