@@ -56,6 +56,73 @@ def test_abs_risk_category_is_rebuilt_from_exact_clause():
     assert result.evidence_table and result.evidence_table[0]["page"] == 40
 
 
+def test_abs_risk_additional_verification_names_category_ii_and_iii():
+    basis = chunk(
+        "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        3,
+        "Risk levels are assigned based on the Operations Supervision Level and "
+        "Consequences of Failure. The risk category is Low, Medium or High.",
+        1,
+    )
+    additional = chunk(
+        "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        19,
+        "Low risk functions require Computer Based System Category II documents. "
+        "Functions assigned with medium or high risk category level require "
+        "Computer Based System Category III documents under 4-9-3.",
+        2,
+    )
+
+    result = guard_rag_answer(
+        "ABS Requirements의 위험범주와 상위 위험 기능의 추가 검증 요구를 "
+        "선박 업무 영향 및 관련 Rule로 나눠 설명해줘.",
+        "일반 설명",
+        payload(basis, additional),
+        model="gemma4:12b",
+    )
+
+    assert "Category II" in result.answer
+    assert "Category III" in result.answer
+    assert "Marine Vessel Rules 4-9-3" in result.answer
+    assert len(result.evidence_table or []) == 2
+
+
+def test_abs_risk_answer_adds_scope_when_scope_clause_is_available():
+    basis = chunk(
+        "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        3,
+        "Risk levels are assigned based on the Operations Supervision Level, "
+        "Consequences of Failure and risk category.",
+        1,
+    )
+    additional = chunk(
+        "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        19,
+        "Medium and high risk category functions require Computer Based System "
+        "Category III documents.",
+        2,
+    )
+    scope = chunk(
+        "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+        11,
+        "These Requirements apply to vessels and offshore units fitted with "
+        "autonomous or remote control functions eligible for AUTONOMOUS or "
+        "REMOTE-CON notation.",
+        3,
+    )
+
+    result = guard_rag_answer(
+        "ABS Requirements의 적용대상, 위험범주 및 검증을 설명해줘.",
+        "일반 설명",
+        payload(basis, additional, scope),
+        model="gemma4:12b",
+    )
+
+    assert "자율 또는 원격제어 기능이 설치된 선박·해양구조물" in result.answer
+    assert "AUTONOMOUS 또는 REMOTE-CON" in result.answer
+    assert len(result.evidence_table or []) == 3
+
+
 def test_abs_risk_false_premise_gets_explicit_verdict():
     evidence = chunk(
         "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",

@@ -685,6 +685,21 @@ def _targeted_document_completion(
                 ),
             ]
         )
+    abs_requirements_detail = bool(
+        re.search(r"Autonomous\s+and\s+Remote\s+Control", q, re.I)
+        and re.search(r"위험|risk|검증|verification|적용\s*대상", q, re.I)
+    )
+    if abs_requirements_detail and not abs_comparison:
+        specs.append(
+            (
+                "RequirementsforAutonomousandRemoteControlFunctions-v4.pdf",
+                (
+                    "autonomous or remote control functions",
+                    "operations supervision level",
+                    "computer based system category iii",
+                ),
+            )
+        )
     mass_working_group = bool(
         re.search(r"\bMASS\b", q, re.I)
         and re.search(r"작업반|working\s+group|회부", q, re.I)
@@ -1040,6 +1055,11 @@ def _run_single_rag(
                 answer = reviewed_answer
                 evidence_table = _cited_rows(answer, review_evidence)
         answer, korean_output = ensure_korean_answer(question, answer, model=model)
+        from services.rag_presentation import compact_citations
+
+        answer, evidence_table, citation_mapping = compact_citations(
+            answer, evidence_table
+        )
         if use_table_index:
             search = out.get("search_out") or {}
             retrieved = list(search.get("retrieved") or [])
@@ -1100,6 +1120,9 @@ def _run_single_rag(
                 ),
                 "korean_output": korean_output,
                 "answer_quality_guard": guarded_metadata,
+                "citation_order_normalized": any(
+                    old != new for old, new in citation_mapping.items()
+                ),
                 "advanced_mode": advanced_mode,
                 "advanced_retrieval": (out.get("search_out") or {}).get(
                     "advanced_retrieval"
@@ -1326,6 +1349,11 @@ def _run_both_fused(
                 answer = reviewed_answer
                 evidence_table = _cited_rows(answer, review_evidence)
         answer, korean_output = ensure_korean_answer(question, answer, model=model)
+        from services.rag_presentation import compact_citations
+
+        answer, evidence_table, citation_mapping = compact_citations(
+            answer, evidence_table
+        )
         return {
             "answer": answer,
             "files": images,
@@ -1366,6 +1394,9 @@ def _run_both_fused(
                 "answer_eval_count": generation.get("eval_count"),
                 "korean_output": korean_output,
                 "answer_quality_guard": guarded_metadata,
+                "citation_order_normalized": any(
+                    old != new for old, new in citation_mapping.items()
+                ),
                 "advanced_mode": advanced_mode,
                 "advanced_retrieval": text_hit.get("advanced_retrieval") or {},
                 "advanced_rerank": text_hit.get("advanced_rerank") or {},

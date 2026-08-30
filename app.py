@@ -841,12 +841,12 @@ with gr.Blocks(title="MaritimeOps AI") as demo:
                 _page_intro(
                     "운항 데이터",
                     "운항 정보",
-                    "로컬 운항 DB의 실제 항차, 속력, 연료, 배출량, CII를 조회하고 보고서를 생성합니다.",
+                    "현재 항차 KPI, 연료·배출량, 잠정 CII와 이동 경로를 한 화면에서 조회하고 보고서를 생성합니다.",
                     "운항 DB 고정",
                 )
             )
             ops_examples = [
-                "현재 운항 중인 항차 번호와 적재 상태를 알려줘.",
+                "현재 운항 브리핑을 보여줘.",
                 "현재 Ballast 항차의 누적 운항거리는 몇 해리야?",
                 "2026년 누적 잠정 CII attained, required와 등급은?",
             ]
